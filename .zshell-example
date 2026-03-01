@@ -1,0 +1,136 @@
+# -----------------------------------------------------------------------------
+# Git helpers
+# -----------------------------------------------------------------------------
+
+clean-stale-branches() {
+  DRY_RUN=false bash ~/Developer/git/shell-functions/bin/clean-stale-branches.sh
+  playsound-4
+}
+
+clean-stale-branches-dr() {
+  DRY_RUN=true bash ~/Developer/git/shell-functions/bin/clean-stale-branches.sh
+  playsound-7
+}
+
+update-local-branches() {
+  bash ~/Developer/git/shell-functions/bin/update-local-branches.sh "$@"
+  playsound-5
+}
+
+checkout-my-branches() {
+  bash ~/Developer/git/shell-functions/bin/checkout-my-branches.sh "$@"
+  playsound-7
+}
+
+# -----------------------------------------------------------------------------
+# Video / media helpers
+# -----------------------------------------------------------------------------
+
+show-codecs() {
+  bash ~/Developer/git/shell-functions/bin/show-codecs.sh "$@"
+  playsound-6
+}
+
+fix-codecs() {
+  bash ~/Developer/git/shell-functions/bin/fix-codecs.sh "$@"
+  playsound-7
+}
+
+find-video-mkv-issues() {
+  bash ~/Developer/git/shell-functions/bin/find-video-mkv-issues.sh "$@"
+  playsound-4
+}
+
+validate-video-files() {
+  bash ~/Developer/git/shell-functions/bin/validate-video-files.sh "$@"
+  playsound-2
+}
+
+scan-videos-audio-language() {
+  bash ~/Developer/git/shell-functions/bin/scan-videos-audio-language.sh "$@"
+  playsound-3
+}
+
+video-files-under() {
+  bash ~/Developer/git/shell-functions/bin/video-files-under.sh "$@"
+  playsound-4
+}
+
+video-list() {
+  bash ~/Developer/git/shell-functions/bin/video-list.sh "$@"
+
+  playsound-5
+}
+
+delete-duplicate-videos() {
+  bash ~/Developer/git/shell-functions/bin/delete-duplicate-videos.sh "$@"
+  playsound-6
+}
+
+# -----------------------------------------------------------------------------
+# Filesystem cleanup / utilities
+# -----------------------------------------------------------------------------
+
+delete-empty-folders() {
+  bash ~/Developer/git/shell-functions/bin/delete-empty-folders.sh "$@"
+  playsound-6
+}
+
+delete-smb-files() {
+  bash ~/Developer/git/shell-functions/bin/delete-smb-files.sh "$@"
+  playsound-6
+}
+
+delete-by-ext() {
+  bash ~/Developer/git/shell-functions/bin/delete-by-ext.sh "$@"
+  playsound-6
+}
+
+files-under-size() {
+  bash ~/Developer/git/shell-functions/bin/files-under-size.sh "$@"
+  playsound-4
+}
+
+find-largest-files() {
+  bash ~/Developer/git/shell-functions/bin/find-largest-files.sh "$@"
+  playsound-2
+}
+
+make-alpha-dir() {
+  bash ~/Developer/git/shell-functions/bin/make-alpha-dir.sh "$@"
+  playsound-4
+}
+
+list-permission() {
+  ls -ld "/Volumes/$1"
+  playsound-7
+}
+
+# -----------------------------------------------------------------------------
+# Movies
+# -----------------------------------------------------------------------------
+
+find-movie-by-year() {
+  bash ~/Developer/git/shell-functions/bin/find-movie-by-year.sh "$@"
+  playsound-2
+}
+
+# -----------------------------------------------------------------------------
+# NAS / drives
+# -----------------------------------------------------------------------------
+
+mount-all-drives() {
+  bash ~/Developer/git/shell-functions/bin/mount-all-drives.sh
+  playsound-7
+}
+
+eject-all-drives() {
+  bash ~/Developer/git/shell-functions/bin/eject-all-drives.sh
+  playsound-7
+}
+
+ping-nas() {
+  bash ~/Developer/git/shell-functions/bin/ping-nas.sh
+}
+
+# -----------------------------------------------------------------------------
