@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-# v2.0.0
+# v2.0.1
 
 info "Running command in $(pwd)"
 
@@ -14,7 +14,7 @@ info "Running command in $(pwd)"
 DRY_RUN=false
 VERBOSE=false
 ROOT_PATH=""
-EXT_LIST=()
+EXT_LIST=(m3u nfo sfv jpg png txt log cue srr)
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -45,6 +45,12 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+note "Scanning: $ROOT_PATH"
+note "Extensions: ${EXT_LIST[*]}"
+note "Dry run: $DRY_RUN"
+note "Verbose: $VERBOSE"
+note "----------------------------------------------------"
+
 if [[ -z "$ROOT_PATH" ]]; then
   warning "--path is required"
   exit 1
@@ -56,11 +62,6 @@ if [[ ${#EXT_LIST[@]} -eq 0 ]]; then
 fi
 
 EXT_PATTERN="$(IFS='|'; echo "${EXT_LIST[*]}")"
-
-log "Searching in: $ROOT_PATH"
-log "Extensions: ${EXT_LIST[*]}"
-log "Dry run: ${DRY_RUN}"
-log "Verbose: ${VERBOSE}"
 
 while IFS= read -r -d '' file; do
   if [[ "$DRY_RUN" == true ]]; then
