@@ -1,10 +1,11 @@
 #!/opt/homebrew/bin/bash
 
-. ~/bin/utils.sh --source-only
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/utils.sh" --source-only
 
 set -euo pipefail
 
-# v3.2.0
+# v2.0.3
 
 info "Running command in $(pwd)"
 
@@ -18,18 +19,18 @@ DELETED_COUNT=0
 SCANNED_COUNT=0
 
 # Human-readable size helper
-format_bytes() {
-  local bytes=$1
-  if [[ $bytes -ge 1073741824 ]]; then
-    echo "$(echo "scale=2; $bytes/1073741824" | bc) GB"
-  elif [[ $bytes -ge 1048576 ]]; then
-    echo "$(echo "scale=2; $bytes/1048576" | bc) MB"
-  elif [[ $bytes -ge 1024 ]]; then
-    echo "$(echo "scale=2; $bytes/1024" | bc) KB"
-  else
-    echo "${bytes} B"
-  fi
-}
+# format_bytes() {
+#   local bytes=$1
+#   if [[ $bytes -ge 1073741824 ]]; then
+#     echo "$(echo "scale=2; $bytes/1073741824" | bc) GB"
+#   elif [[ $bytes -ge 1048576 ]]; then
+#     echo "$(echo "scale=2; $bytes/1048576" | bc) MB"
+#   elif [[ $bytes -ge 1024 ]]; then
+#     echo "$(echo "scale=2; $bytes/1024" | bc) KB"
+#   else
+#     echo "${bytes} B"
+#   fi
+# }
 
 # SxxEyy where episode allows 2–3 digits
 EP_REGEX='[Ss][0-9]{2}[Ee][0-9]{2,3}'
@@ -60,9 +61,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-log "ROOT_DIR: ${ROOT_DIR}"
-log "DRY_RUN: ${DRY_RUN}"
-log "VERBOSE: ${VERBOSE}"
+note "Scanning: ${ROOT_DIR}"
+note "Dry run: ${DRY_RUN}"
+note "Verbose: ${VERBOSE}"
+note "----------------------------------------------------"
 
 [[ -z "$ROOT_DIR" ]] && { warning "Missing required argument: --path"; exit 1; }
 [[ ! -d "$ROOT_DIR" ]] && { warning "The provided path '$ROOT_DIR' is not a valid directory."; exit 1; }

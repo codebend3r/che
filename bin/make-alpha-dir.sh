@@ -1,6 +1,7 @@
 #!/opt/homebrew/bin/bash
 
-. ~/bin/utils.sh --source-only
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/utils.sh" --source-only
 
 set -euo pipefail
 

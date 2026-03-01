@@ -44,6 +44,7 @@ note "Scanning: $DIR"
 note "Recursive: $RECURSE"
 note "Sort method: $SORT_METHOD"
 note "With folder: $WITH_FOLDER"
+note "----------------------------------------------------"
 
 [[ -z "$DIR" ]] && { echo "Error: --path is required" >&2; exit 1; }
 

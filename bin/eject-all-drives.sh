@@ -1,6 +1,13 @@
 #!/bin/bash
 
-. ~/bin/utils.sh --source-only
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/utils.sh" --source-only
+
+set -euo pipefail
+
+# v2.0.3
+
+info "Running command in $(pwd)"
 
 # Each "object" is a string in format driveName|address|ip
 drives=(

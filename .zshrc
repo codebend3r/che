@@ -1,3 +1,5 @@
+. ~/Developer/git/shell-functions/bin/utils.sh --source-only
+
 # -----------------------------------------------------------------------------
 # Shell functions (single source of truth)
 # Prefer ~/Developer/git/shell-functions/bin/

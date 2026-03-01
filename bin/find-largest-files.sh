@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 set -euo pipefail
 
 # v2.0.3
+
 info "Running command in $(pwd)"
 
 # Usage:
