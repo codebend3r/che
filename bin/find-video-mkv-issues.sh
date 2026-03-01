@@ -1,10 +1,11 @@
-#!/opt/homebrew/bin/bash
+#!/usr/bin/env bash
 
-. ~/bin/utils.sh --source-only
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/utils.sh" --source-only
 
 set -euo pipefail
 
-# v2.0.1
+# v2.0.3
 
 info "Running command in $(pwd)"
 

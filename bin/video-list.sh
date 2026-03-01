@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 
-. ~/bin/utils.sh --source-only
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/utils.sh" --source-only
 
 set -euo pipefail
 
-# v2.0.2
+# v2.0.3
 
 info "Running command in $(pwd)"
 
@@ -69,7 +70,7 @@ case "$SORT_METHOD" in
 esac
 
 while IFS='|' read -r size file; do
-  size_human=$(format_bytes "$size")
+  size_human=$(human_size "$size")
 
   folder="$(basename "$(dirname "$file")")"
   filename="$(basename "$file")"
