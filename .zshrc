@@ -26,8 +26,8 @@ update-local-branches() {
   playsound-5
 }
 
-checkout-my-branches() {
-  bash "${SHELL_FUNCTIONS_BIN}/checkout-my-branches.sh" "$@"
+checkout-my-branch() {
+  bash "${SHELL_FUNCTIONS_BIN}/checkout-my-branch.sh" "$@"
   playsound-7
 }
 
