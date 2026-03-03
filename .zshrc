@@ -94,6 +94,11 @@ delete-empty-folders() {
   playsound-6
 }
 
+delete-duplicate-folders() {
+  bash "${SHELL_FUNCTIONS_BIN}/delete-duplicate-folders.sh" "$@"
+  playsound-6
+}
+
 delete-smb-files() {
   bash "${SHELL_FUNCTIONS_BIN}/delete-smb-files.sh" "$@"
   playsound-6
