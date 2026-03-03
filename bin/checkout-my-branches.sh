@@ -5,11 +5,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 set -euo pipefail
 
-# v2.0.3
+# v2.0.4
 
-info "--------------------------------"
-info "checkout my branches"
-info "--------------------------------"
+note "--------------------------------"
+note "checkout my branches"
+note "--------------------------------"
 
 # Author to filter
 TARGET_EMAIL="cj.rivas.dev@gmail.com"
