@@ -70,11 +70,6 @@ delete-duplicate-videos() {
   playsound-6
 }
 
-remove-metadata() {
-  bash "${SHELL_FUNCTIONS_BIN}/remove-metadata.sh" "$@"
-  playsound-5
-}
-
 video-files-under() {
   bash "${SHELL_FUNCTIONS_BIN}/video-files-under.sh" "$@"
   playsound-4
@@ -122,10 +117,6 @@ find-largest-files() {
 make-alpha-dir() {
   bash "${SHELL_FUNCTIONS_BIN}/make-alpha-dir.sh" "$@"
   playsound-4
-}
-
-remove-words() {
-  bash "${SHELL_FUNCTIONS_BIN}/remove-words.sh" "$@"
 }
 
 compress-folders() {
