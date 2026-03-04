@@ -3,9 +3,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/utils.sh" --source-only
 
-set -euo pipefail
-
-# v2.0.3
+# v2.0.4
 
 info "Running command in $(pwd)"
 

@@ -3,14 +3,16 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/utils.sh" --source-only
 
+# v2.0.4
+
 # List of base drive names
 # Each "object" is a string in format name|address
 drives=(
-  "Meleys|smb://192.168.50.2"
-  "Vermithor|smb://192.168.50.3"
-  "Caraxes|smb://192.168.50.4"
-  "Syrax|smb://192.168.50.5"
-  "Vhagar|smb://192.168.50.6"
+  "smb://Meleys|smb://192.168.50.2"
+  "smb://Vermithor|smb://192.168.50.3"
+  "smb://Caraxes|smb://192.168.50.4"
+  "smb://Syrax|smb://192.168.50.5"
+  "smb://Vhagar|smb://192.168.50.6"
 )
 
 # Function to mount a network drive (you'll need to customize this)
@@ -30,5 +32,6 @@ for entry in "${drives[@]}"; do
   info "Drive name: $driveName"
   info "Address: $address"
 
-  mount_volume "$address"
+  # mount_volume "$address"
+  mount_volume "$driveName"
 done
