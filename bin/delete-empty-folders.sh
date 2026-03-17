@@ -44,9 +44,9 @@ if [[ ! -d "$ROOT_DIR" ]]; then
   exit 1
 fi
 
-log "Searching in: $ROOT_DIR"
-log "Dry run: ${DRY_RUN}"
-log "Verbose: ${VERBOSE}"
+note "Searching in: $ROOT_DIR"
+note "Dry run: ${DRY_RUN}"
+note "Verbose: ${VERBOSE}"
 
 # Deepest-first directory traversal
 while IFS= read -r -d '' dir; do

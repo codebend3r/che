@@ -38,8 +38,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-log "Searching in: $ROOT_DIR"
-log "Dry run: ${DRY_RUN}"
+note "Searching in: $ROOT_DIR"
+note "Dry run: ${DRY_RUN}"
 
 if [[ -z "$ROOT_DIR" ]]; then
   warning "Error: --path is required."

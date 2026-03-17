@@ -138,6 +138,11 @@ find-movie-by-year() {
   playsound-2
 }
 
+largest-tv-shows() {
+  bash "${SHELL_FUNCTIONS_BIN}/largest-tv-shows.sh" "$@"
+  playsound-2
+}
+
 # -----------------------------------------------------------------------------
 # NAS / drives
 # -----------------------------------------------------------------------------

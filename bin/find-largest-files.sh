@@ -44,9 +44,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-log "Searching in: $SEARCH_PATH"
-log "List length: ${LIST_LENGTH}"
-log "Show full path: ${SHOW_FULL_PATH}"
+note "Searching in: $SEARCH_PATH"
+note "List length: ${LIST_LENGTH}"
+note "Show full path: ${SHOW_FULL_PATH}"
 
 if [[ ! -d "$SEARCH_PATH" ]]; then
   echo "Error: Path does not exist or is not a directory: $SEARCH_PATH" >&2
