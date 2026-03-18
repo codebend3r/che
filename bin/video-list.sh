@@ -71,7 +71,7 @@ case "$SORT_METHOD" in
 esac
 
 while IFS='|' read -r size file; do
-  size_human=$(human_size "$size")
+  size_human=$(format_bytes "$size")
 
   folder="$(basename "$(dirname "$file")")"
   filename="$(basename "$file")"

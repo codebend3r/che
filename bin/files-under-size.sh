@@ -109,12 +109,12 @@ for f in "${FILES[@]}"; do
 
   FILESIZE=$(stat -f%z "$f" 2>/dev/null || stat -c%s "$f")
 
-  log "File size: $(human_size "$FILESIZE")"
+  log "File size: $(format_bytes "$FILESIZE")"
 
   if $DRY_RUN; then
-    warning "[${COUNT}/${TOTAL}] Would delete: $(human_size "$FILESIZE") - $f"
+    warning "[${COUNT}/${TOTAL}] Would delete: $(format_bytes "$FILESIZE") - $f"
   else
-    warning "[${COUNT}/${TOTAL}] Deleting: $(human_size "$FILESIZE") - $f"
+    warning "[${COUNT}/${TOTAL}] Deleting: $(format_bytes "$FILESIZE") - $f"
     rm -f -- "$f"
   fi
 done

@@ -43,35 +43,39 @@ success() {
   log_color "$MAGENTA" "$1"
 }
 
-human_size() {
-  local bytes=$1
-
-  if (( bytes >= 1073741824 )); then
-    awk -v b="$bytes" 'BEGIN { printf "%.2f GB", b / 1073741824 }'
-  elif (( bytes >= 1048576 )); then
-    awk -v b="$bytes" 'BEGIN { printf "%.2f MB", b / 1048576 }'
-  elif (( bytes >= 1024 )); then
-    awk -v b="$bytes" 'BEGIN { printf "%.2f KB", b / 1024 }'
-  else
-    printf "%d B" "$bytes"
-  fi
-}
-
 ###################
 # Video functions
 
-# Helper: formats bytes to GB, MB, KB, or bytes with 2 decimal places
+# Helper: formats bytes to PB, TB, GB, MB, KB, or bytes with 2 decimal places
 format_bytes() {
   local bytes=$1
-  if [[ $bytes -ge 1073741824 ]]; then
-    local gb=$(echo "scale=2; $bytes / (1024 * 1024 * 1024)" | bc)
-    echo "${gb} GB"
-  elif [[ $bytes -ge 1048576 ]]; then
-    local mb=$(echo "scale=2; $bytes / (1024 * 1024)" | bc)
-    echo "${mb} MB"
-  elif [[ $bytes -ge 1024 ]]; then
-    local kb=$(echo "scale=2; $bytes / 1024" | bc)
-    echo "${kb} KB"
+
+  local KB=1024
+  local MB=$((KB * 1024))
+  local GB=$((MB * 1024))
+  local TB=$((GB * 1024))
+  local PB=$((TB * 1024))
+
+  if [[ $bytes -ge $PB ]]; then
+    local val
+    val=$(echo "scale=2; $bytes / $PB" | bc)
+    echo "${val} PB"
+  elif [[ $bytes -ge $TB ]]; then
+    local val
+    val=$(echo "scale=2; $bytes / $TB" | bc)
+    echo "${val} TB"
+  elif [[ $bytes -ge $GB ]]; then
+    local val
+    val=$(echo "scale=2; $bytes / $GB" | bc)
+    echo "${val} GB"
+  elif [[ $bytes -ge $MB ]]; then
+    local val
+    val=$(echo "scale=2; $bytes / $MB" | bc)
+    echo "${val} MB"
+  elif [[ $bytes -ge $KB ]]; then
+    local val
+    val=$(echo "scale=2; $bytes / $KB" | bc)
+    echo "${val} KB"
   else
     echo "${bytes} B"
   fi

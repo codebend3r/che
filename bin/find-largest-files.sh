@@ -65,10 +65,10 @@ fi
   head -n "$LIST_LENGTH" | \
   while IFS='|' read -r size file; do
     if [[ "$SHOW_FULL_PATH" == true ]]; then
-      # info "$(human_size "$size") $file"
-      printf "%12s  %s\n" "$(human_size "$size")" "$file"
+      # info "$(format_bytes "$size") $file"
+      printf "%12s  %s\n" "$(format_bytes "$size")" "$file"
     else
-      # info "$(human_size "$size")" "$(basename "$file")"
-      printf "%12s  %s\n" "$(human_size "$size")" "$(basename "$file")"
+      # info "$(format_bytes "$size")" "$(basename "$file")"
+      printf "%12s  %s\n" "$(format_bytes "$size")" "$(basename "$file")"
     fi
   done
