@@ -73,13 +73,13 @@ if [[ "$RECURSIVE" == "false" ]]; then
   FIND_OPTS+=("-maxdepth" "1")
 fi
 
-# Loop through all .mp4 files in the specified path
-find "$ROOT_DIR" "${FIND_OPTS[@]}" -type f -name "*.mp4" -print0 | while IFS= read -r -d '' file; do
+# Loop through all .mp4 and .mkv files in the specified path
+find "$ROOT_DIR" "${FIND_OPTS[@]}" -type f \( -name "*.mp4" -o -name "*.mkv" \) -not -name "._*" -print0 | while IFS= read -r -d '' file; do
   [[ -f "$file" ]] || continue
   
-  # info "Checking file: $(basename "$file")"
-  
+  # Skip hidden files (e.g. ._filename.mp4)
   filename=$(basename "$file")
+  [[ "$filename" == ._* ]] && continue
   dir=$(dirname "$file")
 
   # Normalize all forms of single quotes/apostrophes/backticks to a standard straight apostrophe
