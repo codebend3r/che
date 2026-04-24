@@ -20,10 +20,14 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --path=*)
       ROOT_DIR="${1#*=}"
-      shift 2
+      shift
+      ;;
+    --dry-run=*)
+      DRY_RUN="${1#*=}";
+      shift
       ;;
     --dry-run)
-      DRY_RUN=true
+      DRY_RUN="true";
       shift
       ;;
     -h|--help)

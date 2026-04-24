@@ -3,7 +3,7 @@
 . ~/bin/utils.sh --source-only
 
 # Default values
-TARGET_PATH=""
+ROOT_DIR=""
 
 # Common video extensions (case-insensitive in exiftool)
 DEFAULT_EXTS=(mp4 mov m4v mkv avi wmv mpg mpeg webm flv ts m2ts 3gp 3g2 ogv)
@@ -31,7 +31,7 @@ EOF
 for arg in "$@"; do
   case $arg in
     --path=*)
-      TARGET_PATH="${arg#*=}"
+      ROOT_DIR="${arg#*=}"
       ;;
     --exts=*)
       IFS=',' read -r -a USER_EXTS <<< "${arg#*=}"
@@ -47,12 +47,12 @@ for arg in "$@"; do
 done
 
 # Validate path
-if [[ -z "$TARGET_PATH" ]]; then
+if [[ -z "$ROOT_DIR" ]]; then
   error "Error: --path must be specified"
   usage; exit 1
 fi
-if [[ ! -d "$TARGET_PATH" ]]; then
-  error "Error: Path '$TARGET_PATH' does not exist or is not a directory."
+if [[ ! -d "$ROOT_DIR" ]]; then
+  error "Error: Path '$ROOT_DIR' does not exist or is not a directory."
   exit 1
 fi
 
@@ -79,15 +79,15 @@ if [[ ${#EXT_ARGS[@]} -eq 0 ]]; then
 fi
 
 info "Removing metadata from extensions: ${EXTS[*]}"
-info "Target path: $TARGET_PATH"
+info "Target path: $ROOT_DIR"
 
 # Preview: list files exiftool will process (ignores Apple '._' files)
 info "Listing candidate files:"
-exiftool -r -i '*/._*' "${EXT_ARGS[@]}" -q -p '$FilePath' "$TARGET_PATH"
+exiftool -r -i '*/._*' "${EXT_ARGS[@]}" -q -p '$FilePath' "$ROOT_DIR"
 
 # Run exiftool (ignore Apple resource fork files)
 exiftool -all= -overwrite_original -r -progress \
   -i '*/._*' \
-  "${EXT_ARGS[@]}" "$TARGET_PATH"
+  "${EXT_ARGS[@]}" "$ROOT_DIR"
 
 log "Done."

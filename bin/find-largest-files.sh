@@ -18,6 +18,10 @@ SEARCH_PATH="."
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --full-path=*)
+      SHOW_FULL_PATH="${1#*=}"
+      shift
+      ;;
     --full-path)
       SHOW_FULL_PATH=true
       shift

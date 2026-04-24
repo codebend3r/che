@@ -6,13 +6,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 set -euo pipefail
 
 # Default path
-TARGET_PATH=""
+ROOT_DIR=""
 
 # Argument parsing
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --path=*)
-      TARGET_PATH="${1#*=}"
+      ROOT_DIR="${1#*=}"
       shift
       ;;
     -h|--help)
@@ -28,12 +28,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Fallback to current directory if not provided
-if [[ -z "${TARGET_PATH}" ]]; then
-  TARGET_PATH="."
+if [[ -z "${ROOT_DIR}" ]]; then
+  ROOT_DIR="."
 fi
 
-mkdir -p "$TARGET_PATH"
-cd "$TARGET_PATH"
+mkdir -p "$ROOT_DIR"
+cd "$ROOT_DIR"
 
 # Create "#" and A–Z
 mkdir -p -- '#' {A..Z}

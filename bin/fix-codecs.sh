@@ -12,17 +12,21 @@ info "Running command in $(pwd)"
 # Usage:
 #   fix-codecs --path=./ --delete-original=true
 
-TARGET_PATH=""
+ROOT_DIR=""
 DELETE_ORIGINAL=false
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --path=*)
-      TARGET_PATH="${1#*=}"
+      ROOT_DIR="${1#*=}"
       shift
       ;;
     --delete-original=*)
+      DELETE_ORIGINAL="${1#*=}"
+      shift
+      ;;
+    --delete-original)
       DELETE_ORIGINAL=true
       shift
       ;;
@@ -39,7 +43,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$TARGET_PATH" ]]; then
+if [[ -z "$ROOT_DIR" ]]; then
   warning "Error: You must provide a path with --path="
   exit 1
 fi
@@ -49,11 +53,11 @@ if ! command -v ffmpeg &>/dev/null; then
   exit 1
 fi
 
-note "Scanning: $TARGET_PATH"
+note "Scanning: $ROOT_DIR"
 note "Delete original after conversion: $DELETE_ORIGINAL"
 note "----------------------------------------------------"
 
-find "$TARGET_PATH" -type f \( -iname "*.mp4" -o -iname "*.mkv" -o -iname "*.mov" -o -iname "*.avi" \) | while read -r file; do
+find "$ROOT_DIR" -type f \( -iname "*.mp4" -o -iname "*.mkv" -o -iname "*.mov" -o -iname "*.avi" \) | while read -r file; do
   dir=$(dirname "$file")
   base=$(basename "$file")
   filename="${base%.*}"

@@ -12,14 +12,18 @@ info "Running command in $(pwd)"
 #   validate-video-files --path=./ [--verbose]
 
 # Default path
-TARGET_PATH=""
+ROOT_DIR=""
 VERBOSE=false
 
 # Argument parsing
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --path=*)
-      TARGET_PATH="${1#*=}"
+      ROOT_DIR="${1#*=}"
+      shift
+      ;;
+    --verbose=*)
+      VERBOSE="${1#*=}"
       shift
       ;;
     --verbose)
@@ -39,8 +43,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Validate path
-if [[ ! -d "$TARGET_PATH" ]]; then
-  warning "❌ Error: '$TARGET_PATH' is not a valid directory"
+if [[ ! -d "$ROOT_DIR" ]]; then
+  warning "❌ Error: '$ROOT_DIR' is not a valid directory"
   exit 1
 fi
 
@@ -56,7 +60,7 @@ fi
 TMP_LOG=$(mktemp)
 
 # Recursively check .mp4 and .mkv files for playability
-find "$TARGET_PATH" -type f \( -iname "*.mp4" -o -iname "*.mkv" \) | while IFS= read -r file; do
+find "$ROOT_DIR" -type f \( -iname "*.mp4" -o -iname "*.mkv" \) | while IFS= read -r file; do
   if [[ -z "$VERBOSE" ]]; then
     info "Checking: $file"
   fi

@@ -13,6 +13,10 @@ DRY_RUN=false
 # Argument parsing
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --dry-run=*)
+      DRY_RUN="${1#*=}"
+      shift
+      ;;
     --dry-run)
       DRY_RUN=true
       shift

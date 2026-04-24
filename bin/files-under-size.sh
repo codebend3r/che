@@ -27,6 +27,10 @@ while [[ $# -gt 0 ]]; do
       PATH_ARG="${1#*=}";
       shift
       ;;
+    --dry-run=*)
+      DRY_RUN="${1#*=}"
+      shift
+      ;;
     --dry-run)
       DRY_RUN=true
       shift

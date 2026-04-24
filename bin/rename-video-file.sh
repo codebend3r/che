@@ -4,9 +4,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/utils.sh" --source-only
 
 # Usage:
-#   rename-video-file [--path=/path/to/dir] [--recursive] [--capitalizePreps=true|false] [--dry-run=true|false] [--ignore-words=WORD1,WORD2]
+#   rename-video-file [--path=/path/to/dir] [--recursive] [--capitalize-preps=true|false] [--dry-run=true|false] [--ignore-words=WORD1,WORD2]
 
-TARGET_PATH=""
+ROOT_DIR=""
 CAPITALIZE_PREPS="false"
 RECURSIVE="false"
 DRY_RUN="true"
@@ -16,7 +16,7 @@ IGNORE_WORDS=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --path=*)
-      TARGET_PATH="${1#*=}";
+      ROOT_DIR="${1#*=}";
       shift
       ;;
     --recursive=*)
@@ -39,27 +39,27 @@ while [[ $# -gt 0 ]]; do
       IGNORE_WORDS="${1#*=}";
       shift
       ;;
-    --capitalizePreps=*)
+    --capitalize-preps=*)
       CAPITALIZE_PREPS="${1#*=}";
       shift
       ;;
-    --capitalizePreps)
+    --capitalize-preps)
       CAPITALIZE_PREPS="true";
       shift
       ;;
     -h|--help)
-      warning "Usage: $0 --path=/path/to/media [--recursive] [--capitalizePreps=true|false] [--dry-run=true|false] [--ignore-words=WORD1,WORD2]"
+      warning "Usage: $0 --path=/path/to/media [--recursive] [--capitalize-preps=true|false] [--dry-run=true|false] [--ignore-words=WORD1,WORD2]"
       exit 0
       ;;
     *)
       warning "Unknown argument: $1"
-      warning "Usage: $0 --path=/path/to/media [--recursive] [--capitalizePreps=true|false] [--dry-run=true|false] [--ignore-words=WORD1,WORD2]"
+      warning "Usage: $0 --path=/path/to/media [--recursive] [--capitalize-preps=true|false] [--dry-run=true|false] [--ignore-words=WORD1,WORD2]"
       exit 1
       ;;
   esac
 done
 
-note "Scanning: $TARGET_PATH"
+note "Scanning: $ROOT_DIR"
 note "Recursive: $RECURSIVE"
 note "Capitalize Prepositions: $CAPITALIZE_PREPS"
 note "Dry Run: $DRY_RUN"
@@ -74,7 +74,7 @@ if [[ "$RECURSIVE" == "false" ]]; then
 fi
 
 # Loop through all .mp4 files in the specified path
-find "$TARGET_PATH" "${FIND_OPTS[@]}" -type f -name "*.mp4" -print0 | while IFS= read -r -d '' file; do
+find "$ROOT_DIR" "${FIND_OPTS[@]}" -type f -name "*.mp4" -print0 | while IFS= read -r -d '' file; do
   [[ -f "$file" ]] || continue
   
   # info "Checking file: $(basename "$file")"

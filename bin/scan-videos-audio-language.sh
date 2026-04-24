@@ -12,13 +12,13 @@ info "Running command in $(pwd)"
 #   scan-videos-audio-language --path=./
 
 # Default path
-TARGET_PATH=""
+ROOT_DIR=""
 
 # Argument parsing
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --path=*)
-      TARGET_PATH="${1#*=}"
+      ROOT_DIR="${1#*=}"
       shift
       ;;
     -h|--help)
@@ -34,8 +34,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Validate path
-if [[ ! -d "$TARGET_PATH" ]]; then
-  info "❌ Error: '$TARGET_PATH' is not a valid directory"
+if [[ ! -d "$ROOT_DIR" ]]; then
+  info "❌ Error: '$ROOT_DIR' is not a valid directory"
   exit 1
 fi
 
@@ -66,7 +66,7 @@ declare -A LANG_COLOR=(
 DEFAULT_COLOR="\033[90m" # Gray for unknown languages
 
 # Find video files, sort alphabetically, and process each
-find "$TARGET_PATH" -type f | grep -Ei "\.($EXTENSIONS)$" | sort | while read -r file; do
+find "$ROOT_DIR" -type f | grep -Ei "\.($EXTENSIONS)$" | sort | while read -r file; do
   info "File: $file"
 
   # Extract languages

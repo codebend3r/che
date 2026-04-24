@@ -20,7 +20,9 @@ WITH_FOLDER=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --path=*) DIR="${1#*=}"; shift ;;
+    --recursive=*) RECURSE="${1#*=}"; shift ;;
     --recursive) RECURSE=true; shift ;;
+    --with-folder=*) WITH_FOLDER="${1#*=}"; shift ;;
     --with-folder) WITH_FOLDER=true; shift ;;
     --sort=*)
       SORT_METHOD="${1#*=}"

@@ -69,8 +69,16 @@ while [[ $# -gt 0 ]]; do
       LIMIT="${1#*=}"
       shift
       ;;
+    --full-path=*)
+      SHOW_FULL_PATH="${1#*=}"
+      shift
+      ;;
     --full-path)
       SHOW_FULL_PATH=true
+      shift
+      ;;
+    --debug=*)
+      DEBUG="${1#*=}"
       shift
       ;;
     --debug)

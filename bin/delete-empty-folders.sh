@@ -20,7 +20,9 @@ DELETED_COUNT=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --path=*) ROOT_DIR="${1#*=}"; shift ;;
+    --dry-run=*) DRY_RUN="${1#*=}"; shift ;;
     --dry-run) DRY_RUN=true; shift ;;
+    --verbose=*) VERBOSE="${1#*=}"; shift ;;
     --verbose) VERBOSE=true; shift ;;
     -h|--help)
       echo "Usage: $0 --path=/path/to/media [--dry-run] [--verbose]"

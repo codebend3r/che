@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-TARGET_PATH=""
+ROOT_DIR=""
 VERBOSE=false
 # Allowed codecs for Direct Play (common safe set)
 ALLOWED_VIDEO_CODECS=("h264" "hevc")
@@ -15,7 +15,11 @@ ALLOWED_CONTAINERS=("mov" "mp4" "mkv")
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --path=*)
-      TARGET_PATH="${1#*=}"
+      ROOT_DIR="${1#*=}"
+      shift
+      ;;
+    --verbose=*)
+      VERBOSE="${1#*=}"
       shift
       ;;
     --verbose)
@@ -34,11 +38,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-note "Scanning: $TARGET_PATH"
+note "Scanning: $ROOT_DIR"
 note "Verbose: $VERBOSE"
 note "----------------------------------------------------"
 
-if [[ -z "$TARGET_PATH" ]]; then
+if [[ -z "$ROOT_DIR" ]]; then
   echo "Error: You must provide a path with --path="
   exit 1
 fi
@@ -48,13 +52,13 @@ if ! command -v ffprobe &>/dev/null; then
   exit 1
 fi
 
-echo "Scanning for problematic codecs in: $TARGET_PATH"
+echo "Scanning for problematic codecs in: $ROOT_DIR"
 echo "Allowed Video: ${ALLOWED_VIDEO_CODECS[*]}"
 echo "Allowed Audio: ${ALLOWED_AUDIO_CODECS[*]}"
 echo "Allowed Containers: ${ALLOWED_CONTAINERS[*]}"
 echo "----------------------------------------------------"
 
-find "$TARGET_PATH" -type f \( -iname "*.mp4" -o -iname "*.mkv" -o -iname "*.mov" -o -iname "*.avi" \) | while read -r file; do
+find "$ROOT_DIR" -type f \( -iname "*.mp4" -o -iname "*.mkv" -o -iname "*.mov" -o -iname "*.avi" \) | while read -r file; do
   # Extract codecs and container
   container_ext="${file##*.}"
   video_codec=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$file" || echo "unknown")

@@ -27,8 +27,16 @@ while [[ $# -gt 0 ]]; do
       IFS=',' read -r -a EXT_LIST <<< "${1#*=}"
       shift
       ;;
+    --dry-run=*)
+      DRY_RUN="${1#*=}"
+      shift
+      ;;
     --dry-run)
       DRY_RUN=true
+      shift
+      ;;
+    --verbose=*)
+      VERBOSE="${1#*=}"
       shift
       ;;
     --verbose)

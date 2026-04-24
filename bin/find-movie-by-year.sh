@@ -13,14 +13,14 @@ info "Running command in $(pwd)"
 #   find-movie-by-year --year=YYYY [--path=/path/to/search]
 
 # Default values
-TARGET_PATH="."
+ROOT_DIR="."
 YEAR=""
 
 # Argument parsing
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --path=*)
-      TARGET_PATH="${1#*=}"
+      ROOT_DIR="${1#*=}"
       shift
       ;;
     --year=*)
@@ -49,4 +49,4 @@ fi
 EXTENSIONS="mp4|mkv|avi|mov|wmv|flv|webm"
 
 # Search for movies with the specified year in their filename
-find "$TARGET_PATH" -type d -iname "*(${YEAR})" -print
+find "$ROOT_DIR" -type d -iname "*(${YEAR})" -print

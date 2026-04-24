@@ -18,20 +18,6 @@ ROOT_DIR=""
 DELETED_COUNT=0
 SCANNED_COUNT=0
 
-# Human-readable size helper
-# format_bytes() {
-#   local bytes=$1
-#   if [[ $bytes -ge 1073741824 ]]; then
-#     echo "$(echo "scale=2; $bytes/1073741824" | bc) GB"
-#   elif [[ $bytes -ge 1048576 ]]; then
-#     echo "$(echo "scale=2; $bytes/1048576" | bc) MB"
-#   elif [[ $bytes -ge 1024 ]]; then
-#     echo "$(echo "scale=2; $bytes/1024" | bc) KB"
-#   else
-#     echo "${bytes} B"
-#   fi
-# }
-
 # SxxEyy where episode allows 2–3 digits
 EP_REGEX='[Ss][0-9]{2}[Ee][0-9]{2,3}'
 
@@ -41,8 +27,16 @@ while [[ $# -gt 0 ]]; do
       ROOT_DIR="${1#*=}"
       shift
       ;;
+    --dry-run=*)
+      DRY_RUN="${1#*=}"
+      shift
+      ;;
     --dry-run)
       DRY_RUN=true
+      shift
+      ;;
+    --verbose=*)
+      VERBOSE="${1#*=}"
       shift
       ;;
     --verbose)
