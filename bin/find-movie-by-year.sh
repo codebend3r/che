@@ -1,13 +1,16 @@
 #!/opt/homebrew/bin/bash
 
-#!/usr/bin/env bash
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/utils.sh" --source-only
 
 set -euo pipefail
 
-# v2.0.3
+# v2.0.4
+
+info "Running command in $(pwd)"
+
+# Usage:
+#   find-movie-by-year --year=YYYY [--path=/path/to/search]
 
 # Default values
 TARGET_PATH="."
@@ -47,7 +50,3 @@ EXTENSIONS="mp4|mkv|avi|mov|wmv|flv|webm"
 
 # Search for movies with the specified year in their filename
 find "$TARGET_PATH" -type d -iname "*(${YEAR})" -print
-# find "$TARGET_PATH" -type f \
-#   -iregex ".*\.\($EXTENSIONS\)" \
-#   -iregex ".*\(${YEAR}\).*" \
-#   -print

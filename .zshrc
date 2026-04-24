@@ -40,6 +40,11 @@ rebase-all-branches() {
 # Video / media helpers
 # -----------------------------------------------------------------------------
 
+rename-video-file() {
+  bash "${SHELL_FUNCTIONS_BIN}/rename-video-file.sh" "$@"
+  playsound-5
+}
+
 show-codecs() {
   bash "${SHELL_FUNCTIONS_BIN}/show-codecs.sh" "$@"
   playsound-6
