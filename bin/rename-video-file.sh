@@ -3,12 +3,17 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/utils.sh" --source-only
 
+# v3.0.0
+
+info "Running command in $(pwd)"
+
 # Usage:
-#   rename-video-file [--path=/path/to/dir] [--recursive] [--capitalize-preps=true|false] [--dry-run=true|false] [--ignore-words=WORD1,WORD2]
+#   rename-video-file [--path=/path/to/dir] [--recursive] [--rename-folders] [--capitalize-preps] [--dry-run] [--ignore-words=WORD1,WORD2]
 
 ROOT_DIR=""
 CAPITALIZE_PREPS="false"
-RECURSIVE="false"
+RECURSIVE="true"
+RENAME_FOLDERS="true"
 DRY_RUN="true"
 IGNORE_WORDS=""
 
@@ -39,6 +44,14 @@ while [[ $# -gt 0 ]]; do
       IGNORE_WORDS="${1#*=}";
       shift
       ;;
+    --rename-folders=*)
+      RENAME_FOLDERS="${1#*=}";
+      shift
+      ;;
+    --rename-folders)
+      RENAME_FOLDERS="true";
+      shift
+      ;;
     --capitalize-preps=*)
       CAPITALIZE_PREPS="${1#*=}";
       shift
@@ -48,12 +61,12 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     -h|--help)
-      warning "Usage: $0 --path=/path/to/media [--recursive] [--capitalize-preps=true|false] [--dry-run=true|false] [--ignore-words=WORD1,WORD2]"
+      warning "Usage: $0 --path=/path/to/media [--recursive] [--rename-folders] [--capitalize-preps=true|false] [--dry-run=true|false] [--ignore-words=WORD1,WORD2]"
       exit 0
       ;;
     *)
       warning "Unknown argument: $1"
-      warning "Usage: $0 --path=/path/to/media [--recursive] [--capitalize-preps=true|false] [--dry-run=true|false] [--ignore-words=WORD1,WORD2]"
+      warning "Usage: $0 --path=/path/to/media [--recursive] [--rename-folders] [--capitalize-preps=true|false] [--dry-run=true|false] [--ignore-words=WORD1,WORD2]"
       exit 1
       ;;
   esac
@@ -61,6 +74,7 @@ done
 
 note "Scanning: $ROOT_DIR"
 note "Recursive: $RECURSIVE"
+note "Rename Folders: $RENAME_FOLDERS"
 note "Capitalize Prepositions: $CAPITALIZE_PREPS"
 note "Dry Run: $DRY_RUN"
 if [[ -n "$IGNORE_WORDS" ]]; then
@@ -71,6 +85,59 @@ note "----------------------------------------------------"
 FIND_OPTS=()
 if [[ "$RECURSIVE" == "false" ]]; then
   FIND_OPTS+=("-maxdepth" "1")
+fi
+
+# Rename folders first if --rename-folders is enabled
+if [[ "$RENAME_FOLDERS" == "true" ]]; then
+  FOLDER_FIND_OPTS=()
+  if [[ "$RECURSIVE" == "false" ]]; then
+    FOLDER_FIND_OPTS+=("-maxdepth" "1")
+  fi
+
+  # Use -depth to process deepest folders first (bottom-up), avoiding broken paths
+  find "$ROOT_DIR" "${FOLDER_FIND_OPTS[@]}" -depth -mindepth 1 -type d -not -name "._*" -print0 | while IFS= read -r -d '' folder; do
+    [[ -d "$folder" ]] || continue
+
+    foldername=$(basename "$folder")
+    [[ "$foldername" == ._* ]] && continue
+    parent=$(dirname "$folder")
+
+    # Normalize all forms of single quotes/apostrophes/backticks to a standard straight apostrophe
+    foldername=$(echo "$foldername" | sed -e "s/'/'/g" -e "s/'/'/g" -e "s/´/'/g" -e 's/`/'\''/g')
+
+    # Add spaces around all dashes, except between all-caps words and numbers
+    foldername=$(echo "$foldername" | perl -pe 's/\s*-\s*/ - /g; s/\b([A-Z]+)\s*-\s*([0-9]+)/$1-$2/g')
+
+    # Title case the folder name
+    if [[ -n "$IGNORE_WORDS" ]]; then
+      ignore_pattern="|\b(${IGNORE_WORDS//,/|})\b"
+      foldername_cased=$(echo "$foldername" | perl -pe "s/\b([a-zA-Z]{3,5}-[0-9]{3,5})\b${ignore_pattern}|\b(\w)(\w*)/\$1 ? uc(\$1) : \$2 ? \$2 : \"\U\$3\L\$4\"/ge")
+    else
+      foldername_cased=$(echo "$foldername" | perl -pe 's/\b([a-zA-Z]{3,5}-[0-9]{3,5})\b|\b(\w)(\w*)/$1 ? uc($1) : "\U$2\L$3"/ge')
+    fi
+
+    if [[ "$CAPITALIZE_PREPS" == "false" ]]; then
+      foldername_cased=$(echo "$foldername_cased" | perl -pe 's/\b(And|The|A|An|By|For|In|Of|On|To|With|At|But|Or|Nor|So|Yet|As)\b/\L$1/gi')
+      foldername_cased=$(echo "$foldername_cased" | perl -pe 's/^([^A-Za-z]*)([A-Za-z])/$1\U$2/')
+      foldername_cased=$(echo "$foldername_cased" | perl -pe 's/(-\s*)([^A-Za-z]*)([A-Za-z])/$1$2\U$3/g')
+    fi
+
+    # Ensure any 1-2 letters after an apostrophe are lowercase (e.g. Friend's)
+    foldername_cased=$(echo "$foldername_cased" | perl -pe "s/'([A-Za-z]{1,2})\b/'\L\$1/g")
+
+    new_folder="${parent}/${foldername_cased}"
+
+    if [[ "$folder" != "$new_folder" ]]; then
+      if [[ "$DRY_RUN" == "true" ]]; then
+        log "📁 [DRY RUN] Would rename folder: $(basename "$folder") ➡️ $(basename "$new_folder")"
+      else
+        log "📁 Renaming folder: $(basename "$folder") ➡️ $(basename "$new_folder")"
+        mv -v "$folder" "$new_folder"
+      fi
+    else
+      warning "⚠️ Skipping folder (already correct format): $(basename "$folder")"
+    fi
+  done
 fi
 
 # Loop through all .mp4 and .mkv files in the specified path
@@ -85,7 +152,7 @@ find "$ROOT_DIR" "${FIND_OPTS[@]}" -type f \( -name "*.mp4" -o -name "*.mkv" \) 
   # Normalize all forms of single quotes/apostrophes/backticks to a standard straight apostrophe
   filename=$(echo "$filename" | sed -e "s/’/'/g" -e "s/‘/'/g" -e "s/´/'/g" -e 's/`/'\''/g')
 
-  # Add spaces around all dashes, except between all-caps words and numbers (e.g. CON-323 stays CON-323)
+  # Add spaces around all dashes, except between all-caps words and numbers
   filename=$(echo "$filename" | perl -pe 's/\s*-\s*/ - /g; s/\b([A-Z]+)\s*-\s*([0-9]+)/$1-$2/g')
   
   if [[ $filename =~ (.*-\ )([^.]+)(\..*) ]]; then
@@ -138,12 +205,12 @@ find "$ROOT_DIR" "${FIND_OPTS[@]}" -type f \( -name "*.mp4" -o -name "*.mkv" \) 
   
   if [[ "$file" != "$new" ]]; then
     if [[ "$DRY_RUN" == "true" ]]; then
-      log "[DRY RUN] Would rename: $(basename "$file") -> $(basename "$new")"
+      log "👓 [DRY RUN] Would rename: $(basename "$file") ➡️ $(basename "$new")"
     else
-      log "Renaming: $(basename "$file") -> $(basename "$new")"
+      log "📝 Renaming: $(basename "$file") ➡️ $(basename "$new")"
       mv -v "$file" "$new"
     fi
   else
-    warning "Skipping (already correct format): $(basename "$file")"
+    warning "⚠️ Skipping (already correct format): $(basename "$file")"
   fi
 done

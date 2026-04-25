@@ -5,6 +5,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 set -euo pipefail
 
+info "Running command in $(pwd)"
+
+# Usage:
+#   make-alpha-dir [--path=/path/to/dir]
+
 # Default path
 ROOT_DIR=""
 
