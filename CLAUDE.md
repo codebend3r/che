@@ -38,3 +38,10 @@ Video scripts rely on `ffprobe`/`ffmpeg`, plus `bc` for arithmetic and `perl` fo
 1. Edit/create the script under the appropriate `bin/<category>/` and `chmod +x` it.
 2. If it's new, add a wrapper function to `.zshrc` (with an appropriate `playsound-N` call) so it can be invoked by name from any shell session after the user re-sources their `~/.zshrc`.
 3. Keep flag parsing and dry-run semantics consistent with neighboring scripts.
+
+## Git commit messages
+
+- Short and concise.
+- Favour bullet points over prose.
+- Easy to read at a glance.
+- Do **not** add a `Co-Authored-By: Claude Opus` (or any Claude) trailer.
