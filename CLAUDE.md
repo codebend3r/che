@@ -16,7 +16,6 @@ A personal collection of zsh/bash helper scripts shared across the user's machin
   ```
   Provides color logging helpers (`log`, `warning`, `info`, `note`, `success`) and `format_bytes` for human-readable sizes.
 - `.zshrc` — defines thin shell-function wrappers that `bash`-invoke each script (via `${SHELL_FUNCTIONS_BIN}/<category>/<script>.sh`) and then call a `playsound-N` notification (defined outside this repo). When adding a new script, also add a wrapper here so it stays callable by name. The `.zshrc` header comment marks this repo as the **single source of truth** for these wrappers.
-- `bin/git/pre-push.sh` — installed by the user as a git pre-push hook elsewhere; not auto-installed by the repo.
 - `bin/version-bump.sh` — vestigial (uses `npm`/`pnpm`/`pnpm changelog`); does not apply to this repo and shouldn't be invoked here.
 
 ## Conventions for scripts in `bin/<category>/`
