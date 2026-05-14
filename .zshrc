@@ -12,27 +12,27 @@ SHELL_FUNCTIONS_BIN="${HOME}/Developer/git/shell-functions/bin"
 # -----------------------------------------------------------------------------
 
 clean-stale-branches() {
-  DRY_RUN=false bash "${SHELL_FUNCTIONS_BIN}/clean-stale-branches.sh"
+  DRY_RUN=false bash "${SHELL_FUNCTIONS_BIN}/git/clean-stale-branches.sh"
   playsound-4
 }
 
 clean-stale-branches-dr() {
-  DRY_RUN=true bash "${SHELL_FUNCTIONS_BIN}/clean-stale-branches.sh"
+  DRY_RUN=true bash "${SHELL_FUNCTIONS_BIN}/git/clean-stale-branches.sh"
   playsound-7
 }
 
 update-local-branches() {
-  bash "${SHELL_FUNCTIONS_BIN}/update-local-branches.sh" "$@"
+  bash "${SHELL_FUNCTIONS_BIN}/git/update-local-branches.sh" "$@"
   playsound-5
 }
 
 checkout-my-branches() {
-  bash "${SHELL_FUNCTIONS_BIN}/checkout-my-branches.sh" "$@"
+  bash "${SHELL_FUNCTIONS_BIN}/git/checkout-my-branches.sh" "$@"
   playsound-7
 }
 
 rebase-all-branches() {
-  bash "${SHELL_FUNCTIONS_BIN}/rebase-all-branches.sh" "$@"
+  bash "${SHELL_FUNCTIONS_BIN}/git/rebase-all-branches.sh" "$@"
   playsound-3
 }
 
@@ -41,47 +41,47 @@ rebase-all-branches() {
 # -----------------------------------------------------------------------------
 
 rename-video-file() {
-  bash "${SHELL_FUNCTIONS_BIN}/rename-video-file.sh" "$@"
+  bash "${SHELL_FUNCTIONS_BIN}/video/rename-video-file.sh" "$@"
   playsound-5
 }
 
 show-codecs() {
-  bash "${SHELL_FUNCTIONS_BIN}/show-codecs.sh" "$@"
+  bash "${SHELL_FUNCTIONS_BIN}/video/show-codecs.sh" "$@"
   playsound-6
 }
 
 fix-codecs() {
-  bash "${SHELL_FUNCTIONS_BIN}/fix-codecs.sh" "$@"
+  bash "${SHELL_FUNCTIONS_BIN}/video/fix-codecs.sh" "$@"
   playsound-7
 }
 
 find-video-mkv-issues() {
-  bash "${SHELL_FUNCTIONS_BIN}/find-video-mkv-issues.sh" "$@"
+  bash "${SHELL_FUNCTIONS_BIN}/video/find-video-mkv-issues.sh" "$@"
   playsound-4
 }
 
 validate-video-files() {
-  bash "${SHELL_FUNCTIONS_BIN}/validate-video-files.sh" "$@"
+  bash "${SHELL_FUNCTIONS_BIN}/video/validate-video-files.sh" "$@"
   playsound-2
 }
 
 scan-videos-audio-language() {
-  bash "${SHELL_FUNCTIONS_BIN}/scan-videos-audio-language.sh" "$@"
+  bash "${SHELL_FUNCTIONS_BIN}/video/scan-videos-audio-language.sh" "$@"
   playsound-3
 }
 
 delete-duplicate-videos() {
-  bash "${SHELL_FUNCTIONS_BIN}/delete-duplicate-videos.sh" "$@"
+  bash "${SHELL_FUNCTIONS_BIN}/video/delete-duplicate-videos.sh" "$@"
   playsound-6
 }
 
 video-files-under() {
-  bash "${SHELL_FUNCTIONS_BIN}/video-files-under.sh" "$@"
+  bash "${SHELL_FUNCTIONS_BIN}/video/video-files-under.sh" "$@"
   playsound-4
 }
 
 video-list() {
-  bash "${SHELL_FUNCTIONS_BIN}/video-list.sh" "$@"
+  bash "${SHELL_FUNCTIONS_BIN}/video/video-list.sh" "$@"
   playsound-5
 }
 
@@ -90,42 +90,42 @@ video-list() {
 # -----------------------------------------------------------------------------
 
 delete-empty-folders() {
-  bash "${SHELL_FUNCTIONS_BIN}/delete-empty-folders.sh" "$@"
+  bash "${SHELL_FUNCTIONS_BIN}/files/delete-empty-folders.sh" "$@"
   playsound-6
 }
 
 delete-duplicate-folders() {
-  bash "${SHELL_FUNCTIONS_BIN}/delete-duplicate-folders.sh" "$@"
+  bash "${SHELL_FUNCTIONS_BIN}/files/delete-duplicate-folders.sh" "$@"
   playsound-6
 }
 
 delete-smb-files() {
-  bash "${SHELL_FUNCTIONS_BIN}/delete-smb-files.sh" "$@"
+  bash "${SHELL_FUNCTIONS_BIN}/files/delete-smb-files.sh" "$@"
   playsound-6
 }
 
 delete-by-ext() {
-  bash "${SHELL_FUNCTIONS_BIN}/delete-by-ext.sh" "$@"
+  bash "${SHELL_FUNCTIONS_BIN}/files/delete-by-ext.sh" "$@"
   playsound-6
 }
 
 files-under-size() {
-  bash "${SHELL_FUNCTIONS_BIN}/files-under-size.sh" "$@"
+  bash "${SHELL_FUNCTIONS_BIN}/files/files-under-size.sh" "$@"
   playsound-4
 }
 
 find-largest-files() {
-  bash "${SHELL_FUNCTIONS_BIN}/find-largest-files.sh" "$@"
+  bash "${SHELL_FUNCTIONS_BIN}/files/find-largest-files.sh" "$@"
   playsound-2
 }
 
 make-alpha-dir() {
-  bash "${SHELL_FUNCTIONS_BIN}/make-alpha-dir.sh" "$@"
+  bash "${SHELL_FUNCTIONS_BIN}/files/make-alpha-dir.sh" "$@"
   playsound-4
 }
 
 compress-folders() {
-  bash "${SHELL_FUNCTIONS_BIN}/compress-folders.sh" "$@"
+  bash "${SHELL_FUNCTIONS_BIN}/files/compress-folders.sh" "$@"
   playsound-7
 }
 
@@ -139,12 +139,12 @@ list-permission() {
 # -----------------------------------------------------------------------------
 
 find-movie-by-year() {
-  bash "${SHELL_FUNCTIONS_BIN}/find-movie-by-year.sh" "$@"
+  bash "${SHELL_FUNCTIONS_BIN}/video/find-movie-by-year.sh" "$@"
   playsound-2
 }
 
 largest-tv-shows() {
-  bash "${SHELL_FUNCTIONS_BIN}/largest-tv-shows.sh" "$@"
+  bash "${SHELL_FUNCTIONS_BIN}/video/largest-tv-shows.sh" "$@"
   playsound-2
 }
 
@@ -153,15 +153,15 @@ largest-tv-shows() {
 # -----------------------------------------------------------------------------
 
 mount-all-drives() {
-  bash "${SHELL_FUNCTIONS_BIN}/mount-all-drives.sh"
+  bash "${SHELL_FUNCTIONS_BIN}/drives/mount-all-drives.sh"
   playsound-7
 }
 
 eject-all-drives() {
-  bash "${SHELL_FUNCTIONS_BIN}/eject-all-drives.sh"
+  bash "${SHELL_FUNCTIONS_BIN}/drives/eject-all-drives.sh"
   playsound-7
 }
 
 ping-nas() {
-  bash "${SHELL_FUNCTIONS_BIN}/ping-nas.sh"
+  bash "${SHELL_FUNCTIONS_BIN}/drives/ping-nas.sh"
 }
