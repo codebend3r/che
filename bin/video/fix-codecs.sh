@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 set -euo pipefail
 
-# v2.0.3
+# v2.0.4
 
 info "Running command in $(pwd)"
 
@@ -65,7 +65,7 @@ find "$ROOT_DIR" -type f \( -iname "*.mp4" -o -iname "*.mkv" -o -iname "*.mov" -
 
   log "Processing: $file"
   
-  ffmpeg -i "$file" \
+  ffmpeg -nostdin -i "$file" \
     -map 0:v:0 -map 0:a:0 -map 0:s:0? \
     -c:v libx265 -preset slow -crf 22 \
     -c:a aac -b:a 384k \

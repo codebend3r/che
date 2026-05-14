@@ -31,11 +31,6 @@ checkout-my-branches() {
   playsound-7
 }
 
-rebase-all-branches() {
-  bash "${SHELL_FUNCTIONS_BIN}/git/rebase-all-branches.sh" "$@"
-  playsound-3
-}
-
 # -----------------------------------------------------------------------------
 # Video / media helpers
 # -----------------------------------------------------------------------------
@@ -70,14 +65,14 @@ scan-videos-audio-language() {
   playsound-3
 }
 
+remove-metadata() {
+  bash "${SHELL_FUNCTIONS_BIN}/video/remove-metadata.sh" "$@"
+  playsound-4
+}
+
 delete-duplicate-videos() {
   bash "${SHELL_FUNCTIONS_BIN}/video/delete-duplicate-videos.sh" "$@"
   playsound-6
-}
-
-video-files-under() {
-  bash "${SHELL_FUNCTIONS_BIN}/video/video-files-under.sh" "$@"
-  playsound-4
 }
 
 video-list() {
@@ -91,11 +86,6 @@ video-list() {
 
 delete-empty-folders() {
   bash "${SHELL_FUNCTIONS_BIN}/files/delete-empty-folders.sh" "$@"
-  playsound-6
-}
-
-delete-duplicate-folders() {
-  bash "${SHELL_FUNCTIONS_BIN}/files/delete-duplicate-folders.sh" "$@"
   playsound-6
 }
 
