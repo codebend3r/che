@@ -153,15 +153,20 @@ largest-tv-shows() {
 # -----------------------------------------------------------------------------
 
 mount-all-drives() {
-  bash "${SHELL_FUNCTIONS_BIN}/drives/mount-all-drives.sh"
+  bash "${SHELL_FUNCTIONS_BIN}/drives/mount-all-drives.sh" "$@"
   playsound-7
 }
 
 eject-all-drives() {
-  bash "${SHELL_FUNCTIONS_BIN}/drives/eject-all-drives.sh"
+  bash "${SHELL_FUNCTIONS_BIN}/drives/eject-all-drives.sh" "$@"
+  playsound-7
+}
+
+eject-all-drives-dr() {
+  bash "${SHELL_FUNCTIONS_BIN}/drives/eject-all-drives.sh" --dry-run "$@"
   playsound-7
 }
 
 ping-nas() {
-  bash "${SHELL_FUNCTIONS_BIN}/drives/ping-nas.sh"
+  bash "${SHELL_FUNCTIONS_BIN}/drives/ping-nas.sh" "$@"
 }
