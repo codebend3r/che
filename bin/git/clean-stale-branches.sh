@@ -1,71 +1,100 @@
-#!/opt/homebrew/bin/bash
+#!/usr/bin/env bash
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/../utils.sh" --source-only
 
-info "--------------------------------"
-info "clean stale branches"
-info "--------------------------------"
+set -euo pipefail
 
-# Defaults
-DRY_RUN=false
+# v3.0.0
 
-# Argument parsing
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --dry-run=*)
-      DRY_RUN="${1#*=}"
-      shift
-      ;;
-    --dry-run)
-      DRY_RUN=true
-      shift
-      ;;
-    -h|--help)
-      echo "Usage: $0 [--dry-run]"
-      exit 0
-      ;;
-    *)
-      warning "Unknown argument: $1"
-      echo "Usage: $0 [--dry-run]"
-      exit 1
-      ;;
+DEFAULT_PROTECTED=(main master dev develop staging)
+
+usage() {
+  cat <<EOF
+Usage:
+  $(basename "$0") [--dry-run] [--protect=BRANCH1,BRANCH2,...]
+
+Description:
+  🧹 Delete local branches whose upstream is gone (the remote branch was
+  deleted). Protected branches and the current branch are never deleted.
+
+Options:
+  --dry-run        Show what would be deleted, change nothing
+  --protect=LIST   Comma-separated extra branches to protect
+                   (defaults: ${DEFAULT_PROTECTED[*]})
+  --help           Show help
+
+Env:
+  DRY_RUN=true     Same as --dry-run (used by the .zshrc -dr wrapper)
+EOF
+}
+
+DRY_RUN="${DRY_RUN:-false}"
+EXTRA_PROTECTED=()
+
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run=*) DRY_RUN="${arg#*=}" ;;
+    --dry-run)   DRY_RUN=true ;;
+    --protect=*) IFS=',' read -r -a EXTRA_PROTECTED <<< "${arg#*=}" ;;
+    --help|-h)   usage; exit 0 ;;
+    *) warning "❌ Unknown argument: $arg"; usage; exit 1 ;;
   esac
 done
 
-# Protected branches that should not be deleted
-PROTECTED_BRANCHES=("main" "dev" "staging")
+PROTECTED=("${DEFAULT_PROTECTED[@]}" ${EXTRA_PROTECTED[@]+"${EXTRA_PROTECTED[@]}"})
+CURRENT_BRANCH=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
 
-# Fetch all remotes
-git fetch --all
+is_protected() {
+  local b=$1 p
+  for p in "${PROTECTED[@]}"; do
+    [[ "$b" == "$p" ]] && return 0
+  done
+  return 1
+}
 
-wasCleaned=false
+header_suffix=""
+[[ "$DRY_RUN" == true ]] && header_suffix=" 🌵 (dry run)"
 
-info "Checking for stale branches..."
+note "═══════════════════════════════════════════"
+note "🧹  clean-stale-branches${header_suffix}"
+note "═══════════════════════════════════════════"
 
-# Loop through all local branches
-for branch in $(git for-each-ref --format='%(refname:short)' refs/heads/); do
-  # Skip protected branches
-  if [[ " ${PROTECTED_BRANCHES[*]} " =~ " $branch " ]]; then
+info "📡 Fetching + pruning remotes..."
+git fetch --all --prune --quiet
+
+info "🔍 Scanning local branches for gone upstreams..."
+
+stale=()
+while IFS='|' read -r branch track; do
+  [[ -z "$branch" ]] && continue
+  if is_protected "$branch"; then
     continue
   fi
-
-  info "branch: $branch"
-
-  # Check if branch is stale (tracking remote gone)
-  if git branch -vv | grep -E "\[origin/${branch//\//\\/}: gone\]" > /dev/null; then
-    if [[ "$DRY_RUN" == true ]]; then
-      warning "Would delete stale branch: $branch"
-    else
-      warning "Deleting stale branch: $branch"
-      git branch -D "$branch"
-    fi
-    wasCleaned=true
+  if [[ "$branch" == "$CURRENT_BRANCH" ]]; then
+    note "⏭️  Skipping current branch: $branch"
+    continue
   fi
-done
+  if [[ "$track" == *"[gone]"* ]]; then
+    stale+=("$branch")
+  fi
+done < <(git for-each-ref --format='%(refname:short)|%(upstream:track)' refs/heads/)
 
-if [[ $wasCleaned == false ]]; then
-  log "No stale branches were removed"
-elif [[ "$DRY_RUN" == true ]]; then
-  log "Dry run complete. No branches were actually deleted."
+if [[ ${#stale[@]} -eq 0 ]]; then
+  success "✨ No stale branches. All clean! 🎉"
+  exit 0
+fi
+
+if [[ "$DRY_RUN" == true ]]; then
+  warning "🌵 ${#stale[@]} stale branch(es) would be deleted:"
+  for b in "${stale[@]}"; do
+    warning "  • 🪦 $b"
+  done
+  log "💡 Dry run complete. Nothing was actually deleted."
+else
+  for b in "${stale[@]}"; do
+    warning "🗑️  Deleting: $b"
+    git branch -D "$b"
+  done
+  success "✨ Removed ${#stale[@]} stale branch(es). 🎉"
 fi

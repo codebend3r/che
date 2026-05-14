@@ -1,43 +1,128 @@
-#!/opt/homebrew/bin/bash
+#!/usr/bin/env bash
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/../utils.sh" --source-only
 
-info "--------------------------------"
-info "update local branches"
-info "--------------------------------"
+set -euo pipefail
 
-# Get the current branch to return to it later
-ORIGINAL_BRANCH=$(git branch --show-current)
+# v3.0.0
 
-# Fetch all remotes
+usage() {
+  cat <<EOF
+Usage:
+  $(basename "$0") [--limit=N] [--dry-run]
+
+Description:
+  ⬇️  For each local branch with an upstream, rebase onto origin.
+  Conflicts are aborted and reported; the script keeps going.
+
+Options:
+  --limit=N    Only update the N most recently committed branches
+  --dry-run    List branches that would be updated, change nothing
+  --help       Show help
+EOF
+}
+
+LIMIT=0
+DRY_RUN=false
+
+for arg in "$@"; do
+  case "$arg" in
+    --limit=*)  LIMIT="${arg#*=}" ;;
+    --dry-run)  DRY_RUN=true ;;
+    --help|-h)  usage; exit 0 ;;
+    *) warning "❌ Unknown argument: $arg"; usage; exit 1 ;;
+  esac
+done
+
+if ! [[ "$LIMIT" =~ ^[0-9]+$ ]]; then
+  warning "❌ --limit must be a non-negative integer (got: $LIMIT)"
+  exit 1
+fi
+
+header_suffix=""
+[[ "$DRY_RUN" == true ]] && header_suffix=" 🌵 (dry run)"
+
+note "═══════════════════════════════════════════"
+note "⬇️   update-local-branches${header_suffix}"
+note "═══════════════════════════════════════════"
+
+ORIGINAL_BRANCH=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+if [[ -z "$ORIGINAL_BRANCH" ]]; then
+  warning "❌ Detached HEAD — check out a branch first."
+  exit 1
+fi
+
+if [[ "$DRY_RUN" != true && -n "$(git status --porcelain)" ]]; then
+  warning "❌ Working tree is dirty. Commit or stash before running. 🧺"
+  exit 1
+fi
+
+info "📡 Fetching remotes..."
 git fetch --all --quiet
 
-# Loop through all local branches
-for branch in $(git branch --format='%(refname:short)'); do
-  info "Checking out branch: $branch"
+# Branches with an upstream, newest first.
+branches=()
+while IFS= read -r b; do
+  [[ -n "$b" ]] && branches+=("$b")
+done < <(
+  git for-each-ref \
+    --sort=-committerdate \
+    --format='%(refname:short)|%(upstream)' \
+    refs/heads/ \
+  | awk -F'|' '$2 != "" { print $1 }'
+)
 
-  git checkout "$branch"
-  git status "$branch"
+if [[ "$LIMIT" -gt 0 && ${#branches[@]} -gt "$LIMIT" ]]; then
+  branches=("${branches[@]:0:$LIMIT}")
+fi
 
-  # Check if the branch has an upstream tracking branch
-  upstream=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null)
+if [[ ${#branches[@]} -eq 0 ]]; then
+  info "ℹ️  No local branches with upstreams."
+  exit 0
+fi
 
-  if [[ -n "$upstream" ]]; then
-    info "Upstream found for: $branch: $upstream"
+if [[ "$DRY_RUN" == true ]]; then
+  info "🌵 Would update ${#branches[@]} branch(es):"
+  for b in "${branches[@]}"; do
+    info "  • 🌿 $b"
+  done
+  exit 0
+fi
 
-    # Pull the latest changes with rebase
-    if git pull --rebase; then
-      log "Successfully pulled latest changes for: $branch"
-    else
-      warning "Failed to pull changes for: $branch. You may need to resolve conflicts."
-      exit 1  # Exit if rebase fails
-    fi
+succeeded=()
+failed=()
+
+for branch in "${branches[@]}"; do
+  info "📂 Switching to 🌿 $branch"
+  if ! git checkout --quiet "$branch" 2>/dev/null; then
+    warning "  ✗ checkout failed, skipping"
+    failed+=("$branch")
+    continue
+  fi
+
+  log "⬇️  Rebasing $branch onto upstream"
+  if git pull --rebase --quiet; then
+    success "  ✅ $branch up to date"
+    succeeded+=("$branch")
   else
-    info "No upstream found for branch: $branch. Skipping pull."
+    warning "  ❌ rebase failed — aborting and moving on"
+    git rebase --abort 2>/dev/null || true
+    failed+=("$branch")
   fi
 done
 
-# Return to original branch
-info "🔁 Returning to original branch: $ORIGINAL_BRANCH"
-git checkout "$ORIGINAL_BRANCH"
+info "🔁 Returning to 🌿 $ORIGINAL_BRANCH"
+git checkout --quiet "$ORIGINAL_BRANCH"
+
+echo
+success "═══ summary ═══"
+success "✅ Updated: ${#succeeded[@]}"
+if [[ ${#failed[@]} -gt 0 ]]; then
+  warning "❌ Failed:  ${#failed[@]}"
+  for b in "${failed[@]}"; do
+    warning "  • 💥 $b"
+  done
+  exit 1
+fi
+success "🎉 All clean!"

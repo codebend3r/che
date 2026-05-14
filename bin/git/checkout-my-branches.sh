@@ -1,54 +1,106 @@
-#!/opt/homebrew/bin/bash
+#!/usr/bin/env bash
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/../utils.sh" --source-only
 
 set -euo pipefail
 
-# v2.0.4
+# v3.0.0
 
-note "--------------------------------"
-note "checkout my branches"
-note "--------------------------------"
+usage() {
+  cat <<EOF
+Usage:
+  $(basename "$0") [--author=EMAIL] [--limit=N]
 
-# Author to filter
-TARGET_EMAIL="cj.rivas.dev@gmail.com"
+Description:
+  🌿 Check out the most recent N remote branches authored by EMAIL
+  that aren't yet present locally.
 
-# # Get the current branch to return to it later
-# ORIGINAL_BRANCH=$(git branch --show-current)
+Options:
+  --author=EMAIL   Author email to match (default: git config user.email)
+  --limit=N        How many recent remote branches to scan (default: 100)
+  --help           Show help
+EOF
+}
 
-# Fetch all remotes
-git fetch --all --quiet
+AUTHOR="$(git config user.email || true)"
+LIMIT=100
 
-# Step 1: Get all remote branches with their latest commit date (timestamp)
-info "📦 Gathering latest commit dates of all remote branches..."
+for arg in "$@"; do
+  case "$arg" in
+    --author=*) AUTHOR="${arg#*=}" ;;
+    --limit=*)  LIMIT="${arg#*=}" ;;
+    --help|-h)  usage; exit 0 ;;
+    *) warning "❌ Unknown argument: $arg"; usage; exit 1 ;;
+  esac
+done
 
-branch_info=$(for branch in $(git branch -r | grep -v '\->'); do
-  latest_commit=$(git log -1 --pretty=format:"%H" "$branch")
-  commit_date=$(git show -s --format="%ct" "$latest_commit") # Unix timestamp
-  echo "$commit_date $branch"
-done)
+if [[ -z "$AUTHOR" ]]; then
+  warning "❌ No author email — pass --author=EMAIL or set git config user.email"
+  exit 1
+fi
 
-# Step 2: Sort branches by creation date (descending) and take the last 100 created
-latest_100=$(echo "$branch_info" | sort -nr | head -n 100 | awk '{print $2}')
+if ! [[ "$LIMIT" =~ ^[0-9]+$ ]] || [[ "$LIMIT" -lt 1 ]]; then
+  warning "❌ --limit must be a positive integer (got: $LIMIT)"
+  exit 1
+fi
 
-info "🔍 Filtering for branches created by $TARGET_EMAIL..."
+note "═══════════════════════════════════════════"
+note "🌿  checkout-my-branches"
+note "═══════════════════════════════════════════"
 
-# Step 3: Loop through those 100 and filter by first commit author
-while read -r remote_branch; do
-  latest_commit=$(git log -1 --pretty=format:"%H" "$remote_branch")
-  author_email=$(git show -s --format="%ae" "$latest_commit")
+if [[ -n "$(git status --porcelain)" ]]; then
+  warning "❌ Working tree is dirty. Commit or stash before running. 🧺"
+  exit 1
+fi
 
-  if [[ "$author_email" == "$TARGET_EMAIL" ]]; then
-    local_branch=${remote_branch#origin/}
+info "📡 Fetching remotes..."
+git fetch --all --prune --quiet
 
-    # log "✅ $remote_branch created by $author_email"
+info "📦 Scanning ${LIMIT} most recent remote branches for author 👤 ${AUTHOR}..."
 
-    if git show-ref --verify --quiet "refs/heads/$local_branch"; then
-      info "⏭️ Local branch: '$local_branch' already exists. Skipping."
-    else
-      log "🆕 Checking out new branch: '$local_branch'"
-      git checkout -b "$local_branch" --track "$remote_branch"
-    fi
+checked_out=0
+skipped=0
+not_mine=0
+
+# One pass: author email + refname + symref target. Newest first.
+# %(symref) is non-empty for symbolic refs like origin/HEAD — we skip those.
+while IFS='|' read -r author_email remote_branch symref; do
+  [[ -z "$remote_branch" ]] && continue
+  [[ -n "$symref" ]] && continue  # skip origin/HEAD and any other symbolic refs
+
+  author_email="${author_email#<}"
+  author_email="${author_email%>}"
+
+  if [[ "$author_email" != "$AUTHOR" ]]; then
+    not_mine=$((not_mine + 1))
+    continue
   fi
-done <<< "$latest_100"
+
+  local_branch="${remote_branch#origin/}"
+  if [[ -z "$local_branch" || "$local_branch" == "$remote_branch" ]]; then
+    continue  # malformed entry — don't touch
+  fi
+
+  if git show-ref --verify --quiet "refs/heads/$local_branch"; then
+    info "⏭️  Already local: $local_branch"
+    skipped=$((skipped + 1))
+  else
+    log "🆕 Checking out: $local_branch"
+    git checkout -b "$local_branch" --track "$remote_branch"
+    checked_out=$((checked_out + 1))
+  fi
+done < <(
+  git for-each-ref \
+    --sort=-committerdate \
+    --format='%(authoremail)|%(refname:short)|%(symref)' \
+    refs/remotes/origin \
+  | head -n "$LIMIT"
+)
+
+echo
+success "═══ summary ═══"
+success "🆕  Checked out: ${checked_out}"
+success "⏭️  Already local: ${skipped}"
+success "👻  Skipped (not yours): ${not_mine}"
+success "✨ Done."
