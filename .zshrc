@@ -160,3 +160,17 @@ eject-all-drives-dr() {
 ping-nas() {
   bash "${SHELL_FUNCTIONS_BIN}/drives/ping-nas.sh" "$@"
 }
+
+# -----------------------------------------------------------------------------
+# System / packages
+# -----------------------------------------------------------------------------
+
+update-brew() {
+  bash "${SHELL_FUNCTIONS_BIN}/system/update-brew.sh" "$@"
+  playsound-7
+}
+
+update-brew-dr() {
+  bash "${SHELL_FUNCTIONS_BIN}/system/update-brew.sh" --dry-run "$@"
+  playsound-7
+}
