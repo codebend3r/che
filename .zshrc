@@ -31,6 +31,26 @@ checkout-my-branches() {
   playsound-7
 }
 
+prune-worktrees() {
+  DRY_RUN=false bash "${SHELL_FUNCTIONS_BIN}/git/prune-worktrees.sh" "$@"
+  playsound-4
+}
+
+prune-worktrees-dr() {
+  DRY_RUN=true bash "${SHELL_FUNCTIONS_BIN}/git/prune-worktrees.sh" "$@"
+  playsound-7
+}
+
+# One-shot: pull every kind of "latest" from origin into the local repo.
+# Read-only against origin — fetches/prunes, never pushes.
+update-from-origin() {
+  DRY_RUN=false bash "${SHELL_FUNCTIONS_BIN}/git/prune-worktrees.sh"
+  DRY_RUN=false bash "${SHELL_FUNCTIONS_BIN}/git/clean-stale-branches.sh"
+  bash "${SHELL_FUNCTIONS_BIN}/git/update-local-branches.sh"
+  bash "${SHELL_FUNCTIONS_BIN}/git/checkout-my-branches.sh"
+  playsound-7
+}
+
 # -----------------------------------------------------------------------------
 # Video / media helpers
 # -----------------------------------------------------------------------------
