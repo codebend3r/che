@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 set -euo pipefail
 
-# v3.0.0
+# v3.1.0
 
 # name|ip
 drives=(
@@ -123,5 +123,7 @@ else
     warning "❌ Failed:   $failed"
     exit 1
   fi
+  log "🔄 Refreshing Finder to clear sidebar entries..."
+  killall Finder 2>/dev/null || true
   log "🎉 All clean! 🧹✨"
 fi
