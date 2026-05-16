@@ -5,9 +5,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 set -euo pipefail
 
-# v3.0.0
+# v3.3.0
 
-# name|ip
+SMB_USER="crivas"
+
+# name|ip  (share name is assumed to match the drive name)
 drives=(
   "Meleys|192.168.50.2"
   "Vermithor|192.168.50.3"
@@ -21,23 +23,31 @@ ONCE=false
 QUIET=false
 PING_TIMEOUT=2
 ONLY=""
+REMOUNT=true
+USE_IP=false
 
 usage() {
   cat <<EOF
 Usage:
   $(basename "$0") [--interval=SECONDS] [--ping-timeout=SECONDS]
-                   [--only=NAME] [--once] [--quiet]
+                   [--only=NAME] [--no-remount] [--use-ip]
+                   [--once] [--quiet]
 
 Description:
-  📡 Keep-alive pinger for the NAS drives. Runs forever by default,
-  pinging each host once per cycle so the drives don't spin down.
+  📡 Keep-alive pinger for the NAS drives. Each cycle pings every host
+  and verifies it's still mounted under /Volumes. If a drive is reachable
+  but the share has dropped off /Volumes (eject, network blip, sleep),
+  it is silently remounted via AppleScript's 'mount volume' as user
+  '${SMB_USER}' using Keychain credentials — no Finder modals.
 
 Options:
   --interval=N       Seconds between cycles (default: ${INTERVAL})
   --ping-timeout=N   Per-host ping timeout in seconds (default: ${PING_TIMEOUT})
   --only=NAME        Only ping the drive with this name (case-insensitive)
+  --no-remount       Detect-only: warn about missing mounts, don't remount
+  --use-ip           Remount via //${SMB_USER}@IP/NAME instead of //${SMB_USER}@NAME/NAME
   --once             Run a single cycle and exit (useful from cron)
-  --quiet            Only log failures and the cycle summary
+  --quiet            Only log failures, remount attempts, and cycle summary
   --help             Show help
 EOF
 }
@@ -47,6 +57,8 @@ for arg in "$@"; do
     --interval=*)     INTERVAL="${arg#*=}" ;;
     --ping-timeout=*) PING_TIMEOUT="${arg#*=}" ;;
     --only=*)         ONLY="${arg#*=}" ;;
+    --no-remount)     REMOUNT=false ;;
+    --use-ip)         USE_IP=true ;;
     --once)           ONCE=true ;;
     --quiet)          QUIET=true ;;
     --help|-h)        usage; exit 0 ;;
@@ -54,17 +66,45 @@ for arg in "$@"; do
   esac
 done
 
-if ! [[ "$INTERVAL" =~ ^[0-9]+$ ]] || [[ "$INTERVAL" -lt 1 ]]; then
-  warning "❌ --interval must be a positive integer (got: ${INTERVAL})"
-  exit 1
-fi
-
-if ! [[ "$PING_TIMEOUT" =~ ^[0-9]+$ ]] || [[ "$PING_TIMEOUT" -lt 1 ]]; then
-  warning "❌ --ping-timeout must be a positive integer (got: ${PING_TIMEOUT})"
-  exit 1
-fi
+validate_positive_int() {
+  local flag="$1" val="$2"
+  if ! [[ "$val" =~ ^[0-9]+$ ]] || [[ "$val" -lt 1 ]]; then
+    warning "❌ ${flag} must be a positive integer (got: ${val})"
+    exit 1
+  fi
+}
+validate_positive_int "--interval"     "$INTERVAL"
+validate_positive_int "--ping-timeout" "$PING_TIMEOUT"
 
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+
+is_mounted() {
+  mount | grep -q " on /Volumes/$1 ("
+}
+
+remount_drive() {
+  local name="$1"
+  local ip="$2"
+  local host url err
+
+  if [[ "$USE_IP" == true ]]; then
+    host="$ip"
+  else
+    host="$name"
+  fi
+  url="smb://${SMB_USER}@${host}/${name}"
+
+  log "  🔗 Remounting $name ($url)..."
+  if err="$(osascript -e "mount volume \"$url\"" 2>&1 >/dev/null)"; then
+    success "  ✅ $name remounted 🐉"
+    return 0
+  fi
+
+  warning "  ❌ mount failed for $url"
+  [[ -n "$err" ]] && warning "     ${err}"
+  warning "     Check that Keychain has a password for '${SMB_USER}@${host}'."
+  return 1
+}
 
 # Build the active drive list once (respecting --only)
 active_drives=()
@@ -85,24 +125,48 @@ cycle=0
 
 ping_all_nas() {
   cycle=$((cycle + 1))
-  local failed=0
+  local unreachable=0 unmounted=0 remounted=0 remount_failed=0
 
-  [[ "$QUIET" == true ]] || log "🔄 Cycle #${cycle} — pinging ${#active_drives[@]} NAS drive(s)..."
+  [[ "$QUIET" == true ]] || log "🔄 Cycle #${cycle} — checking ${#active_drives[@]} NAS drive(s)..."
 
   for entry in "${active_drives[@]}"; do
     IFS="|" read -r driveName ip <<< "$entry"
-    if ping -c 1 -t "$PING_TIMEOUT" "$ip" >/dev/null 2>&1; then
-      [[ "$QUIET" == true ]] || log "  ✅ 🐉 ${driveName} (${ip})"
-    else
+
+    if ! ping -c 1 -t "$PING_TIMEOUT" "$ip" >/dev/null 2>&1; then
       warning "  ❌ ${driveName} (${ip}) — ping failed"
-      failed=$((failed + 1))
+      unreachable=$((unreachable + 1))
+      continue
+    fi
+
+    if is_mounted "$driveName"; then
+      [[ "$QUIET" == true ]] || log "  ✅ 🐉 ${driveName} (${ip}) — mounted"
+      continue
+    fi
+
+    warning "  ⚠️  ${driveName} (${ip}) — reachable but not mounted"
+    unmounted=$((unmounted + 1))
+
+    if [[ "$REMOUNT" == true ]]; then
+      if remount_drive "$driveName" "$ip"; then
+        remounted=$((remounted + 1))
+      else
+        remount_failed=$((remount_failed + 1))
+      fi
     fi
   done
 
-  if [[ "$failed" -gt 0 ]]; then
-    warning "⚠️  ${failed}/${#active_drives[@]} drive(s) unreachable"
+  local total=${#active_drives[@]}
+  if [[ $unreachable -eq 0 && $unmounted -eq 0 ]]; then
+    [[ "$QUIET" == true ]] || success "✨ All ${total} drive(s) responded and mounted 🎉"
   else
-    [[ "$QUIET" == true ]] || success "✨ All ${#active_drives[@]} drive(s) responded 🎉"
+    local parts=()
+    [[ $unreachable -gt 0 ]] && parts+=("${unreachable} unreachable")
+    [[ $remounted -gt 0 ]] && parts+=("${remounted} remounted")
+    [[ $remount_failed -gt 0 ]] && parts+=("${remount_failed} remount-failed")
+    if [[ "$REMOUNT" == false && $unmounted -gt 0 ]]; then
+      parts+=("${unmounted} unmounted")
+    fi
+    warning "⚠️  Cycle summary: ${parts[*]}"
   fi
 }
 

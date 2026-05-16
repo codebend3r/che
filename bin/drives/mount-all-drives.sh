@@ -5,9 +5,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 set -euo pipefail
 
-# v3.0.0
+# v4.1.0
 
-# name|ip
+SMB_USER="crivas"
+
+# name|ip  (share name is assumed to match the drive name)
 drives=(
   "Meleys|192.168.50.2"
   "Vermithor|192.168.50.3"
@@ -19,21 +21,23 @@ drives=(
 USE_IP=false
 ONLY=""
 QUIET=false
-WAIT_TIMEOUT=15
 
 usage() {
   cat <<EOF
 Usage:
-  $(basename "$0") [--only=NAME] [--use-ip] [--wait=SECONDS] [--quiet]
+  $(basename "$0") [--only=NAME] [--use-ip] [--quiet]
 
 Description:
-  💿 Mount all NAS drives via SMB. Already-mounted drives are skipped.
-  Polls /Volumes for each mount to confirm it landed before moving on.
+  💿 Mount all NAS drives via SMB using AppleScript's 'mount volume'
+  (no Finder modals; same NetAuth path Finder uses, so /Volumes/<name>
+  is created automatically and Keychain credentials are used silently).
+  Reads credentials from Keychain for user '${SMB_USER}'. Already-mounted
+  drives are skipped. The share name is assumed to match the drive name
+  (e.g. //${SMB_USER}@Meleys/Meleys → /Volumes/Meleys).
 
 Options:
   --only=NAME      Only mount the drive with this name (case-insensitive)
-  --use-ip         Mount via smb://IP instead of smb://NAME
-  --wait=N         Seconds to wait for each mount to appear (default: ${WAIT_TIMEOUT})
+  --use-ip         Mount via //${SMB_USER}@IP/NAME instead of //${SMB_USER}@NAME/NAME
   --quiet          Only log mounts and failures
   --help           Show help
 EOF
@@ -43,19 +47,18 @@ for arg in "$@"; do
   case "$arg" in
     --only=*)    ONLY="${arg#*=}" ;;
     --use-ip)    USE_IP=true ;;
-    --wait=*)    WAIT_TIMEOUT="${arg#*=}" ;;
     --quiet)     QUIET=true ;;
     --help|-h)   usage; exit 0 ;;
     *) warning "❌ Unknown argument: $arg"; usage; exit 1 ;;
   esac
 done
 
-if ! [[ "$WAIT_TIMEOUT" =~ ^[0-9]+$ ]] || [[ "$WAIT_TIMEOUT" -lt 1 ]]; then
-  warning "❌ --wait must be a positive integer (got: ${WAIT_TIMEOUT})"
-  exit 1
-fi
-
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+
+# True iff something is currently mounted at /Volumes/<name>
+is_mounted() {
+  mount | grep -q " on /Volumes/$1 ("
+}
 
 note "═══════════════════════════════════════════"
 note "💿  mount-all-drives"
@@ -66,39 +69,33 @@ skipped=0
 failed=0
 
 mount_drive() {
-  local name="$1" ip="$2"
-  local target
-  if [[ "$USE_IP" == true ]]; then
-    target="smb://$ip"
-  else
-    target="smb://$name"
-  fi
+  local name="$1"
+  local ip="$2"
+  local host url err
 
-  if [[ -d "/Volumes/$name" ]] || [[ -d "/Volumes/$ip" ]]; then
+  if is_mounted "$name"; then
     [[ "$QUIET" == true ]] || info "⏭️  $name — already mounted"
     skipped=$((skipped + 1))
     return 0
   fi
 
-  log "🔗 Mounting $name ($target)..."
-  if ! open "$target" >/dev/null 2>&1; then
-    warning "  ❌ Failed to invoke open for $target"
-    failed=$((failed + 1))
-    return 1
+  if [[ "$USE_IP" == true ]]; then
+    host="$ip"
+  else
+    host="$name"
+  fi
+  url="smb://${SMB_USER}@${host}/${name}"
+
+  log "🔗 Mounting $name ($url)..."
+  if err="$(osascript -e "mount volume \"$url\"" 2>&1 >/dev/null)"; then
+    success "  ✅ $name mounted 🐉"
+    mounted=$((mounted + 1))
+    return 0
   fi
 
-  local elapsed=0
-  while [[ $elapsed -lt $WAIT_TIMEOUT ]]; do
-    if [[ -d "/Volumes/$name" ]] || [[ -d "/Volumes/$ip" ]]; then
-      success "  ✅ $name mounted 🐉"
-      mounted=$((mounted + 1))
-      return 0
-    fi
-    sleep 1
-    elapsed=$((elapsed + 1))
-  done
-
-  warning "  ⏰ $name did not appear under /Volumes within ${WAIT_TIMEOUT}s"
+  warning "  ❌ mount failed for $url"
+  [[ -n "$err" ]] && warning "     ${err}"
+  warning "     Check that Keychain has a password for '${SMB_USER}@${host}'."
   failed=$((failed + 1))
   return 1
 }
