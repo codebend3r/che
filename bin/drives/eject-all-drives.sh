@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 set -euo pipefail
 
-# v3.1.0
+# v3.3.0
 
 # name|ip
 drives=(
@@ -20,11 +20,12 @@ DRY_RUN=false
 ONLY=""
 QUIET=false
 FORCE=true
+CLEAR_FAVORITES=true
 
 usage() {
   cat <<EOF
 Usage:
-  $(basename "$0") [--dry-run] [--only=NAME] [--no-force] [--quiet]
+  $(basename "$0") [--dry-run] [--only=NAME] [--no-force] [--no-clear-favorites] [--quiet]
 
 Description:
   📤 Eject all NAS volumes from /Volumes. Checks for the primary mount
@@ -32,22 +33,29 @@ Description:
   macOS re-mounts the same share twice. Stale placeholder dirs left by
   force-unmount are cleaned up via rmdir (sudo as a fallback).
 
+  Also resets Finder's Favorite Servers + Recent Hosts lists, otherwise
+  ejected NAS shares keep reappearing in the sidebar Locations after
+  Finder relaunches.
+
 Options:
-  --dry-run        Show what would be unmounted, change nothing
-  --only=NAME      Only eject the drive with this name (case-insensitive)
-  --no-force       Use 'diskutil unmount' instead of 'diskutil unmount force'
-  --quiet          Only log unmounts and failures
-  --help           Show help
+  --dry-run              Show what would be unmounted, change nothing
+  --only=NAME            Only eject the drive with this name (case-insensitive);
+                         skips the Favorite Servers reset (would be over-broad)
+  --no-force             Use 'diskutil unmount' instead of 'diskutil unmount force'
+  --no-clear-favorites   Don't reset Finder's Favorite Servers / Recent Hosts lists
+  --quiet                Only log unmounts and failures
+  --help                 Show help
 EOF
 }
 
 for arg in "$@"; do
   case "$arg" in
-    --dry-run)   DRY_RUN=true ;;
-    --only=*)    ONLY="${arg#*=}" ;;
-    --no-force)  FORCE=false ;;
-    --quiet)     QUIET=true ;;
-    --help|-h)   usage; exit 0 ;;
+    --dry-run)              DRY_RUN=true ;;
+    --only=*)               ONLY="${arg#*=}" ;;
+    --no-force)             FORCE=false ;;
+    --no-clear-favorites)   CLEAR_FAVORITES=false ;;
+    --quiet)                QUIET=true ;;
+    --help|-h)              usage; exit 0 ;;
     *) warning "❌ Unknown argument: $arg"; usage; exit 1 ;;
   esac
 done
@@ -123,7 +131,30 @@ else
     warning "❌ Failed:   $failed"
     exit 1
   fi
-  log "🔄 Refreshing Finder to clear sidebar entries..."
-  killall Finder 2>/dev/null || true
+  log "🪪 Asking Finder to drop any server-level entries..."
+  for entry in "${drives[@]}"; do
+    IFS="|" read -r driveName ip <<< "$entry"
+    if [[ -n "$ONLY" ]] && [[ "$(lower "$driveName")" != "$(lower "$ONLY")" ]]; then
+      continue
+    fi
+    osascript -e "tell application \"Finder\" to try" \
+              -e "eject disk \"$driveName\"" \
+              -e "end try" >/dev/null 2>&1 || true
+  done
+
+  # Reset Finder's Favorite Servers + Recent Hosts lists. Without this,
+  # the smb://<name> entries auto-populate the sidebar Locations on the
+  # next Finder launch even though nothing is mounted. Skipped when
+  # --only is set (would nuke the other drives' favorites too).
+  if [[ -z "$ONLY" ]] && [[ "$CLEAR_FAVORITES" == true ]]; then
+    log "🧽 Resetting Finder Favorite Servers + Recent Hosts lists..."
+    sfltool resetlist com.apple.LSSharedFileList.FavoriteServers >/dev/null 2>&1 || true
+    sfltool resetlist com.apple.LSSharedFileList.RecentHosts >/dev/null 2>&1 || true
+  fi
+
+  # Hard-kill (SIGKILL) so Finder cannot save its current sidebar state on
+  # the way out — otherwise it restores stale server entries on relaunch.
+  log "🔄 Hard-killing Finder so it doesn't restore stale sidebar state..."
+  killall -KILL Finder 2>/dev/null || true
   log "🎉 All clean! 🧹✨"
 fi
