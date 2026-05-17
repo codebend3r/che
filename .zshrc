@@ -91,7 +91,12 @@ remove-metadata() {
 }
 
 delete-duplicate-videos() {
-  bash "${SHELL_FUNCTIONS_BIN}/video/delete-duplicate-videos.sh" "$@"
+  DRY_RUN=false bash "${SHELL_FUNCTIONS_BIN}/video/delete-duplicate-videos.sh" "$@"
+  playsound-6
+}
+
+delete-duplicate-videos-dr() {
+  DRY_RUN=true bash "${SHELL_FUNCTIONS_BIN}/video/delete-duplicate-videos.sh" "$@"
   playsound-6
 }
 
