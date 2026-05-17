@@ -9,7 +9,8 @@ set -euo pipefail
 
 info "Running command in $(pwd)"
 
-# Loop through each item in the current directory
+# 📂 No CLI — zips each immediate subfolder in the current directory.
+
 for dir in */; do
   # Remove trailing slash to get the folder name
   folder_name="${dir%/}"

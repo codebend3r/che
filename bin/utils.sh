@@ -1,5 +1,17 @@
 #!/usr/bin/env bash
 
+# =============================================================================
+# 📋 CLI conventions — shared patterns for bin/<category>/*.sh
+#
+# • Long flags only: `--name=value` for values (no space-separated `-o val`
+#   style in these scripts unless a specific tool documents otherwise).
+# • Booleans: a bare `--flag` usually enables; many scripts also honor
+#   `--flag=true|false` (sometimes yes|no, 1|0).
+# • Help: `-h` / `--help` runs that script's usage() when one exists.
+# • Parsing style: prefer `while [[ $# -gt 0 ]]` … `shift` so every script
+#   handles argv the same way and new paired forms stay easy to add.
+# =============================================================================
+
 # Color definitions
 NC='\033[0m'       # No Color
 RED='\033[1;31m'

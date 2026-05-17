@@ -3,6 +3,12 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/../utils.sh" --source-only
 
+set -euo pipefail
+
+# v2.1.0 — metadata stripper (exiftool)
+
+info "Running command in $(pwd)"
+
 # Default values
 ROOT_DIR=""
 
@@ -28,38 +34,43 @@ Options:
 EOF
 }
 
-# Parse arguments
-for arg in "$@"; do
-  case $arg in
+# ⚙️  CLI — long flags only (see ../utils.sh).
+while [[ $# -gt 0 ]]; do
+  case "$1" in
     --path=*)
-      ROOT_DIR="${arg#*=}"
+      ROOT_DIR="${1#*=}"
+      shift
       ;;
     --exts=*)
-      IFS=',' read -r -a USER_EXTS <<< "${arg#*=}"
+      IFS=',' read -r -a USER_EXTS <<< "${1#*=}"
+      shift
       ;;
     --help|-h)
-      usage; exit 0
+      usage
+      exit 0
       ;;
     *)
-      echo "Unknown option: $arg"
-      usage; exit 1
+      warning "❌ Unknown option: $1"
+      usage
+      exit 1
       ;;
   esac
 done
 
 # Validate path
 if [[ -z "$ROOT_DIR" ]]; then
-  error "Error: --path must be specified"
-  usage; exit 1
+  warning "❌ --path must be specified"
+  usage
+  exit 1
 fi
 if [[ ! -d "$ROOT_DIR" ]]; then
-  error "Error: Path '$ROOT_DIR' does not exist or is not a directory."
+  warning "❌ Path '$ROOT_DIR' does not exist or is not a directory."
   exit 1
 fi
 
 # Check exiftool availability
 if ! command -v exiftool >/dev/null 2>&1; then
-  error "Error: exiftool not found. Install exiftool and retry."
+  warning "❌ exiftool not found. Install exiftool and retry."
   exit 1
 fi
 
@@ -75,7 +86,7 @@ for ext in "${EXTS[@]}"; do
 done
 
 if [[ ${#EXT_ARGS[@]} -eq 0 ]]; then
-  error "Error: No valid extensions provided."
+  warning "❌ No valid extensions provided."
   exit 1
 fi
 

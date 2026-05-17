@@ -19,7 +19,7 @@ ALLOWED_VIDEO_CODECS=("h264" "hevc")
 ALLOWED_AUDIO_CODECS=("aac" "ac3" "eac3")
 ALLOWED_CONTAINERS=("mov" "mp4" "mkv")
 
-# Parse arguments
+# ⚙️  CLI — long flags only (see ../utils.sh).
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --path=*)
@@ -35,12 +35,12 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     -h|--help)
-      echo "Usage: $0 --path=/path/to/media"
+      info "📋 Usage: $0 --path=/path/to/media [--verbose]"
       exit 0
       ;;
     *)
-      echo "Unknown argument: $1"
-      echo "Usage: $0 --path=/path/to/media"
+      warning "❌ Unknown argument: $1"
+      warning "📋 Usage: $0 --path=/path/to/media [--verbose]"
       exit 1
       ;;
   esac
@@ -51,12 +51,12 @@ note "Verbose: $VERBOSE"
 note "----------------------------------------------------"
 
 if [[ -z "$ROOT_DIR" ]]; then
-  echo "Error: You must provide a path with --path="
+  warning "❌ --path is required"
   exit 1
 fi
 
 if ! command -v ffprobe &>/dev/null; then
-  echo "Error: ffprobe is not installed. Install FFmpeg first."
+  warning "❌ ffprobe not found — install FFmpeg"
   exit 1
 fi
 

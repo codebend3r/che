@@ -16,7 +16,7 @@ SIZE=""
 PATH_ARG=""
 DRY_RUN=false
 
-# Parse arguments
+# ⚙️  CLI — long flags only (see ../utils.sh).
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --size=*)
@@ -36,12 +36,12 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     -h|--help)
-      warning "Usage: $0 --path=/path/to/media --size=1MB [--dry-run]"
+      info "📋 Usage: $0 --path=/dir --size=1MB [--dry-run]"
       exit 0
       ;;
     *)
-      warning "Unknown argument: $1"
-      warning "Usage: $0 --path=/path/to/media --size=1MB [--dry-run]"
+      warning "❌ Unknown argument: $1"
+      warning "📋 Usage: $0 --path=/dir --size=1MB [--dry-run]"
       exit 1
       ;;
   esac
@@ -53,7 +53,8 @@ note "Dry run: $DRY_RUN"
 note "----------------------------------------------------"
 
 if [[ -z "$SIZE" || -z "$PATH_ARG" ]]; then
-  echo "Usage: $0 --size=1MB --path=/path/to/dir [--dry-run]" >&2
+  warning "❌ --size and --path are required"
+  warning "📋 Usage: $0 --path=/dir --size=1MB [--dry-run]"
   exit 1
 fi
 

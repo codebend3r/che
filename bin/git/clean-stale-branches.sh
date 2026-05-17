@@ -32,13 +32,30 @@ EOF
 DRY_RUN="${DRY_RUN:-false}"
 EXTRA_PROTECTED=()
 
-for arg in "$@"; do
-  case "$arg" in
-    --dry-run=*) DRY_RUN="${arg#*=}" ;;
-    --dry-run)   DRY_RUN=true ;;
-    --protect=*) IFS=',' read -r -a EXTRA_PROTECTED <<< "${arg#*=}" ;;
-    --help|-h)   usage; exit 0 ;;
-    *) warning "❌ Unknown argument: $arg"; usage; exit 1 ;;
+# ⚙️  CLI — long flags only; `--dry-run` or `--dry-run=true|false` (see ../utils.sh).
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run=*)
+      DRY_RUN="${1#*=}"
+      shift
+      ;;
+    --dry-run)
+      DRY_RUN=true
+      shift
+      ;;
+    --protect=*)
+      IFS=',' read -r -a EXTRA_PROTECTED <<< "${1#*=}"
+      shift
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      warning "❌ Unknown argument: $1"
+      usage
+      exit 1
+      ;;
   esac
 done
 

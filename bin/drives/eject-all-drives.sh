@@ -48,15 +48,43 @@ Options:
 EOF
 }
 
-for arg in "$@"; do
-  case "$arg" in
-    --dry-run)              DRY_RUN=true ;;
-    --only=*)               ONLY="${arg#*=}" ;;
-    --no-force)             FORCE=false ;;
-    --no-clear-favorites)   CLEAR_FAVORITES=false ;;
-    --quiet)                QUIET=true ;;
-    --help|-h)              usage; exit 0 ;;
-    *) warning "❌ Unknown argument: $arg"; usage; exit 1 ;;
+# ⚙️  CLI — long flags only; `--dry-run` optionally `--dry-run=true|false` (see ../utils.sh).
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run=*)
+      DRY_RUN="${1#*=}"
+      shift
+      ;;
+    --dry-run)
+      DRY_RUN=true
+      shift
+      ;;
+    --only=*)
+      ONLY="${1#*=}"
+      shift
+      ;;
+    --no-force)
+      FORCE=false
+      shift
+      ;;
+    --no-clear-favorites)
+      CLEAR_FAVORITES=false
+      shift
+      ;;
+    --quiet)
+      QUIET=true
+      shift
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      warning "❌ Unknown argument: $1"
+      usage
+      exit 1
+      ;;
   esac
 done
 

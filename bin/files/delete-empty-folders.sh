@@ -17,6 +17,7 @@ VERBOSE=false
 ROOT_DIR=""
 DELETED_COUNT=0
 
+# ⚙️  CLI — long flags only (see ../utils.sh).
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --path=*) ROOT_DIR="${1#*=}"; shift ;;
@@ -25,12 +26,12 @@ while [[ $# -gt 0 ]]; do
     --verbose=*) VERBOSE="${1#*=}"; shift ;;
     --verbose) VERBOSE=true; shift ;;
     -h|--help)
-      echo "Usage: $0 --path=/path/to/media [--dry-run] [--verbose]"
+      info "📋 Usage: $0 --path=/dir [--dry-run] [--verbose]"
       exit 0
       ;;
     *)
-      warning "Unknown argument: $1"
-      echo "Usage: $0 --path=/path/to/media [--dry-run] [--verbose]"
+      warning "❌ Unknown argument: $1"
+      warning "📋 Usage: $0 --path=/dir [--dry-run] [--verbose]"
       exit 1
       ;;
   esac
@@ -77,4 +78,4 @@ while IFS= read -r -d '' dir; do
   fi
 done < <(find "$ROOT_DIR" -type d -not -path '*/.*' -print0 | sort -rz)
 
-echo "Total deleted directories: $DELETED_COUNT"
+log "📊 Total deleted directories: $DELETED_COUNT"

@@ -27,7 +27,7 @@ SHOW_FULL_PATH=false
 DEBUG=false
 
 usage() {
-  warning "Usage: $0 --path=/path/to/tv [--limit=20] [--full-path] [--debug]"
+  info "📋 Usage: $0 --path=/path/to/tv [--limit=20] [--full-path] [--debug]"
 }
 
 debug() {
@@ -59,6 +59,7 @@ is_tv_show_folder() {
   return 1
 }
 
+# ⚙️  CLI — long flags only (see ../utils.sh).
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --path=*)

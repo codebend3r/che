@@ -43,13 +43,31 @@ Options:
 EOF
 }
 
-for arg in "$@"; do
-  case "$arg" in
-    --only=*)    ONLY="${arg#*=}" ;;
-    --use-ip)    USE_IP=true ;;
-    --quiet)     QUIET=true ;;
-    --help|-h)   usage; exit 0 ;;
-    *) warning "❌ Unknown argument: $arg"; usage; exit 1 ;;
+# ⚙️  CLI — long flags only (see ../utils.sh).
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --only=*)
+      ONLY="${1#*=}"
+      shift
+      ;;
+    --use-ip)
+      USE_IP=true
+      shift
+      ;;
+    --quiet)
+      QUIET=true
+      shift
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      warning "❌ Unknown argument: $1"
+      usage
+      exit 1
+      ;;
   esac
 done
 

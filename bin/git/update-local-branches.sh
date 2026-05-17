@@ -26,12 +26,30 @@ EOF
 LIMIT=0
 DRY_RUN=false
 
-for arg in "$@"; do
-  case "$arg" in
-    --limit=*)  LIMIT="${arg#*=}" ;;
-    --dry-run)  DRY_RUN=true ;;
-    --help|-h)  usage; exit 0 ;;
-    *) warning "❌ Unknown argument: $arg"; usage; exit 1 ;;
+# ⚙️  CLI — long flags only; `--dry-run` or `--dry-run=true|false` (see ../utils.sh).
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --limit=*)
+      LIMIT="${1#*=}"
+      shift
+      ;;
+    --dry-run=*)
+      DRY_RUN="${1#*=}"
+      shift
+      ;;
+    --dry-run)
+      DRY_RUN=true
+      shift
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      warning "❌ Unknown argument: $1"
+      usage
+      exit 1
+      ;;
   esac
 done
 

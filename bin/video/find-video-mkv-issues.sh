@@ -56,23 +56,33 @@ ROOT=""
 RECURSIVE=false
 
 #
-# Parse args
+# ⚙️  CLI — long flags only; `--recursive` toggles recursion (see ../utils.sh).
 #
 
-for arg in "$@"; do
-  case "$arg" in
+while [[ $# -gt 0 ]]; do
+  case "$1" in
     --path=*)
-      ROOT="${arg#*=}"
+      ROOT="${1#*=}"
+      shift
+      ;;
+    --recursive=*)
+      if [[ "${1#*=}" == true || "${1#*=}" == 1 || "${1#*=}" == yes ]]; then
+        RECURSIVE=true
+      else
+        RECURSIVE=false
+      fi
+      shift
       ;;
     --recursive)
       RECURSIVE=true
+      shift
       ;;
     --help|-h)
       usage
       exit 0
       ;;
     *)
-      warning "Unknown option: $arg"
+      warning "Unknown option: $1"
       usage
       exit 1
       ;;

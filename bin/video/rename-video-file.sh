@@ -17,7 +17,7 @@ RENAME_FOLDERS="true"
 DRY_RUN="true"
 IGNORE_WORDS=""
 
-# Parse arguments
+# ⚙️  CLI — long flags only (see ../utils.sh).
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --path=*)

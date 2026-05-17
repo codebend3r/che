@@ -13,7 +13,7 @@ info "Running command in $(pwd)"
 # Default path
 ROOT_DIR=""
 
-# Argument parsing
+# ⚙️  CLI — long flags only (see ../utils.sh).
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --path=*)
@@ -21,12 +21,12 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     -h|--help)
-      echo "Usage: $0 --path=/path/to/parent"
+      info "📋 Usage: $0 [--path=/path/to/parent]  (defaults to .)"
       exit 0
       ;;
     *)
-      echo "Unknown argument: $1"
-      echo "Usage: $0 --path=/path/to/parent"
+      warning "❌ Unknown argument: $1"
+      warning "📋 Usage: $0 [--path=/path/to/parent]"
       exit 1
       ;;
   esac

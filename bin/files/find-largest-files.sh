@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 set -euo pipefail
 
-# v2.0.3
+# v2.0.4
 
 info "Running command in $(pwd)"
 
@@ -16,6 +16,7 @@ SHOW_FULL_PATH=false
 LIST_LENGTH=10
 SEARCH_PATH="."
 
+# ⚙️  CLI — long flags only (see ../utils.sh).
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --full-path=*)
@@ -28,21 +29,27 @@ while [[ $# -gt 0 ]]; do
       ;;
     --length=*)
       LIST_LENGTH="${1#*=}"
-      [[ -z "$LIST_LENGTH" || ! "$LIST_LENGTH" =~ ^[0-9]+$ ]]
+      if [[ -z "$LIST_LENGTH" || ! "$LIST_LENGTH" =~ ^[0-9]+$ ]]; then
+        warning "❌ --length must be a non-negative integer"
+        exit 1
+      fi
       shift
       ;;
     --path=*)
-      SEARCH_PATH="${1#*=}";
-      [[ -z "$SEARCH_PATH" ]]
+      SEARCH_PATH="${1#*=}"
+      if [[ -z "$SEARCH_PATH" ]]; then
+        warning "❌ --path cannot be empty"
+        exit 1
+      fi
       shift
       ;;
     -h|--help)
-      warning "Usage: $0 --path=/path/to/media [--length=10] [--full-path]"
+      info "📋 Usage: $0 [--path=.] [--length=10] [--full-path]"
       exit 0
       ;;
     *)
-      warning "Unknown argument: $1"
-      warning "Usage: $0 --path=/path/to/media [--length=10] [--full-path]"
+      warning "❌ Unknown argument: $1"
+      warning "📋 Usage: $0 [--path=.] [--length=10] [--full-path]"
       exit 1
       ;;
   esac
@@ -53,7 +60,7 @@ note "List length: ${LIST_LENGTH}"
 note "Show full path: ${SHOW_FULL_PATH}"
 
 if [[ ! -d "$SEARCH_PATH" ]]; then
-  echo "Error: Path does not exist or is not a directory: $SEARCH_PATH" >&2
+  warning "❌ Path does not exist or is not a directory: $SEARCH_PATH"
   exit 1
 fi
 

@@ -34,16 +34,47 @@ Options:
 EOF
 }
 
-for arg in "$@"; do
-  case "$arg" in
-    --dry-run)        DRY_RUN=true ;;
-    --no-cask)        DO_CASK=false ;;
-    --no-cleanup)     DO_CLEANUP=false ;;
-    --no-autoremove)  DO_AUTOREMOVE=false ;;
-    --greedy)         GREEDY=true ;;
-    --doctor)         DOCTOR=true ;;
-    --help|-h)        usage; exit 0 ;;
-    *) warning "❌ Unknown argument: $arg"; usage; exit 1 ;;
+# ⚙️  CLI — long flags only (see ../utils.sh).
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run=*)
+      DRY_RUN="${1#*=}"
+      shift
+      ;;
+    --dry-run)
+      DRY_RUN=true
+      shift
+      ;;
+    --no-cask)
+      DO_CASK=false
+      shift
+      ;;
+    --no-cleanup)
+      DO_CLEANUP=false
+      shift
+      ;;
+    --no-autoremove)
+      DO_AUTOREMOVE=false
+      shift
+      ;;
+    --greedy)
+      GREEDY=true
+      shift
+      ;;
+    --doctor)
+      DOCTOR=true
+      shift
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      warning "❌ Unknown argument: $1"
+      usage
+      exit 1
+      ;;
   esac
 done
 

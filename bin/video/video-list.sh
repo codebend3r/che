@@ -17,26 +17,47 @@ RECURSE=false
 SORT_METHOD="alpha"
 WITH_FOLDER=false
 
+# ⚙️  CLI — long flags only (see ../utils.sh).
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --path=*) DIR="${1#*=}"; shift ;;
-    --recursive=*) RECURSE="${1#*=}"; shift ;;
-    --recursive) RECURSE=true; shift ;;
-    --with-folder=*) WITH_FOLDER="${1#*=}"; shift ;;
-    --with-folder) WITH_FOLDER=true; shift ;;
+    --path=*)
+      DIR="${1#*=}"
+      shift
+      ;;
+    --recursive=*)
+      RECURSE="${1#*=}"
+      shift
+      ;;
+    --recursive)
+      RECURSE=true
+      shift
+      ;;
+    --with-folder=*)
+      WITH_FOLDER="${1#*=}"
+      shift
+      ;;
+    --with-folder)
+      WITH_FOLDER=true
+      shift
+      ;;
     --sort=*)
       SORT_METHOD="${1#*=}"
       case "$SORT_METHOD" in
         alpha|fileSizeAsc|fileSizeDesc) ;;
         *)
-          echo "Error: Invalid sort method. Supported methods are alpha, fileSizeAsc, fileSizeDesc." >&2
+          warning "❌ Invalid sort method — use alpha, fileSizeAsc, or fileSizeDesc"
           exit 1
           ;;
       esac
       shift
       ;;
+    -h|--help)
+      info "📋 Usage: $0 --path=/path [--recursive] [--sort=alpha|fileSizeAsc|fileSizeDesc] [--with-folder]"
+      exit 0
+      ;;
     *)
-      echo "Usage: $0 --path=/path [--recursive] [--sort=alpha|fileSizeAsc|fileSizeDesc] [--with-folder]" >&2
+      warning "❌ Unknown argument: $1"
+      warning "📋 Usage: $0 --path=/path [--recursive] [--sort=alpha|fileSizeAsc|fileSizeDesc] [--with-folder]"
       exit 1
       ;;
   esac
@@ -48,7 +69,7 @@ note "Sort method: $SORT_METHOD"
 note "With folder: $WITH_FOLDER"
 note "----------------------------------------------------"
 
-[[ -z "$DIR" ]] && { echo "Error: --path is required" >&2; exit 1; }
+[[ -z "$DIR" ]] && { warning "❌ --path is required"; exit 1; }
 
 FIND_CMD="find \"$DIR\""
 

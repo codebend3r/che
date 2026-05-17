@@ -15,7 +15,7 @@ info "Running command in $(pwd)"
 ROOT_DIR=""
 DELETE_ORIGINAL=false
 
-# Parse arguments
+# ⚙️  CLI — long flags only; `--delete-original` optional `=true|false` (see ../utils.sh).
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --path=*)

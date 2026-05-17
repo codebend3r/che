@@ -15,7 +15,7 @@ info "Running command in $(pwd)"
 # Default path
 ROOT_DIR=""
 
-# Argument parsing
+# ⚙️  CLI — long flags only (see ../utils.sh).
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --path=*)
@@ -23,12 +23,12 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     -h|--help)
-      echo "Usage: $0 --path=/path/to/media"
+      info "📋 Usage: $0 --path=/path/to/media"
       exit 0
       ;;
     *)
-      echo "Unknown argument: $1"
-      echo "Usage: $0 --path /path/to/check"
+      warning "❌ Unknown argument: $1"
+      warning "📋 Usage: $0 --path=/path/to/media"
       exit 1
       ;;
   esac

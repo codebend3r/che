@@ -15,7 +15,7 @@ info "Running command in $(pwd)"
 ROOT_DIR=""
 DRY_RUN=false
 
-# Parse arguments
+# ⚙️  CLI — long flags only (see ../utils.sh).
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --path=*)
@@ -31,12 +31,12 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     -h|--help)
-      echo "Usage: $0 --path=/path/to/media [--dry-run]"
+      info "📋 Usage: $0 --path=/dir [--dry-run]"
       exit 0
       ;;
     *)
-      warning "Unknown option: $1"
-      warning "Usage: $0 --path /directory/to/scan"
+      warning "❌ Unknown option: $1"
+      warning "📋 Usage: $0 --path=/dir [--dry-run]"
       exit 1
       ;;
   esac

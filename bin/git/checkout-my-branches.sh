@@ -26,12 +26,26 @@ EOF
 AUTHOR="$(git config user.email || true)"
 LIMIT=100
 
-for arg in "$@"; do
-  case "$arg" in
-    --author=*) AUTHOR="${arg#*=}" ;;
-    --limit=*)  LIMIT="${arg#*=}" ;;
-    --help|-h)  usage; exit 0 ;;
-    *) warning "❌ Unknown argument: $arg"; usage; exit 1 ;;
+# ⚙️  CLI — long flags only (see ../utils.sh).
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --author=*)
+      AUTHOR="${1#*=}"
+      shift
+      ;;
+    --limit=*)
+      LIMIT="${1#*=}"
+      shift
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      warning "❌ Unknown argument: $1"
+      usage
+      exit 1
+      ;;
   esac
 done
 

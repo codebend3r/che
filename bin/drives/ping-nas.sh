@@ -52,17 +52,48 @@ Options:
 EOF
 }
 
-for arg in "$@"; do
-  case "$arg" in
-    --interval=*)     INTERVAL="${arg#*=}" ;;
-    --ping-timeout=*) PING_TIMEOUT="${arg#*=}" ;;
-    --only=*)         ONLY="${arg#*=}" ;;
-    --no-remount)     REMOUNT=false ;;
-    --use-ip)         USE_IP=true ;;
-    --once)           ONCE=true ;;
-    --quiet)          QUIET=true ;;
-    --help|-h)        usage; exit 0 ;;
-    *) warning "❌ Unknown argument: $arg"; usage; exit 1 ;;
+# ⚙️  CLI — long flags only; boolean toggles never take a trailing `=`
+#     unless noted in usage below (see ../utils.sh).
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --interval=*)
+      INTERVAL="${1#*=}"
+      shift
+      ;;
+    --ping-timeout=*)
+      PING_TIMEOUT="${1#*=}"
+      shift
+      ;;
+    --only=*)
+      ONLY="${1#*=}"
+      shift
+      ;;
+    --no-remount)
+      REMOUNT=false
+      shift
+      ;;
+    --use-ip)
+      USE_IP=true
+      shift
+      ;;
+    --once)
+      ONCE=true
+      shift
+      ;;
+    --quiet)
+      QUIET=true
+      shift
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      warning "❌ Unknown argument: $1"
+      usage
+      exit 1
+      ;;
   esac
 done
 

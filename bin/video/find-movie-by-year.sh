@@ -16,7 +16,7 @@ info "Running command in $(pwd)"
 ROOT_DIR="."
 YEAR=""
 
-# Argument parsing
+# ⚙️  CLI — long flags only (see ../utils.sh).
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --path=*)
@@ -28,20 +28,20 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     -h|--help)
-      echo "Usage: $0 --year=YYYY [--path=/path/to/search]"
-      echo "Example: $0 --year=2025 --path=/movies"
+      info "📋 Usage: $0 --year=YYYY [--path=/path/to/search]"
+      info "Example: $0 --year=2025 --path=/movies"
       exit 0
       ;;
     *)
-      echo "Unknown argument: $1"
-      echo "Usage: $0 --year=YYYY [--path=/path/to/search]"
+      warning "❌ Unknown argument: $1"
+      warning "📋 Usage: $0 --year=YYYY [--path=/path/to/search]"
       exit 1
       ;;
   esac
 done
 
 if [[ -z "$YEAR" ]]; then
-  echo "Error: --year is required"
+  warning "❌ --year is required"
   exit 1
 fi
 

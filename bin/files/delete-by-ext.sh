@@ -17,6 +17,7 @@ VERBOSE=false
 ROOT_PATH=""
 EXT_LIST=(m3u nfo sfv jpg png txt log cue srr)
 
+# ⚙️  CLI — long flags only; booleans via `--flag` or `--flag=true|false` (see ../utils.sh).
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --path=*)
@@ -44,11 +45,12 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     -h|--help)
-      warning "Usage: delete-by-ext --path=/dir --ext=jpg,png,mp4 [--dry-run] [--verbose]"
+      info "📋 Usage: delete-by-ext --path=/dir --ext=jpg,png,mp4 […] [--dry-run] [--verbose]"
       exit 0
       ;;
     *)
-      warning "Unknown argument: $1"
+      warning "❌ Unknown argument: $1"
+      warning "📋 Usage: delete-by-ext --path=/dir --ext=jpg,png […] [--dry-run] [--verbose]"
       exit 1
       ;;
   esac

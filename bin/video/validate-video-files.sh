@@ -16,7 +16,7 @@ info "Running command in $(pwd)"
 ROOT_DIR=""
 VERBOSE=false
 
-# Argument parsing
+# ⚙️  CLI — long flags only (see ../utils.sh).
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --path=*)
@@ -32,12 +32,12 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     -h|--help)
-      warning "Usage: $0 --path=/path/to/media [--verbose]"
+      info "📋 Usage: $0 --path=/path/to/media [--verbose]"
       exit 0
       ;;
     *)
-      warning "Unknown argument: $1"
-      warning "Usage: $0 --path /path/to/check"
+      warning "❌ Unknown argument: $1"
+      warning "📋 Usage: $0 --path=/path/to/media [--verbose]"
       exit 1
       ;;
   esac
