@@ -48,16 +48,10 @@ Requires:
 EOF
 }
 
-require_binary() {
-  local bin=$1
-
-  if ! command -v "$bin" >/dev/null 2>&1; then
-    warning "Missing required binary: $bin"
-    exit 1
-  fi
-}
-
-require_binary python3
+# Python runtime: a dedicated venv keeps cv2/numpy isolated from system Python
+# (Homebrew Python is PEP 668 "externally managed" and refuses plain pip installs).
+# Override with $DETECT_GM_PYTHON if you keep the venv somewhere else.
+VENV_PYTHON="${DETECT_GM_PYTHON:-$HOME/.venvs/green-magenta/bin/python}"
 
 if [[ $# -eq 0 ]]; then
   usage
@@ -78,10 +72,18 @@ if [[ ! -f "$PY_SCRIPT" ]]; then
   exit 1
 fi
 
+if [[ ! -x "$VENV_PYTHON" ]]; then
+  warning "Python venv not found: $VENV_PYTHON"
+  warning "Bootstrap with:"
+  warning "  python3 -m venv \$HOME/.venvs/green-magenta"
+  warning "  \$HOME/.venvs/green-magenta/bin/pip install opencv-python numpy"
+  exit 1
+fi
+
 # Verify required Python modules are importable before launching.
-if ! python3 -c 'import cv2, numpy' >/dev/null 2>&1; then
-  warning "python3 is missing required modules. Run:"
-  warning "  pip install opencv-python numpy"
+if ! "$VENV_PYTHON" -c 'import cv2, numpy' >/dev/null 2>&1; then
+  warning "venv at $VENV_PYTHON is missing cv2 or numpy. Run:"
+  warning "  $VENV_PYTHON -m pip install opencv-python numpy"
   exit 1
 fi
 
@@ -89,4 +91,4 @@ info "Running command in $(pwd)"
 note "Scanning: $*"
 note "----------------------------------------------------"
 
-exec python3 "$PY_SCRIPT" "$@"
+exec "$VENV_PYTHON" "$PY_SCRIPT" "$@"
