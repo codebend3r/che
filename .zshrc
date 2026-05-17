@@ -105,6 +105,11 @@ video-list() {
   playsound-5
 }
 
+detect-green-magenta-videos() {
+  bash "${SHELL_FUNCTIONS_BIN}/video/detect-green-magenta-videos.sh" "$@"
+  playsound-3
+}
+
 # -----------------------------------------------------------------------------
 # Filesystem cleanup / utilities
 # -----------------------------------------------------------------------------
