@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 set -euo pipefail
 
-# v1.0.0
+# v1.1.0
 
 # Detect videos with the green/magenta chroma decoding artifact.
 #
@@ -33,7 +33,7 @@ Description:
 Options:
   <path>          One or more video files or directories (dirs scanned recursively)
   --samples=N     Frames to sample per video (default: 20)
-  --threshold=F   Fraction of saturated pixels in green/magenta to flag (default: 0.80)
+  --threshold=F   Fraction of saturated pixels in green/magenta to flag (default: 0.65)
   --verbose, -v   Print every video, not just flagged ones
   --help, -h      Show help
 

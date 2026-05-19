@@ -59,7 +59,7 @@ def analyze_frame(frame):
     return float(ratio), float(s.mean())
 
 
-def analyze_video(path, sample_count=20, threshold=0.80):
+def analyze_video(path, sample_count=20, threshold=0.65):
     cap = cv2.VideoCapture(str(path))
     if not cap.isOpened():
         return {"path": str(path), "error": "could not open"}
@@ -139,8 +139,8 @@ def main():
                     help="Video files or directories to scan (directories are searched recursively)")
     ap.add_argument("--samples", type=int, default=20,
                     help="Frames to sample per video (default: 20)")
-    ap.add_argument("--threshold", type=float, default=0.80,
-                    help="Fraction of saturated pixels that must be green or magenta to flag (default: 0.80)")
+    ap.add_argument("--threshold", type=float, default=0.65,
+                    help="Fraction of saturated pixels that must be green or magenta to flag (default: 0.65)")
     ap.add_argument("--verbose", "-v", action="store_true",
                     help="Print every video, not just flagged ones")
     args = ap.parse_args()
