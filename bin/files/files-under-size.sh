@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 set -euo pipefail
 
-# v2.1.0
+# v2.2.0
 
 info "Running command in $(pwd)"
 
@@ -14,7 +14,7 @@ info "Running command in $(pwd)"
 
 SIZE=""
 PATH_ARG=""
-DRY_RUN=false
+DRY_RUN="${DRY_RUN:-true}"   # Repo policy: destructive tools default preview-only unless wrapper sets env.
 
 # ⚙️  CLI — long flags only (see ../utils.sh).
 while [[ $# -gt 0 ]]; do

@@ -115,23 +115,43 @@ detect-green-magenta-videos() {
 # -----------------------------------------------------------------------------
 
 delete-empty-folders() {
-  bash "${SHELL_FUNCTIONS_BIN}/files/delete-empty-folders.sh" "$@"
+  DRY_RUN=false bash "${SHELL_FUNCTIONS_BIN}/files/delete-empty-folders.sh" "$@"
   playsound-6
+}
+
+delete-empty-folders-dr() {
+  DRY_RUN=true bash "${SHELL_FUNCTIONS_BIN}/files/delete-empty-folders.sh" "$@"
+  playsound-7
 }
 
 delete-smb-files() {
-  bash "${SHELL_FUNCTIONS_BIN}/files/delete-smb-files.sh" "$@"
+  DRY_RUN=false bash "${SHELL_FUNCTIONS_BIN}/files/delete-smb-files.sh" "$@"
   playsound-6
+}
+
+delete-smb-files-dr() {
+  DRY_RUN=true bash "${SHELL_FUNCTIONS_BIN}/files/delete-smb-files.sh" "$@"
+  playsound-7
 }
 
 delete-by-ext() {
-  bash "${SHELL_FUNCTIONS_BIN}/files/delete-by-ext.sh" "$@"
+  DRY_RUN=false bash "${SHELL_FUNCTIONS_BIN}/files/delete-by-ext.sh" "$@"
   playsound-6
 }
 
+delete-by-ext-dr() {
+  DRY_RUN=true bash "${SHELL_FUNCTIONS_BIN}/files/delete-by-ext.sh" "$@"
+  playsound-7
+}
+
 files-under-size() {
-  bash "${SHELL_FUNCTIONS_BIN}/files/files-under-size.sh" "$@"
+  DRY_RUN=false bash "${SHELL_FUNCTIONS_BIN}/files/files-under-size.sh" "$@"
   playsound-4
+}
+
+files-under-size-dr() {
+  DRY_RUN=true bash "${SHELL_FUNCTIONS_BIN}/files/files-under-size.sh" "$@"
+  playsound-7
 }
 
 find-largest-files() {

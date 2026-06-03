@@ -5,14 +5,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 set -euo pipefail
 
-# v2.0.3
+# v2.2.0
 
 info "Running command in $(pwd)"
 
 # Usage:
 #   delete-by-ext --path=./ --ext=m3u,nfo,sfv,jpg,png,txt,log,cue,srr [--dry-run] [--verbose]
 
-DRY_RUN=false
+DRY_RUN="${DRY_RUN:-true}"   # Repo policy: destructive tools default preview-only unless wrapper sets env.
 VERBOSE=false
 ROOT_PATH=""
 EXT_LIST=(m3u nfo sfv jpg png txt log cue srr)
@@ -72,19 +72,25 @@ if [[ ${#EXT_LIST[@]} -eq 0 ]]; then
   exit 1
 fi
 
-EXT_PATTERN="$(IFS='|'; echo "${EXT_LIST[*]}")"
+FIND_CMD=(find "$ROOT_PATH" -type f \( )
+first=1
+for e in "${EXT_LIST[@]}"; do
+  if [[ $first -eq 1 ]]; then
+    FIND_CMD+=(-iname "*.$e")
+    first=0
+  else
+    FIND_CMD+=(-o -iname "*.$e")
+  fi
+done
+FIND_CMD+=( \) -print0 )
 
 while IFS= read -r -d '' file; do
   if [[ "$DRY_RUN" == true ]]; then
     info "[DRY RUN] Would delete: $file"
   else
     log "Deleting: $file"
-    rm -f "$file"
+    rm -f -- "$file"
   fi
-done < <(
-  find "$ROOT_PATH" -type f \
-    | grep -E "\.($EXT_PATTERN)$" \
-    | tr '\n' '\0'
-)
+done < <("${FIND_CMD[@]}")
 
 log "Completed."

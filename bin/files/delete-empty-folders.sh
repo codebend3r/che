@@ -5,14 +5,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 set -euo pipefail
 
-# v2.0.3
+# v3.0.0
 
 info "Running command in $(pwd)"
 
 # Usage:
 #   delete-empty-folders --path=./ --dry-run=true
 
-DRY_RUN=false
+DRY_RUN="${DRY_RUN:-true}"   # Repo policy: destructive tools default preview-only unless wrapper sets env.
 VERBOSE=false
 ROOT_DIR=""
 DELETED_COUNT=0
@@ -51,31 +51,26 @@ note "Searching in: $ROOT_DIR"
 note "Dry run: ${DRY_RUN}"
 note "Verbose: ${VERBOSE}"
 
-# Deepest-first directory traversal
+# Deepest-first traversal so that emptying a leaf can cascade up. Only
+# truly-empty dirs are removed — a folder containing only .DS_Store / ._*
+# / .git is intentionally left alone (rm -rf would silently wipe them).
 while IFS= read -r -d '' dir; do
-  # Skip hidden directories
-  if [[ "$(basename "$dir")" == .* ]]; then
+  # Don't ever touch the root the user pointed at.
+  [[ "$dir" == "$ROOT_DIR" ]] && continue
+
+  # Strict-empty check: any entry (including hidden) disqualifies.
+  if [[ -n "$(ls -A "$dir" 2>/dev/null)" ]]; then
+    $VERBOSE && note "Skipped (not empty): $dir"
     continue
   fi
 
-  # Count visible files inside this folder (recursively)
-  file_count=$(find "$dir" -type f -not -path '*/.*' | wc -l | tr -d ' ')
-
-  # Verbose output
-  if $VERBOSE; then
-    warning "Scanned: $dir (files: $file_count)"
+  if $DRY_RUN; then
+    log "[DRY-RUN] Would delete: $dir"
+  else
+    rmdir "$dir"
+    log "Deleted: $dir"
   fi
-
-  # If no visible files, delete folder
-  if (( file_count == 0 )); then
-    if $DRY_RUN; then
-      log "[DRY-RUN] Would delete: $dir"
-    else
-      rm -rf "$dir"
-      log "Deleted: $dir"
-    fi
-    ((DELETED_COUNT++))
-  fi
-done < <(find "$ROOT_DIR" -type d -not -path '*/.*' -print0 | sort -rz)
+  ((DELETED_COUNT++))
+done < <(find "$ROOT_DIR" -depth -type d -print0)
 
 log "📊 Total deleted directories: $DELETED_COUNT"

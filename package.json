@@ -1,0 +1,9 @@
+{
+  "name": "shell-functions",
+  "private": true,
+  "description": "Personal collection of zsh/bash helper scripts. See README.md and CLAUDE.md.",
+  "scripts": {
+    "test": "bash test/run-all.sh"
+  },
+  "packageManager": "bun@1.3.14"
+}
