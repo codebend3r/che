@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/utils.sh
 . "$SCRIPT_DIR/../utils.sh" --source-only
 
 set -euo pipefail

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/utils.sh
 . "$SCRIPT_DIR/../utils.sh" --source-only
 
 set -euo pipefail
@@ -63,7 +64,7 @@ to_lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 parse_bytes() {
   local s n u mult=1
   s="$(to_lower "$(echo "$1" | tr -d ' ')")"
-  n="${s%%[a-z]*}"; u="${s#$n}"
+  n="${s%%[a-z]*}"; u="${s#"$n"}"
   [[ -z "$n" ]] && { echo "Invalid --size: $1" >&2; exit 1; }
   case "$u" in
     ""|"b") mult=1 ;;

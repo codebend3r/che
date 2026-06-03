@@ -1,6 +1,7 @@
 #!/opt/homebrew/bin/bash
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/utils.sh
 . "$SCRIPT_DIR/../utils.sh" --source-only
 
 set -euo pipefail
@@ -44,9 +45,6 @@ if [[ -z "$YEAR" ]]; then
   warning "❌ --year is required"
   exit 1
 fi
-
-# Allowed movie file extensions (add more if needed)
-EXTENSIONS="mp4|mkv|avi|mov|wmv|flv|webm"
 
 # Search for movies with the specified year in their filename
 find "$ROOT_DIR" -type d -iname "*(${YEAR})" -print

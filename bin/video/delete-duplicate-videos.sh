@@ -25,6 +25,7 @@
 # Resolve this script's folder so utils.sh loads even when cwd is unrelated.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Pull in shared color printers + format_bytes() for human-readable sizes.
+# shellcheck source=bin/utils.sh
 . "$SCRIPT_DIR/../utils.sh" --source-only
 
 # errexit / nounset / fail-on-pipeline — catch typos & silent pipe failures early.

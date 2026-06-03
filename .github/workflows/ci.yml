@@ -14,58 +14,26 @@ jobs:
       - name: 📥 Checkout repository
         uses: actions/checkout@v4
 
+      - name: 🐰 Install bun
+        uses: oven-sh/setup-bun@v2
+
       - name: 🧰 Install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
 
-      - name: 🔍 Run shellcheck on bin/**/*.sh
-        run: |
-          set -euo pipefail
-          mapfile -d '' files < <(find bin -type f -name '*.sh' -print0)
-          if [ "${#files[@]}" -eq 0 ]; then
-            echo "No shell scripts found under bin/"
-            exit 0
-          fi
-          shellcheck -x "${files[@]}"
+      - name: 📦 Install dependencies
+        run: bun install --frozen-lockfile
 
-      - name: 📝 bash -n syntax check
-        run: |
-          set -euo pipefail
-          fail=0
-          while IFS= read -r -d '' file; do
-            if ! bash -n "$file"; then
-              echo "Syntax error in $file"
-              fail=1
-            fi
-          done < <(find bin -type f -name '*.sh' -print0)
-          exit "$fail"
+      - name: 🔍 shellcheck
+        run: bun run shellcheck
 
-      - name: 🔑 Verify bin scripts are executable
-        run: |
-          set -euo pipefail
-          fail=0
-          while IFS= read -r -d '' file; do
-            if [ ! -x "$file" ]; then
-              echo "Not executable: $file"
-              fail=1
-            fi
-          done < <(find bin -type f -name '*.sh' -print0)
-          exit "$fail"
+      - name: 📝 syntax
+        run: bun run syntax
 
-      - name: 👉 Check shebangs are present
-        run: |
-          set -euo pipefail
-          fail=0
-          while IFS= read -r -d '' file; do
-            first_line="$(head -n 1 "$file")"
-            case "$first_line" in
-              '#!'*) ;;
-              *)
-                echo "Missing shebang: $file"
-                fail=1
-                ;;
-            esac
-          done < <(find bin -type f -name '*.sh' -print0)
-          exit "$fail"
+      - name: 🔑 executable
+        run: bun run executable
+
+      - name: 👉 shebang
+        run: bun run shebang
 
       - name: ✅ All checks passed
         run: echo "All shell script checks passed."

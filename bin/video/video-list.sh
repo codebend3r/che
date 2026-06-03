@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/utils.sh
 . "$SCRIPT_DIR/../utils.sh" --source-only
 
 set -euo pipefail
@@ -83,7 +84,7 @@ FIND_CMD+=" -type f \\( -iname \"*.mp4\" -o -iname \"*.mkv\" \\)"
 TMP_FILE=$(mktemp)
 
 eval "$FIND_CMD" | while IFS= read -r file; do
-  size=$(ls -l -- "$file" | awk '{print $5}')
+  size=$(wc -c < "$file" | tr -d ' ')
   echo "$size|$file" >> "$TMP_FILE"
 done
 

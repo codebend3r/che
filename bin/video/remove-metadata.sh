@@ -1,6 +1,7 @@
 #!/opt/homebrew/bin/bash
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/utils.sh
 . "$SCRIPT_DIR/../utils.sh" --source-only
 
 set -euo pipefail
@@ -95,6 +96,7 @@ info "Target path: $ROOT_DIR"
 
 # Preview: list files exiftool will process (ignores Apple '._' files)
 info "Listing candidate files:"
+# shellcheck disable=SC2016  # '$FilePath' is an exiftool format string, not a shell variable
 exiftool -r -i '*/._*' "${EXT_ARGS[@]}" -q -p '$FilePath' "$ROOT_DIR"
 
 # Run exiftool (ignore Apple resource fork files)
