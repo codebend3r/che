@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Runs the same checks as .github/workflows/ci.yml via package.json scripts.
+# Enable for this clone with:
+#   git config core.hooksPath hooks
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+if ! command -v bun >/dev/null 2>&1; then
+  echo "pre-push: bun not installed (\`brew install bun\`). Bypass with \`git push --no-verify\`."
+  exit 1
+fi
+
+exec bun run ci
