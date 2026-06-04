@@ -66,7 +66,12 @@ show-codecs() {
 }
 
 fix-codecs() {
-  bash "${SHELL_FUNCTIONS_BIN}/video/fix-codecs.sh" "$@"
+  DRY_RUN=false bash "${SHELL_FUNCTIONS_BIN}/video/fix-codecs.sh" "$@"
+  playsound-7
+}
+
+fix-codecs-dr() {
+  DRY_RUN=true bash "${SHELL_FUNCTIONS_BIN}/video/fix-codecs.sh" "$@"
   playsound-7
 }
 

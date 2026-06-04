@@ -6,17 +6,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 set -euo pipefail
 
-# v2.0.4
+# v2.1.0
 
 info "Running command in $(pwd)"
 
 # Usage:
-#   fix-codecs --path=./ --delete-original=true
+#   fix-codecs --path=./ [--delete-original=true] [--dry-run]
 
 ROOT_DIR=""
 DELETE_ORIGINAL=false
+DRY_RUN="${DRY_RUN:-true}"   # Repo policy: destructive tools default preview-only unless wrapper sets env.
 
-# ⚙️  CLI — long flags only; `--delete-original` optional `=true|false` (see ../utils.sh).
+# ⚙️  CLI — long flags only; booleans via `--flag` or `--flag=true|false` (see ../utils.sh).
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --path=*)
@@ -31,14 +32,22 @@ while [[ $# -gt 0 ]]; do
       DELETE_ORIGINAL=true
       shift
       ;;
+    --dry-run=*)
+      DRY_RUN="${1#*=}"
+      shift
+      ;;
+    --dry-run)
+      DRY_RUN=true
+      shift
+      ;;
     -h|--help)
-      warning "Usage: $0 --path=/path/to/media [--delete-original=true]"
-      warning "Default: --delete-original=false"
+      warning "Usage: $0 --path=/path/to/media [--delete-original=true] [--dry-run]"
+      warning "Default: --delete-original=false, --dry-run=true"
       exit 0
       ;;
     *)
       warning "Unknown argument: $1"
-      warning "Usage: $0 --path=/path/to/media [--delete-original=true]"
+      warning "Usage: $0 --path=/path/to/media [--delete-original=true] [--dry-run]"
       exit 1
       ;;
   esac
@@ -56,6 +65,7 @@ fi
 
 note "Scanning: $ROOT_DIR"
 note "Delete original after conversion: $DELETE_ORIGINAL"
+note "Dry run: $DRY_RUN"
 note "----------------------------------------------------"
 
 find "$ROOT_DIR" -type f \( -iname "*.mp4" -o -iname "*.mkv" -o -iname "*.mov" -o -iname "*.avi" \) | while read -r file; do
@@ -64,8 +74,16 @@ find "$ROOT_DIR" -type f \( -iname "*.mp4" -o -iname "*.mkv" -o -iname "*.mov" -
   filename="${base%.*}"
   output="$dir/${filename}_fixed.mp4"
 
+  if [[ "$DRY_RUN" == "true" ]]; then
+    info "[DRY RUN] Would re-encode: $file -> $output"
+    if [[ "$DELETE_ORIGINAL" == "true" ]]; then
+      info "[DRY RUN] Would delete original: $file"
+    fi
+    continue
+  fi
+
   log "Processing: $file"
-  
+
   ffmpeg -nostdin -i "$file" \
     -map 0:v:0 -map 0:a:0 -map 0:s:0? \
     -c:v libx265 -preset slow -crf 22 \
