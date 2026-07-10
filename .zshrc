@@ -229,3 +229,8 @@ update-brew-dr() {
   bash "${SHELL_FUNCTIONS_BIN}/system/update-brew.sh" --dry-run "$@"
   playsound-7
 }
+
+# Launch btop with a gruvbox theme matching the macOS appearance.
+btop() {
+  bash "${SHELL_FUNCTIONS_BIN}/system/btop-launch.sh" "$@"
+}
