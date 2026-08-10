@@ -31,6 +31,14 @@ checkout-my-branches() {
   playsound-7
 }
 
+all-actions() {
+  bash "${SHELL_FUNCTIONS_BIN}/git/all-actions.sh" "$@"
+}
+
+all-actions-watch() {
+  bash "${SHELL_FUNCTIONS_BIN}/git/all-actions.sh" --watch "$@"
+}
+
 prune-worktrees() {
   DRY_RUN=false bash "${SHELL_FUNCTIONS_BIN}/git/prune-worktrees.sh" "$@"
   playsound-4
