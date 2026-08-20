@@ -2,3 +2,9 @@ node_modules/
 
 # Worktrees created by tooling live here
 .claude/
+
+# macOS Finder metadata
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
