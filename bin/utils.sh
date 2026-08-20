@@ -91,3 +91,70 @@ format_bytes() {
     echo "${bytes} B"
   fi
 }
+
+###################
+# Worktree helpers
+#
+# A branch checked out in a linked worktree cannot be checked out, deleted or
+# reset from the main clone — git refuses with "already used by worktree".
+# That is a mechanical limit, not a conflict, so every script that touches
+# branches needs to know which ones are pinned and where.
+
+# Emit "<branch><TAB><path>" for every worktree that has a branch checked out.
+# Detached worktrees are skipped (they pin no branch). The main worktree is
+# included, because its branch is pinned for the same reason.
+worktree_branch_map() {
+  local path="" branch=""
+
+  while IFS= read -r line; do
+    case "$line" in
+      "worktree "*)
+        # A new record starts; flush the previous one.
+        [[ -n "$path" && -n "$branch" ]] && printf '%s\t%s\n' "$branch" "$path"
+        path="${line#worktree }"
+        branch=""
+        ;;
+      "branch refs/heads/"*)
+        branch="${line#branch refs/heads/}"
+        ;;
+    esac
+  done < <(git worktree list --porcelain)
+
+  [[ -n "$path" && -n "$branch" ]] && printf '%s\t%s\n' "$branch" "$path"
+  return 0
+}
+
+# Print the worktree path holding BRANCH, or nothing when no worktree does.
+worktree_for_branch() {
+  local wanted=$1 branch path
+
+  while IFS=$'\t' read -r branch path; do
+    if [[ "$branch" == "$wanted" ]]; then
+      printf '%s' "$path"
+      return 0
+    fi
+  done < <(worktree_branch_map)
+
+  return 1
+}
+
+# True when the worktree at PATH has no modified or untracked files.
+# Ignored build output (node_modules, .next) does not count as dirty.
+worktree_is_clean() {
+  local path=$1
+  [[ -z "$(git -C "$path" status --porcelain 2>/dev/null)" ]]
+}
+
+# True when every commit on BRANCH is already on its remote. Prefers the
+# configured upstream and falls back to origin/<branch>.
+branch_is_pushed() {
+  local branch=$1 upstream
+
+  upstream="$(git rev-parse --abbrev-ref --symbolic-full-name "${branch}@{upstream}" 2>/dev/null || true)"
+  if [[ -z "$upstream" ]]; then
+    upstream="origin/${branch}"
+  fi
+
+  git rev-parse --verify --quiet "$upstream" >/dev/null 2>&1 || return 1
+  git merge-base --is-ancestor "$branch" "$upstream"
+}

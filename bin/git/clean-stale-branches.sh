@@ -103,16 +103,45 @@ if [[ ${#stale[@]} -eq 0 ]]; then
   exit 0
 fi
 
+# A branch checked out in a worktree cannot be deleted — git refuses with
+# "already used by worktree". Split those out so one pinned branch doesn't
+# abort the whole run; sync-all-branches collapses worktrees before it gets
+# here, so this only bites when the script is run on its own.
+deletable=()
+pinned=()
+
+for b in "${stale[@]}"; do
+  wt="$(worktree_for_branch "$b" || true)"
+  if [[ -n "$wt" ]]; then
+    pinned+=("$b|$wt")
+  else
+    deletable+=("$b")
+  fi
+done
+
+if [[ ${#pinned[@]} -gt 0 ]]; then
+  warning "⏭️  ${#pinned[@]} stale branch(es) are checked out in a worktree:"
+  for entry in "${pinned[@]}"; do
+    warning "  • 🌿 ${entry%%|*} (in ${entry#*|})"
+  done
+  info "💡 Run sync-all-branches to push and collapse those worktrees first."
+fi
+
+if [[ ${#deletable[@]} -eq 0 ]]; then
+  success "✨ Nothing left to delete. 🎉"
+  exit 0
+fi
+
 if [[ "$DRY_RUN" == true ]]; then
-  warning "🌵 ${#stale[@]} stale branch(es) would be deleted:"
-  for b in "${stale[@]}"; do
+  warning "🌵 ${#deletable[@]} stale branch(es) would be deleted:"
+  for b in "${deletable[@]}"; do
     warning "  • 🪦 $b"
   done
   log "💡 Dry run complete. Nothing was actually deleted."
 else
-  for b in "${stale[@]}"; do
+  for b in "${deletable[@]}"; do
     warning "🗑️  Deleting: $b"
     git branch -D "$b"
   done
-  success "✨ Removed ${#stale[@]} stale branch(es). 🎉"
+  success "✨ Removed ${#deletable[@]} stale branch(es). 🎉"
 fi

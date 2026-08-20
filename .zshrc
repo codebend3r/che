@@ -49,13 +49,23 @@ prune-worktrees-dr() {
   playsound-7
 }
 
+# One-shot: push every worktree to origin, collapse the pushed ones back into
+# plain local branches, then run the usual branch hygiene. This DOES push.
+sync-all-branches() {
+  DRY_RUN=false bash "${SHELL_FUNCTIONS_BIN}/git/sync-all-branches.sh" "$@"
+  playsound-7
+}
+
+sync-all-branches-dr() {
+  DRY_RUN=true bash "${SHELL_FUNCTIONS_BIN}/git/sync-all-branches.sh" "$@"
+  playsound-7
+}
+
 # One-shot: pull every kind of "latest" from origin into the local repo.
-# Read-only against origin — fetches/prunes, never pushes.
+# Read-only against origin — fetches/prunes, never pushes. Worktrees that are
+# already fully pushed are still collapsed; unpushed ones are left alone.
 update-from-origin() {
-  DRY_RUN=false bash "${SHELL_FUNCTIONS_BIN}/git/prune-worktrees.sh"
-  DRY_RUN=false bash "${SHELL_FUNCTIONS_BIN}/git/clean-stale-branches.sh"
-  bash "${SHELL_FUNCTIONS_BIN}/git/update-local-branches.sh"
-  bash "${SHELL_FUNCTIONS_BIN}/git/checkout-my-branches.sh"
+  DRY_RUN=false bash "${SHELL_FUNCTIONS_BIN}/git/sync-all-branches.sh" --no-push "$@"
   playsound-7
 }
 

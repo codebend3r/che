@@ -200,16 +200,17 @@ iso_to_epoch() {
 
 # ISO-8601 UTC -> compact age ("45s", "12m", "3h", "2d").
 iso_to_age() {
-  local then now delta
-  then="$(iso_to_epoch "$1")"
+  # Not named `then`: shellcheck reads a bare `then` as the keyword (SC1010).
+  local start now delta
+  start="$(iso_to_epoch "$1")"
 
-  if [[ -z "$then" ]]; then
+  if [[ -z "$start" ]]; then
     printf '-'
     return
   fi
 
   now="$(date -u '+%s')"
-  delta=$((now - then))
+  delta=$((now - start))
   [[ $delta -lt 0 ]] && delta=0
 
   if [[ $delta -lt 60 ]]; then

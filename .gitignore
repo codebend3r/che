@@ -1,1 +1,4 @@
 node_modules/
+
+# Worktrees created by tooling live here
+.claude/

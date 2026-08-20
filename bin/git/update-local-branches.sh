@@ -113,6 +113,30 @@ succeeded=()
 failed=()
 
 for branch in "${branches[@]}"; do
+  # A branch checked out in another worktree cannot be checked out here — git
+  # refuses with "already used by worktree". That's a mechanical limit, not a
+  # conflict, so update it in place rather than counting it as a failure.
+  wt="$(worktree_for_branch "$branch" || true)"
+
+  if [[ -n "$wt" && "$wt" != "$(pwd -P)" ]]; then
+    if ! worktree_is_clean "$wt"; then
+      warning "  ⏭️  $branch — worktree is dirty ($wt), skipping"
+      failed+=("$branch")
+      continue
+    fi
+
+    log "⬇️  Rebasing $branch in its worktree ($wt)"
+    if git -C "$wt" pull --rebase --quiet; then
+      success "  ✅ $branch up to date (in $wt)"
+      succeeded+=("$branch")
+    else
+      warning "  ❌ rebase failed — aborting and moving on"
+      git -C "$wt" rebase --abort 2>/dev/null || true
+      failed+=("$branch")
+    fi
+    continue
+  fi
+
   info "📂 Switching to 🌿 $branch"
   if ! git checkout --quiet "$branch" 2>/dev/null; then
     warning "  ✗ checkout failed, skipping"
