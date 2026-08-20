@@ -1,14 +1,15 @@
 {
   "name": "shell-functions",
   "private": true,
-  "description": "Personal collection of zsh/bash helper scripts. See README.md and CLAUDE.md.",
+  "description": "Personal collection of Python helper scripts with zsh wrappers. See README.md and CLAUDE.md.",
   "scripts": {
-    "test": "bash test/run-all.sh",
-    "ci": "run-s shellcheck syntax executable shebang",
-    "shellcheck": "find bin -type f -name '*.sh' -print0 | xargs -0 shellcheck -x",
-    "syntax": "find bin -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n",
-    "executable": "find bin -type f -name '*.sh' ! -perm -u+x | awk '{print \"Not executable: \" $0; ec=1} END{exit ec+0}'",
-    "shebang": "find bin -type f -name '*.sh' -print0 | xargs -0 awk 'FNR==1 && !/^#!/{print \"Missing shebang: \" FILENAME; ec=1} END{exit ec+0}'"
+    "test": "uv run --no-project --with-requirements requirements-dev.txt -- pytest",
+    "ci": "run-s lint format syntax executable shebang test",
+    "lint": "uv run --no-project --with-requirements requirements-dev.txt -- ruff check bin test",
+    "format": "uv run --no-project --with-requirements requirements-dev.txt -- ruff format --check bin test",
+    "syntax": "find bin test -type f -name '*.py' -print0 | xargs -0 -n1 python3 -m py_compile",
+    "executable": "find bin -type f -name '*.py' ! -name utils.py ! -perm -u+x | awk '{print \"Not executable: \" $0; ec=1} END{exit ec+0}'",
+    "shebang": "find bin -type f -name '*.py' ! -name utils.py -print0 | xargs -0 awk 'FNR==1 && !/^#!/{print \"Missing shebang: \" FILENAME; ec=1} END{exit ec+0}'"
   },
   "packageManager": "bun@1.3.14",
   "devDependencies": {

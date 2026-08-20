@@ -1,0 +1,35 @@
+# Config only. This repo is a collection of standalone scripts, not an
+# installable package, so there is no [project] table and nothing to build.
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+python_files = ["test_*.py"]
+addopts = "-q --strict-markers"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["node_modules"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # bugbear
+    "UP",   # pyupgrade
+    "S",    # bandit - the subprocess/shell rules this migration cares about
+    "PTH",  # prefer pathlib over os.path
+    "RUF",
+]
+ignore = [
+    "E501",    # line length is handled by the formatter, not the linter
+    "S404",    # importing subprocess is the entire point of these scripts
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests legitimately use asserts and run the scripts under test as subprocesses.
+"test/*" = ["S101", "S603", "S607"]
+
+[tool.ruff.format]
+quote-style = "double"

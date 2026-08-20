@@ -1,5 +1,3 @@
-. ~/Developer/git/shell-functions/bin/utils.sh --source-only
-
 # -----------------------------------------------------------------------------
 # Shell functions (single source of truth)
 # Prefer ~/Developer/git/shell-functions/bin/
@@ -12,52 +10,52 @@ SHELL_FUNCTIONS_BIN="${HOME}/Developer/git/shell-functions/bin"
 # -----------------------------------------------------------------------------
 
 clean-stale-branches() {
-  DRY_RUN=false bash "${SHELL_FUNCTIONS_BIN}/git/clean-stale-branches.sh"
+  DRY_RUN=false python3 "${SHELL_FUNCTIONS_BIN}/git/clean-stale-branches.py"
   playsound-4
 }
 
 clean-stale-branches-dr() {
-  DRY_RUN=true bash "${SHELL_FUNCTIONS_BIN}/git/clean-stale-branches.sh"
+  DRY_RUN=true python3 "${SHELL_FUNCTIONS_BIN}/git/clean-stale-branches.py"
   playsound-7
 }
 
 update-local-branches() {
-  bash "${SHELL_FUNCTIONS_BIN}/git/update-local-branches.sh" "$@"
+  python3 "${SHELL_FUNCTIONS_BIN}/git/update-local-branches.py" "$@"
   playsound-5
 }
 
 checkout-my-branches() {
-  bash "${SHELL_FUNCTIONS_BIN}/git/checkout-my-branches.sh" "$@"
+  python3 "${SHELL_FUNCTIONS_BIN}/git/checkout-my-branches.py" "$@"
   playsound-7
 }
 
 all-actions() {
-  bash "${SHELL_FUNCTIONS_BIN}/git/all-actions.sh" "$@"
+  python3 "${SHELL_FUNCTIONS_BIN}/git/all-actions.py" "$@"
 }
 
 all-actions-watch() {
-  bash "${SHELL_FUNCTIONS_BIN}/git/all-actions.sh" --watch "$@"
+  python3 "${SHELL_FUNCTIONS_BIN}/git/all-actions.py" --watch "$@"
 }
 
 prune-worktrees() {
-  DRY_RUN=false bash "${SHELL_FUNCTIONS_BIN}/git/prune-worktrees.sh" "$@"
+  DRY_RUN=false python3 "${SHELL_FUNCTIONS_BIN}/git/prune-worktrees.py" "$@"
   playsound-4
 }
 
 prune-worktrees-dr() {
-  DRY_RUN=true bash "${SHELL_FUNCTIONS_BIN}/git/prune-worktrees.sh" "$@"
+  DRY_RUN=true python3 "${SHELL_FUNCTIONS_BIN}/git/prune-worktrees.py" "$@"
   playsound-7
 }
 
 # One-shot: push every worktree to origin, collapse the pushed ones back into
 # plain local branches, then run the usual branch hygiene. This DOES push.
 sync-all-branches() {
-  DRY_RUN=false bash "${SHELL_FUNCTIONS_BIN}/git/sync-all-branches.sh" "$@"
+  DRY_RUN=false python3 "${SHELL_FUNCTIONS_BIN}/git/sync-all-branches.py" "$@"
   playsound-7
 }
 
 sync-all-branches-dr() {
-  DRY_RUN=true bash "${SHELL_FUNCTIONS_BIN}/git/sync-all-branches.sh" "$@"
+  DRY_RUN=true python3 "${SHELL_FUNCTIONS_BIN}/git/sync-all-branches.py" "$@"
   playsound-7
 }
 
@@ -65,7 +63,7 @@ sync-all-branches-dr() {
 # Read-only against origin — fetches/prunes, never pushes. Worktrees that are
 # already fully pushed are still collapsed; unpushed ones are left alone.
 update-from-origin() {
-  DRY_RUN=false bash "${SHELL_FUNCTIONS_BIN}/git/sync-all-branches.sh" --no-push "$@"
+  DRY_RUN=false python3 "${SHELL_FUNCTIONS_BIN}/git/sync-all-branches.py" --no-push "$@"
   playsound-7
 }
 
@@ -74,62 +72,62 @@ update-from-origin() {
 # -----------------------------------------------------------------------------
 
 rename-video-file() {
-  bash "${SHELL_FUNCTIONS_BIN}/video/rename-video-file.sh" "$@"
+  python3 "${SHELL_FUNCTIONS_BIN}/video/rename-video-file.py" "$@"
   playsound-5
 }
 
 show-codecs() {
-  bash "${SHELL_FUNCTIONS_BIN}/video/show-codecs.sh" "$@"
+  python3 "${SHELL_FUNCTIONS_BIN}/video/show-codecs.py" "$@"
   playsound-6
 }
 
 fix-codecs() {
-  DRY_RUN=false bash "${SHELL_FUNCTIONS_BIN}/video/fix-codecs.sh" "$@"
+  DRY_RUN=false python3 "${SHELL_FUNCTIONS_BIN}/video/fix-codecs.py" "$@"
   playsound-7
 }
 
 fix-codecs-dr() {
-  DRY_RUN=true bash "${SHELL_FUNCTIONS_BIN}/video/fix-codecs.sh" "$@"
+  DRY_RUN=true python3 "${SHELL_FUNCTIONS_BIN}/video/fix-codecs.py" "$@"
   playsound-7
 }
 
 find-video-mkv-issues() {
-  bash "${SHELL_FUNCTIONS_BIN}/video/find-video-mkv-issues.sh" "$@"
+  python3 "${SHELL_FUNCTIONS_BIN}/video/find-video-mkv-issues.py" "$@"
   playsound-4
 }
 
 validate-video-files() {
-  bash "${SHELL_FUNCTIONS_BIN}/video/validate-video-files.sh" "$@"
+  python3 "${SHELL_FUNCTIONS_BIN}/video/validate-video-files.py" "$@"
   playsound-2
 }
 
 scan-videos-audio-language() {
-  bash "${SHELL_FUNCTIONS_BIN}/video/scan-videos-audio-language.sh" "$@"
+  python3 "${SHELL_FUNCTIONS_BIN}/video/scan-videos-audio-language.py" "$@"
   playsound-3
 }
 
 remove-metadata() {
-  bash "${SHELL_FUNCTIONS_BIN}/video/remove-metadata.sh" "$@"
+  python3 "${SHELL_FUNCTIONS_BIN}/video/remove-metadata.py" "$@"
   playsound-4
 }
 
 delete-duplicate-videos() {
-  DRY_RUN=false bash "${SHELL_FUNCTIONS_BIN}/video/delete-duplicate-videos.sh" "$@"
+  DRY_RUN=false python3 "${SHELL_FUNCTIONS_BIN}/video/delete-duplicate-videos.py" "$@"
   playsound-6
 }
 
 delete-duplicate-videos-dr() {
-  DRY_RUN=true bash "${SHELL_FUNCTIONS_BIN}/video/delete-duplicate-videos.sh" "$@"
+  DRY_RUN=true python3 "${SHELL_FUNCTIONS_BIN}/video/delete-duplicate-videos.py" "$@"
   playsound-6
 }
 
 video-list() {
-  bash "${SHELL_FUNCTIONS_BIN}/video/video-list.sh" "$@"
+  python3 "${SHELL_FUNCTIONS_BIN}/video/video-list.py" "$@"
   playsound-5
 }
 
 detect-green-magenta-videos() {
-  bash "${SHELL_FUNCTIONS_BIN}/video/detect-green-magenta-videos.sh" "$@"
+  python3 "${SHELL_FUNCTIONS_BIN}/video/detect-green-magenta-videos.py" "$@"
   playsound-3
 }
 
@@ -138,57 +136,57 @@ detect-green-magenta-videos() {
 # -----------------------------------------------------------------------------
 
 delete-empty-folders() {
-  DRY_RUN=false bash "${SHELL_FUNCTIONS_BIN}/files/delete-empty-folders.sh" "$@"
+  DRY_RUN=false python3 "${SHELL_FUNCTIONS_BIN}/files/delete-empty-folders.py" "$@"
   playsound-6
 }
 
 delete-empty-folders-dr() {
-  DRY_RUN=true bash "${SHELL_FUNCTIONS_BIN}/files/delete-empty-folders.sh" "$@"
+  DRY_RUN=true python3 "${SHELL_FUNCTIONS_BIN}/files/delete-empty-folders.py" "$@"
   playsound-7
 }
 
 delete-smb-files() {
-  DRY_RUN=false bash "${SHELL_FUNCTIONS_BIN}/files/delete-smb-files.sh" "$@"
+  DRY_RUN=false python3 "${SHELL_FUNCTIONS_BIN}/files/delete-smb-files.py" "$@"
   playsound-6
 }
 
 delete-smb-files-dr() {
-  DRY_RUN=true bash "${SHELL_FUNCTIONS_BIN}/files/delete-smb-files.sh" "$@"
+  DRY_RUN=true python3 "${SHELL_FUNCTIONS_BIN}/files/delete-smb-files.py" "$@"
   playsound-7
 }
 
 delete-by-ext() {
-  DRY_RUN=false bash "${SHELL_FUNCTIONS_BIN}/files/delete-by-ext.sh" "$@"
+  DRY_RUN=false python3 "${SHELL_FUNCTIONS_BIN}/files/delete-by-ext.py" "$@"
   playsound-6
 }
 
 delete-by-ext-dr() {
-  DRY_RUN=true bash "${SHELL_FUNCTIONS_BIN}/files/delete-by-ext.sh" "$@"
+  DRY_RUN=true python3 "${SHELL_FUNCTIONS_BIN}/files/delete-by-ext.py" "$@"
   playsound-7
 }
 
 files-under-size() {
-  DRY_RUN=false bash "${SHELL_FUNCTIONS_BIN}/files/files-under-size.sh" "$@"
+  DRY_RUN=false python3 "${SHELL_FUNCTIONS_BIN}/files/files-under-size.py" "$@"
   playsound-4
 }
 
 files-under-size-dr() {
-  DRY_RUN=true bash "${SHELL_FUNCTIONS_BIN}/files/files-under-size.sh" "$@"
+  DRY_RUN=true python3 "${SHELL_FUNCTIONS_BIN}/files/files-under-size.py" "$@"
   playsound-7
 }
 
 find-largest-files() {
-  bash "${SHELL_FUNCTIONS_BIN}/files/find-largest-files.sh" "$@"
+  python3 "${SHELL_FUNCTIONS_BIN}/files/find-largest-files.py" "$@"
   playsound-2
 }
 
 make-alpha-dir() {
-  bash "${SHELL_FUNCTIONS_BIN}/files/make-alpha-dir.sh" "$@"
+  python3 "${SHELL_FUNCTIONS_BIN}/files/make-alpha-dir.py" "$@"
   playsound-4
 }
 
 compress-folders() {
-  bash "${SHELL_FUNCTIONS_BIN}/files/compress-folders.sh" "$@"
+  python3 "${SHELL_FUNCTIONS_BIN}/files/compress-folders.py" "$@"
   playsound-7
 }
 
@@ -202,12 +200,12 @@ list-permission() {
 # -----------------------------------------------------------------------------
 
 find-movie-by-year() {
-  bash "${SHELL_FUNCTIONS_BIN}/video/find-movie-by-year.sh" "$@"
+  python3 "${SHELL_FUNCTIONS_BIN}/video/find-movie-by-year.py" "$@"
   playsound-2
 }
 
 largest-tv-shows() {
-  bash "${SHELL_FUNCTIONS_BIN}/video/largest-tv-shows.sh" "$@"
+  python3 "${SHELL_FUNCTIONS_BIN}/video/largest-tv-shows.py" "$@"
   playsound-2
 }
 
@@ -216,22 +214,22 @@ largest-tv-shows() {
 # -----------------------------------------------------------------------------
 
 mount-all-drives() {
-  bash "${SHELL_FUNCTIONS_BIN}/drives/mount-all-drives.sh" "$@"
+  python3 "${SHELL_FUNCTIONS_BIN}/drives/mount-all-drives.py" "$@"
   playsound-7
 }
 
 eject-all-drives() {
-  bash "${SHELL_FUNCTIONS_BIN}/drives/eject-all-drives.sh" "$@"
+  python3 "${SHELL_FUNCTIONS_BIN}/drives/eject-all-drives.py" "$@"
   playsound-7
 }
 
 eject-all-drives-dr() {
-  bash "${SHELL_FUNCTIONS_BIN}/drives/eject-all-drives.sh" --dry-run "$@"
+  python3 "${SHELL_FUNCTIONS_BIN}/drives/eject-all-drives.py" --dry-run "$@"
   playsound-7
 }
 
 ping-nas() {
-  bash "${SHELL_FUNCTIONS_BIN}/drives/ping-nas.sh" "$@"
+  python3 "${SHELL_FUNCTIONS_BIN}/drives/ping-nas.py" "$@"
 }
 
 # -----------------------------------------------------------------------------
@@ -239,16 +237,16 @@ ping-nas() {
 # -----------------------------------------------------------------------------
 
 update-brew() {
-  bash "${SHELL_FUNCTIONS_BIN}/system/update-brew.sh" "$@"
+  python3 "${SHELL_FUNCTIONS_BIN}/system/update-brew.py" "$@"
   playsound-7
 }
 
 update-brew-dr() {
-  bash "${SHELL_FUNCTIONS_BIN}/system/update-brew.sh" --dry-run "$@"
+  python3 "${SHELL_FUNCTIONS_BIN}/system/update-brew.py" --dry-run "$@"
   playsound-7
 }
 
 # Launch btop with a gruvbox theme matching the macOS appearance.
 btop() {
-  bash "${SHELL_FUNCTIONS_BIN}/system/btop-launch.sh" "$@"
+  python3 "${SHELL_FUNCTIONS_BIN}/system/btop-launch.py" "$@"
 }

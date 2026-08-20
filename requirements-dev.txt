@@ -1,0 +1,11 @@
+# Dev-only tooling. The scripts under bin/ are standard-library-only and need
+# none of this to run - it is here for the test suite and the linter.
+#
+# Nothing needs to be installed globally; `bun run test` and `bun run ci` shell
+# out to `uv run --with-requirements requirements-dev.txt`, which builds an
+# ephemeral environment per invocation.
+#
+# Versions are pinned exactly (no ^ or ~ ranges) so every machine this repo is
+# cloned to runs the same tooling.
+pytest==9.1.1
+ruff==0.16.3

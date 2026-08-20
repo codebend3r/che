@@ -8,3 +8,8 @@ node_modules/
 ._*
 .Spotlight-V100
 .Trashes
+
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
