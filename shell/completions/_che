@@ -1,0 +1,146 @@
+#compdef che
+# che 1.0.0 - generated file, do not edit.
+#
+# Generated from bin/commands.py by `che install`.
+# To change a wrapper, edit that manifest and run `che install` again.
+
+_che_flags_for() {
+  case "$1" in
+    all-actions) print -r -- '--owner= --author= --pr-limit= --interval= --watch --help' ;;
+    all-actions-watch) print -r -- '--owner= --author= --pr-limit= --interval= --help' ;;
+    checkout-my-branches) print -r -- '--author= --limit= --help' ;;
+    clean-stale-branches) print -r -- '--dry-run --protect= --help' ;;
+    clean-stale-branches-dr) print -r -- '--dry-run --protect= --help' ;;
+    prune-worktrees) print -r -- '--dry-run --force --help' ;;
+    prune-worktrees-dr) print -r -- '--dry-run --force --help' ;;
+    sync-all-branches) print -r -- '--dry-run --no-push --keep-locked --author= --limit= --help' ;;
+    sync-all-branches-dr) print -r -- '--dry-run --no-push --keep-locked --author= --limit= --help' ;;
+    update-from-origin) print -r -- '--dry-run --keep-locked --author= --limit= --help' ;;
+    update-local-branches) print -r -- '--limit= --dry-run --help' ;;
+    show-codecs) print -r -- '--path= --verbose --help' ;;
+    fix-codecs) print -r -- '--path= --delete-original --dry-run --help' ;;
+    fix-codecs-dr) print -r -- '--path= --delete-original --dry-run --help' ;;
+    find-video-mkv-issues) print -r -- '--path= --recursive --help' ;;
+    validate-video-files) print -r -- '--path= --verbose --help' ;;
+    scan-videos-audio-language) print -r -- '- - p a t h --help' ;;
+    remove-metadata) print -r -- '--path= --exts= --help' ;;
+    rename-video-file) print -r -- '--path= --recursive --rename-folders --capitalize-preps --dry-run --ignore-words= --help' ;;
+    delete-duplicate-videos) print -r -- '--path= --strategy= --dry-run --verbose --help' ;;
+    delete-duplicate-videos-dr) print -r -- '--path= --strategy= --dry-run --verbose --help' ;;
+    video-list) print -r -- '--path= --recursive --with-folder --sort= --help' ;;
+    detect-green-magenta-videos) print -r -- '--samples= --threshold= --verbose --help' ;;
+    find-movie-by-year) print -r -- '--year= --path= --help' ;;
+    largest-tv-shows) print -r -- '--path= --limit= --full-path --debug --help' ;;
+    delete-by-ext) print -r -- '--path= --ext= --dry-run --verbose --help' ;;
+    delete-by-ext-dr) print -r -- '--path= --ext= --dry-run --verbose --help' ;;
+    delete-empty-folders) print -r -- '--path= --dry-run --verbose --help' ;;
+    delete-empty-folders-dr) print -r -- '--path= --dry-run --verbose --help' ;;
+    delete-smb-files) print -r -- '--path= --dry-run --help' ;;
+    delete-smb-files-dr) print -r -- '--path= --dry-run --help' ;;
+    files-under-size) print -r -- '--path= --size= --dry-run --help' ;;
+    files-under-size-dr) print -r -- '--path= --size= --dry-run --help' ;;
+    find-largest-files) print -r -- '--path= --length= --full-path --help' ;;
+    make-alpha-dir) print -r -- '- - p a t h --help' ;;
+    compress-folders) print -r -- '--path= --dry-run --verbose --help' ;;
+    list-permission) print -r -- --help ;;
+    mount-all-drives) print -r -- '--only= --use-ip --quiet --help' ;;
+    eject-all-drives) print -r -- '--dry-run --only= --no-force --no-clear-favorites --quiet --help' ;;
+    eject-all-drives-dr) print -r -- '--dry-run --only= --no-force --no-clear-favorites --quiet --help' ;;
+    ping-nas) print -r -- '--interval= --ping-timeout= --only= --no-remount --use-ip --once --quiet --help' ;;
+    update-brew) print -r -- '--dry-run --no-cask --no-cleanup --help' ;;
+    update-brew-dr) print -r -- '--dry-run --no-cask --no-cleanup --help' ;;
+    btop) print -r -- --help ;;
+    install) print -r -- '--shells= --all-shells --yes --dry-run --no-completions --no-path-shim --replace-legacy --print --help' ;;
+    update) print -r -- '--check --yes --help' ;;
+    doctor) print -r -- '--json --verbose --help' ;;
+    uninstall) print -r -- '--yes --dry-run --purge --help' ;;
+    list) print -r -- '--category= --json --dry --help' ;;
+    completions) print -r -- '- - s h e l l --help' ;;
+    *) print -r -- "--help" ;;
+  esac
+}
+
+_che_flag_complete() {
+  local cmd="$1" cur="${words[CURRENT]}"
+
+  if [[ "$cur" == *=* ]]; then
+    compset -P '*='
+    _files
+    return
+  fi
+
+  local -a flags
+  flags=( ${=$(_che_flags_for "$cmd")} )
+  compadd -S '' -- $flags
+  _files
+}
+
+_che() {
+  local -a subcommands
+  subcommands=(
+    'all-actions:GitHub Actions status for every open PR you authored'
+    'all-actions-watch:Same as all-actions, refreshed on an interval'
+    'checkout-my-branches:Check out recent remote branches you authored that aren'"'"'t local yet'
+    'clean-stale-branches:Delete local branches whose upstream is gone'
+    'clean-stale-branches-dr:Delete local branches whose upstream is gone (preview)'
+    'prune-worktrees:Remove every linked worktree, then prune stale admin records'
+    'prune-worktrees-dr:Remove every linked worktree, then prune stale admin records (preview)'
+    'sync-all-branches:Push every worktree, collapse the pushed ones, then tidy branches'
+    'sync-all-branches-dr:Push every worktree, collapse the pushed ones, then tidy branches (preview)'
+    'update-from-origin:Same as sync-all-branches but never pushes: fetch, collapse, rebase'
+    'update-local-branches:Rebase every local branch that has an upstream onto origin'
+    'show-codecs:Report media files outside the Direct Play codec/container set'
+    'fix-codecs:Re-encode media to h265/aac mp4 so it Direct Plays'
+    'fix-codecs-dr:Re-encode media to h265/aac mp4 so it Direct Plays (preview)'
+    'find-video-mkv-issues:Scan MKV files and estimate Plex direct-play compatibility'
+    'validate-video-files:Check .mp4/.mkv files decode by playing one frame with mpv'
+    'scan-videos-audio-language:Print the audio language tags of every video under a path'
+    'remove-metadata:Strip all metadata from video files recursively'
+    'rename-video-file:Title-case video filenames (and optionally their folders)'
+    'delete-duplicate-videos:Delete duplicate MKV/MP4 files under a root directory'
+    'delete-duplicate-videos-dr:Delete duplicate MKV/MP4 files under a root directory (preview)'
+    'video-list:List .mp4/.mkv files under a path with human-readable sizes'
+    'detect-green-magenta-videos:Detect videos with the green/magenta chroma artifact'
+    'find-movie-by-year:Find movie folders whose name ends with "(YYYY)"'
+    'largest-tv-shows:Rank TV show folders in a library by total size on disk'
+    'delete-by-ext:Delete files under a path matching a set of extensions'
+    'delete-by-ext-dr:Delete files under a path matching a set of extensions (preview)'
+    'delete-empty-folders:Delete truly-empty directories under a path, cascading upwards'
+    'delete-empty-folders-dr:Delete truly-empty directories under a path, cascading upwards (preview)'
+    'delete-smb-files:Delete .smbdelete* files left behind by an SMB share'
+    'delete-smb-files-dr:Delete .smbdelete* files left behind by an SMB share (preview)'
+    'files-under-size:Find video files at or under a size threshold'
+    'files-under-size-dr:Find video files at or under a size threshold (preview)'
+    'find-largest-files:List the largest files under a path, biggest first'
+    'make-alpha-dir:Create '"'"'#'"'"' and A-Z bucket folders under a parent directory'
+    'compress-folders:Zip every immediate subfolder of a path at max compression'
+    'list-permission:Show ownership and mode of a volume under /Volumes'
+    'mount-all-drives:Mount all NAS drives over SMB via AppleScript'
+    'eject-all-drives:Eject all NAS volumes from /Volumes'
+    'eject-all-drives-dr:Eject all NAS volumes from /Volumes (preview)'
+    'ping-nas:Keep-alive pinger that remounts a NAS drive that dropped off'
+    'update-brew:Update Homebrew, upgrade formulae and casks, then clean up'
+    'update-brew-dr:Update Homebrew, upgrade formulae and casks, then clean up (preview)'
+    'btop:Launch btop with a gruvbox theme matching the macOS appearance'
+    'install:Install the shell wrappers into your shell startup files'
+    'update:Pull the latest scripts and refresh the installed wrappers'
+    'doctor:Check the install, the interpreter and every external tool'
+    'uninstall:Remove the wrappers, the shim and the completions'
+    'list:List every command, one per line'
+    'completions:Print the completion script for a shell'
+  )
+
+  if (( CURRENT == 2 )); then
+    _describe -t commands 'che command' subcommands
+    return
+  fi
+
+  _che_flag_complete "${words[2]}"
+}
+
+_che_wrapper() {
+  _che_flag_complete "${words[1]}"
+}
+
+compdef _che che
+compdef _che_wrapper all-actions all-actions-watch checkout-my-branches clean-stale-branches clean-stale-branches-dr prune-worktrees prune-worktrees-dr sync-all-branches sync-all-branches-dr update-from-origin update-local-branches show-codecs fix-codecs fix-codecs-dr find-video-mkv-issues validate-video-files scan-videos-audio-language remove-metadata rename-video-file delete-duplicate-videos delete-duplicate-videos-dr video-list detect-green-magenta-videos find-movie-by-year largest-tv-shows delete-by-ext delete-by-ext-dr delete-empty-folders delete-empty-folders-dr delete-smb-files delete-smb-files-dr files-under-size files-under-size-dr find-largest-files make-alpha-dir compress-folders list-permission mount-all-drives eject-all-drives eject-all-drives-dr ping-nas update-brew update-brew-dr btop

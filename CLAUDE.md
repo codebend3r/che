@@ -5,14 +5,40 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Repository purpose
 
 A personal collection of Python helper scripts shared across the user's
-machines, invoked by name through zsh function wrappers. Each script under
-`bin/` is a standalone executable. The repo's `.zshrc` is the canonical source
-of the wrappers the user sources from their home `~/.zshrc`.
+machines, invoked by name through shell function wrappers. Each script under
+`bin/<category>/` is a standalone executable.
+
+`bin/commands.py` is the canonical source of the command surface. The wrappers
+under `shell/` are **generated** from it by `bin/install.py`, and `che install`
+writes a small block into the user's rc files that sources them. Nothing is
+hand-maintained in a `.zshrc` any more; the repo's `.zshrc` is a one-line shim
+kept so older setups that source it keep working.
 
 The scripts were bash until August 2026. Nothing in `bin/` is shell any more.
 
 ## Architecture
 
+- `bin/che.py` — the dispatcher. `che` with no arguments opens a full-screen
+  menu; `che <name> [args]` `exec`s the script with the same environment its
+  wrapper would have used; `che install|update|doctor|uninstall|list|
+  completions` manage the install itself.
+- `bin/commands.py` — the command manifest, and the single source of truth for
+  wrappers, completions, the menu and the doctor report. One `Command(...)` per
+  user-facing name: script, sound, `dry_run` style (`"env"` for `DRY_RUN=`,
+  `"flag"` for `--dry-run`), required binaries, full flag list, and the curated
+  questions the menu asks. A `dry_run` value also generates the `-dr` twin.
+- `bin/install.py` — installer, first-run wizard, `doctor`, self-`update`,
+  `uninstall`. Edits rc files only between its `# >>> che shell functions >>>`
+  markers, backs every file up to `~/.config/che/backups/` first, and records
+  what it did in `~/.config/che/config.json`. `--replace-legacy` removes the
+  hand-written wrappers from before it existed.
+- `bin/shellgen.py` — renders `shell/che.{zsh,bash,fish}` and
+  `shell/completions/*` from the manifest. Generated files are committed and
+  must stay machine-independent; `bun run ci` fails when they are stale.
+- `bin/tui.py` — terminal primitives for the menu and the wizard: alternate
+  screen and raw mode with guaranteed teardown, key decoding, a flicker-free
+  frame buffer, width-aware truncation (emoji are two columns), and readline
+  prompts.
 - `bin/<category>/*.py` — scripts grouped by purpose. Categories: `git/`,
   `video/`, `files/`, `drives/`, `system/`. Each script parses its own CLI flags.
 - `bin/utils.py` — shared library at the `bin/` root, imported by every script
@@ -31,11 +57,15 @@ The scripts were bash until August 2026. Nothing in `bin/` is shell any more.
   `find_main_branch`), file walking (`iter_files`, `scan_root`,
   `normalize_extensions`) and ffprobe helpers. Its module docstring is the
   authoritative statement of the CLI conventions.
-- `.zshrc` — thin wrappers that `python3`-invoke each script (via
-  `${SHELL_FUNCTIONS_BIN}/<category>/<script>.py`) and then call a
-  `playsound-N` notification (defined outside this repo). When adding a new
-  script, add a wrapper here too. The `.zshrc` header marks this repo as the
-  **single source of truth** for these wrappers.
+- `shell/` — GENERATED. Never edit by hand: change `bin/commands.py` and run
+  `bun run generate`. Each wrapper invokes its script through `$CHE_PYTHON`,
+  then calls `che_notify <sound> $?`, which plays `playsound-N` when that
+  exists (it is defined outside this repo) and returns the script's own exit
+  status.
+- `install.sh` — bootstrap for a bare machine: finds or clones the repo, finds
+  a python3 >= 3.12, then hands over to `bin/install.py`.
+- `.zshrc` — a generated shim that sources `shell/che.zsh`, kept only so an
+  existing `source .../shell-functions/.zshrc` keeps working.
 - `bin/version-bump.py` — vestigial (uses `npm`/`pnpm`); does not apply to this
   repo and shouldn't be invoked here.
 
@@ -57,8 +87,10 @@ works around the pin rather than counting it as a failure:
 
 ## Conventions for scripts in `bin/<category>/`
 
-- **Shebang**: `#!/usr/bin/env python3`. `bin/utils.py` is a library — no
-  shebang, not executable. The `bun run ci` checks enforce both.
+- **Shebang**: `#!/usr/bin/env python3`. The libraries at the `bin/` root
+  (`utils.py`, `commands.py`, `shellgen.py`, `tui.py`) have no shebang and are
+  not executable. `bun run ci` enforces the pairing in both directions: a file
+  with a shebang must be executable, an executable file must have a shebang.
 - **Standard library only.** These run from a bare `python3` on every machine
   the repo is cloned to; a third-party import would mean a venv at call time.
   The sole exception is `detect-green-magenta-videos.py`, which needs OpenCV
@@ -105,11 +137,15 @@ Video scripts rely on `ffprobe`/`ffmpeg`; `validate-video-files` needs `mpv`,
 ## When adding or modifying a script
 
 1. Create the script under the appropriate `bin/<category>/` and `chmod +x` it.
-2. If it's new, add a wrapper function to `.zshrc` (with an appropriate
-   `playsound-N` call) so it can be invoked by name after re-sourcing.
-3. Keep flag parsing and dry-run semantics consistent with neighbouring scripts.
-4. Add or extend a `test/test_*.py` suite for anything with real logic.
-5. Run `bun run ci` before committing.
+2. Add a `Command(...)` to `bin/commands.py`: category, summary (under 78
+   characters, no trailing period), script path, `playsound-N` number,
+   `dry_run` style if it can preview, `needs` for external binaries, the full
+   `flags` tuple, and two or three `Prompt`s for the menu. Every prompt flag
+   must appear in `flags`; a test enforces it.
+3. `bun run generate` to rewrite `shell/`, and commit the result.
+4. Keep flag parsing and dry-run semantics consistent with neighbouring scripts.
+5. Add or extend a `test/test_*.py` suite for anything with real logic.
+6. Run `bun run ci` before committing.
 
 ## Git commit messages
 
