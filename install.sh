@@ -3,7 +3,7 @@
 # Bootstrap che on a machine that has nothing yet.
 #
 #   ./install.sh                     from inside a clone
-#   curl -fsSL https://raw.githubusercontent.com/codebend3r/shell-functions/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/codebend3r/che/main/install.sh | bash
 #
 # All it does is find (or make) the clone, find a python3 new enough to run the
 # scripts, and hand over to bin/install.py, which does the real work. Every
@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-REPO_URL="${CHE_REPO_URL:-https://github.com/codebend3r/shell-functions.git}"
+REPO_URL="${CHE_REPO_URL:-https://github.com/codebend3r/che.git}"
 DEFAULT_DIR="${CHE_HOME:-$HOME/Developer/git/shell-functions}"
 MIN_MAJOR=3
 MIN_MINOR=12

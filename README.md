@@ -1,7 +1,18 @@
-# Shell Functions
+<div align="center">
 
-> a collection of helper scripts shared amongst computers, called by name from
-> your shell, and browsable through `che`
+# `che`
+
+**A collection of helper scripts shared amongst computers, called by name from
+your shell, and browsable through one menu.**
+
+[![CI](https://github.com/codebend3r/che/actions/workflows/ci.yml/badge.svg)](https://github.com/codebend3r/che/actions/workflows/ci.yml)
+![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)
+![Dependencies: stdlib only](https://img.shields.io/badge/dependencies-stdlib%20only-brightgreen)
+![Shells: zsh, bash, fish](https://img.shields.io/badge/shells-zsh%20%7C%20bash%20%7C%20fish-8A2BE2)
+
+<img src="menu.png" alt="The che menu: commands grouped by category on the left, details for the selected command on the right" width="850">
+
+</div>
 
 The scripts are Python, standard library only. The names you type
 (`delete-by-ext`, `sync-all-branches`, `show-codecs`, …) are shell functions
@@ -18,20 +29,35 @@ delete-by-ext --path=…  or just call it by name
 33 commands across 5 categories, plus 6 built into `che` itself
 <!-- /che:count -->
 
+## Highlights
+
+- **One manifest, everything generated.** Wrappers, completions, the menu, the
+  doctor report and the tables in this README all come from `bin/commands.py`;
+  `bun run ci` fails if any of them drift.
+- **Destructive commands preview by default.** Every deleter has a `-dr` twin
+  that only prints, and the menu opens on the dry-run.
+- **Standard library only.** A bare `python3` 3.12+ runs everything; no venv,
+  no `pip install`, on any machine the repo is cloned to.
+- **Your dotfiles stay yours.** The installer writes a few lines between
+  markers, backs every rc file up first, and never touches anything outside
+  the markers.
+- **`che doctor` knows the whole story.** Interpreter, generated files, rc
+  blocks, external tools, alias collisions — one command, non-zero on failure.
+
 ## Install
 
 From a clone:
 
 ```sh
-git clone https://github.com/codebend3r/shell-functions.git ~/Developer/git/shell-functions
-~/Developer/git/shell-functions/install.sh
+git clone https://github.com/codebend3r/che.git ~/Developer/git/che
+~/Developer/git/che/install.sh
 ```
 
 Or in one line, which clones for you (into `~/Developer/git/shell-functions`,
 or wherever `CHE_HOME` points):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/codebend3r/shell-functions/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/codebend3r/che/main/install.sh | bash
 ```
 
 `install.sh` finds a suitable python3, then hands over to `bin/install.py`,
@@ -40,6 +66,12 @@ it would touch, asks whether to add a `che` on `PATH` and whether to keep the
 completion chimes, offers to remove hand-written wrappers left over from before
 the installer existed, and reports any missing external tool (offering to
 `brew install` them when Homebrew is present).
+
+<div align="center">
+<img src="first-run.png" alt="The first run screen: che is not installed in this shell yet, offering to install, open the menu, or quit" width="700">
+<br>
+<em>Running <code>che</code> before installing offers to set itself up.</em>
+</div>
 
 Skip the wizard:
 
@@ -104,6 +136,13 @@ The repo itself is left alone; delete the directory to finish.
 `che` on its own opens the menu. Anything that can preview **previews by
 default**, so pressing Enter on `delete-by-ext` shows you what it would delete
 rather than deleting it.
+
+Type to filter — the list narrows as you go, and the right pane always shows
+the selected command's summary, script, required tools and flags:
+
+<div align="center">
+<img src="search.png" alt="The menu filtered by the search term branch, showing the five matching commands" width="850">
+</div>
 
 <!-- che:keys -->
 | Key | Does |
@@ -198,6 +237,12 @@ defaults to `--dry-run=true`, so the real rename is the one that needs
 current, whether each rc file has the block, whether `che` is on `PATH`, every
 external tool, and anything shadowing a wrapper. It exits non-zero on a real
 failure, so it works in a health check. `che doctor --json` for a machine.
+
+<div align="center">
+<img src="doctor.png" alt="che doctor output: green checks for python, repo and generated files, with problems and warnings each followed by the command that fixes them" width="850">
+<br>
+<em>Every problem <code>che doctor</code> reports comes with the command that fixes it.</em>
+</div>
 
 ### Environment
 
