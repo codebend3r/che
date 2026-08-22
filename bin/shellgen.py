@@ -249,7 +249,7 @@ def _render_posix(shell: str) -> str:
 #
 # Source this file (or let the `che install` block in your rc file do it):
 #
-#     . {"~/Developer/git/shell-functions/shell/che." + shell}
+#     . {"~/Developer/git/che/shell/che." + shell}
 #
 # Every wrapper is a shell function, so `type <name>` shows what it runs and
 # `che doctor` can tell you when something it needs is missing.
@@ -260,15 +260,22 @@ if [ -z "${{CHE_HOME:-}}" ]; then
 {resolve_self}
 fi
 
-CHE_BIN="${{CHE_HOME}}/bin"
+# Exported, not just set: every wrapper expands "$CHE_BIN", and a shell that
+# replays the *functions* without re-reading this file - a `typeset -f` dump, an
+# environment snapshot, any tool that rebuilds a shell from its exported
+# environment - keeps the functions and drops a plain variable, leaving the
+# wrappers to run "/che.py". CHE_HOME comes in exported by the rc block; this
+# keeps everything derived from it exported too.
+export CHE_BIN="${{CHE_HOME}}/bin"
 
 # Any python3 on PATH by default. `che install` records the interpreter it
 # verified (3.12+) in the rc block, which wins over this.
 : "${{CHE_PYTHON:=python3}}"
+export CHE_PYTHON
 
 # Legacy name from the hand-maintained wrappers, kept so an older snippet in
 # ~/.zshrc that still refers to it keeps resolving.
-SHELL_FUNCTIONS_BIN="${{CHE_BIN}}"
+export SHELL_FUNCTIONS_BIN="${{CHE_BIN}}"
 
 # Play the completion sound for a wrapper, then return the status it was given.
 #
@@ -349,7 +356,7 @@ def _render_fish() -> str:
         "    end",
         "    set -e __che_dir",
         "end",
-        'set -g CHE_BIN "$CHE_HOME/bin"',
+        'set -gx CHE_BIN "$CHE_HOME/bin"',
         "if not set -q CHE_PYTHON",
         "    set -gx CHE_PYTHON python3",
         "end",

@@ -12,7 +12,7 @@ if not set -q CHE_HOME
     end
     set -e __che_dir
 end
-set -g CHE_BIN "$CHE_HOME/bin"
+set -gx CHE_BIN "$CHE_HOME/bin"
 if not set -q CHE_PYTHON
     set -gx CHE_PYTHON python3
 end
@@ -232,7 +232,7 @@ function compress-folders --description 'Zip every immediate subfolder of a path
 end
 
 function list-permission --description 'Show ownership and mode of a volume under /Volumes'
-    ls -ld "/Volumes/$argv[1]"
+    command ls -ld "/Volumes/$argv[1]"
     che_notify 7 $status
 end
 

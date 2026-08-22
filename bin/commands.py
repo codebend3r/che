@@ -571,7 +571,11 @@ COMMANDS: tuple[Command, ...] = (
         summary="Show ownership and mode of a volume under /Volumes",
         sound=7,
         tags=("permissions", "volume", "nas"),
-        body='ls -ld "/Volumes/$1"',
+        # `command` restores what the hand-written wrapper had: zsh expands
+        # aliases when it *parses* a function body, and che.zsh is sourced after
+        # the user's aliases, so a bare `ls` here bakes in an `alias ls=eza` and
+        # the wrapper silently stops printing an `ls -l` listing.
+        body='command ls -ld "/Volumes/$1"',
         prompts=(Prompt("", "Volume name", required=True),),
         macos_only=True,
     ),
