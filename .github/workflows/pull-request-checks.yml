@@ -6,8 +6,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  pull-request-checks:
-    name: 🚦 Pull request checks
+  checks:
+    name: 🧪 Python script checks
     runs-on: ubuntu-latest
 
     steps:
