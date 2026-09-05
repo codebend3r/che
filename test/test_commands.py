@@ -7,6 +7,7 @@ that runs the wrong file or a flag nobody can pass, in every shell at once.
 
 from __future__ import annotations
 
+import json
 import stat
 
 import commands
@@ -152,3 +153,10 @@ def test_paths_do_not_depend_on_the_working_directory(tmp_path, monkeypatch):
     assert commands.REPO.is_absolute()
     assert (commands.BIN / "utils.py").exists()
     assert resolve("delete-by-ext").command.path.exists()
+
+
+def test_version_is_the_package_json_version():
+    """One bump in package.json moves the npm release and `che --version` together."""
+    package = json.loads((commands.REPO / "package.json").read_text(encoding="utf-8"))
+    assert commands.VERSION == package["version"]
+    assert commands.PACKAGE_NAME == package["name"]

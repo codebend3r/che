@@ -388,3 +388,28 @@ def test_python_detection_prefers_a_new_enough_interpreter():
     assert version is not None
     assert version[:2] >= install.MIN_PYTHON
     assert os.access(executable, os.X_OK)
+
+
+def test_update_refuses_outside_a_git_checkout(monkeypatch, tmp_path, capsys):
+    """An npm install has no .git to pull, so update must say how to update instead."""
+    package = tmp_path / "node_modules" / "@codebend3r" / "che"
+    package.mkdir(parents=True)
+    monkeypatch.setattr(install, "REPO", package)
+
+    assert install.update() == 1
+    captured = capsys.readouterr()
+    assert f"npm install -g {install.PACKAGE_NAME}@latest" in captured.out + captured.err
+
+
+def test_update_command_matches_the_install_source(monkeypatch, tmp_path):
+    clone = tmp_path / "clone"
+    (clone / ".git").mkdir(parents=True)
+    monkeypatch.setattr(install, "REPO", clone)
+    assert install.install_source() == "git"
+    assert install.update_command() == "git pull"
+
+    package = tmp_path / "node_modules" / "@codebend3r" / "che"
+    package.mkdir(parents=True)
+    monkeypatch.setattr(install, "REPO", package)
+    assert install.install_source() == "npm"
+    assert install.update_command().startswith("npm install -g ")

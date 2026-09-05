@@ -23,6 +23,7 @@ Library module: no shebang, not executable, imported the same way as
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,10 +32,13 @@ BIN = Path(__file__).resolve().parent
 REPO = BIN.parent
 
 # Version of the `che` app itself - the dispatcher, the installer and the
-# generated shell files together. Bump it when the generated output changes
-# shape, because `che doctor` compares it against the version recorded in the
-# installed rc block to decide whether a re-install is needed.
-VERSION = "1.0.0"
+# generated shell files together. It is read from package.json so that one
+# `npm version` bump moves the npm release, `che --version` and the header of
+# every generated file at once. `che doctor` compares it against the version
+# recorded in the installed rc block to decide whether a re-install is needed.
+_PACKAGE = json.loads((REPO / "package.json").read_text(encoding="utf-8"))
+PACKAGE_NAME: str = _PACKAGE["name"]
+VERSION: str = _PACKAGE["version"]
 
 # Suffix appended to a command name to get its preview-only twin.
 DRY_SUFFIX = "-dr"
