@@ -147,6 +147,26 @@ Video scripts rely on `ffprobe`/`ffmpeg`; `validate-video-files` needs `mpv`,
 5. Add or extend a `test/test_*.py` suite for anything with real logic.
 6. Run `bun run ci` before committing.
 
+## Releasing
+
+The repo is published to npm as `@codebend3r/che`; the `bin` entry points
+straight at `bin/che.py`, so `npm install -g` puts a `che` on PATH that runs
+the dispatcher under whatever `python3` comes first (the dispatcher tolerates
+an old one and hands the scripts a new enough interpreter itself).
+
+`package.json` holds the version. `bin/commands.py` reads `VERSION` and
+`PACKAGE_NAME` from it, so a release is:
+
+1. `npm version <major|minor|patch>` on `main`. Its `version` hook runs
+   `bun run generate` and stages `shell/`, `.zshrc` and the README islands into
+   the version commit, so the generated headers never lag the package.
+2. `git push --follow-tags`.
+3. `npm publish`. `prepublishOnly` runs `bun run ci` first.
+
+The tarball is `bin/` (minus `version-bump.py`) and `shell/` plus the README
+and LICENSE; `npm pack --dry-run` lists it. `che update` refuses to run in a
+copy without `.git` and prints the npm command instead.
+
 ## Git commit messages
 
 - Short and concise.

@@ -1,7 +1,39 @@
 {
-  "name": "shell-functions",
-  "private": true,
-  "description": "Personal collection of Python helper scripts with zsh wrappers. See README.md and CLAUDE.md.",
+  "name": "@codebend3r/che",
+  "version": "1.0.0",
+  "description": "Helper scripts shared across machines, called by name from your shell and browsable through one menu",
+  "keywords": [
+    "cli",
+    "shell",
+    "zsh",
+    "bash",
+    "fish",
+    "python",
+    "scripts",
+    "menu",
+    "macos"
+  ],
+  "homepage": "https://github.com/codebend3r/che#readme",
+  "bugs": "https://github.com/codebend3r/che/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/codebend3r/che.git"
+  },
+  "license": "MIT",
+  "author": "CJ Rivas (https://github.com/codebend3r)",
+  "bin": {
+    "che": "bin/che.py"
+  },
+  "files": [
+    "bin/",
+    "shell/",
+    "!bin/version-bump.py",
+    "!**/__pycache__/",
+    "!**/*.pyc"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "test": "uv run --no-project --with-requirements requirements-dev.txt -- pytest",
     "ci": "run-s lint format syntax executable shebang generated test",
@@ -11,11 +43,12 @@
     "executable": "find bin -type f -name '*.py' ! -perm -u+x -print0 | xargs -0 awk 'FNR==1 && /^#!/{print \"Has a shebang but is not executable: \" FILENAME; ec=1} END{exit ec+0}'",
     "shebang": "find bin -type f -name '*.py' -perm -u+x -print0 | xargs -0 awk 'FNR==1 && !/^#!/{print \"Executable but has no shebang: \" FILENAME; ec=1} END{exit ec+0}'",
     "generate": "python3 bin/install.py --generate",
-    "generated": "python3 bin/install.py --check"
+    "generated": "python3 bin/install.py --check",
+    "version": "bun run generate && git add shell .zshrc README.md",
+    "prepublishOnly": "bun run ci"
   },
   "packageManager": "bun@1.3.14",
   "devDependencies": {
     "npm-run-all2": "9.0.1"
-  },
-  "version": "0.2.0"
+  }
 }

@@ -6,6 +6,7 @@
 your shell, and browsable through one menu.**
 
 [![CI](https://github.com/codebend3r/che/actions/workflows/ci.yml/badge.svg)](https://github.com/codebend3r/che/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/%40codebend3r%2Fche)](https://www.npmjs.com/package/@codebend3r/che)
 ![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)
 ![Dependencies: stdlib only](https://img.shields.io/badge/dependencies-stdlib%20only-brightgreen)
 ![Shells: zsh, bash, fish](https://img.shields.io/badge/shells-zsh%20%7C%20bash%20%7C%20fish-8A2BE2)
@@ -59,6 +60,18 @@ or wherever `CHE_HOME` points):
 ```sh
 curl -fsSL https://raw.githubusercontent.com/codebend3r/che/main/install.sh | bash
 ```
+
+Or from npm, if Node is around:
+
+```sh
+npm install -g @codebend3r/che
+che                              # offers to install the wrappers on first run
+```
+
+The wrappers point back at wherever the package landed, so install it for real
+rather than through `npx`, whose cache is temporary. Update that kind of install
+with `npm install -g @codebend3r/che@latest`; `che update` only pulls a git
+clone, and says so.
 
 `install.sh` finds a suitable python3, then hands over to `bin/install.py`,
 which opens a first-run wizard: it lists the shells it found and the rc files

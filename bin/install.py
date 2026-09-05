@@ -40,7 +40,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import shellgen
-from commands import REPO, VERSION, all_commands, required_binaries
+from commands import PACKAGE_NAME, REPO, VERSION, all_commands, required_binaries
 from tui import choose, confirm, is_interactive, palette
 from utils import add_bool_flag, build_parser, info, note, run, success, warning
 
@@ -1146,7 +1146,7 @@ def diagnose() -> list[dict]:
             "status": OK if not missing_scripts else FAIL,
             "detail": f"{len(all_commands())} commands"
             + ("" if not missing_scripts else f", missing: {', '.join(missing_scripts)}"),
-            "fix": "git pull",
+            "fix": update_command(),
         }
     )
 
@@ -1195,14 +1195,42 @@ def doctor(*, as_json: bool = False, verbose: bool = False) -> int:
 # ---------------------------------------------------------------------------
 
 
+def install_source() -> str:
+    """How this copy of che got here: ``git`` for a clone, ``npm`` for a package.
+
+    The npm package is the same tree without ``.git``, unpacked under a
+    ``node_modules`` directory, so that is the whole test.
+    """
+    if (REPO / ".git").exists():
+        return "git"
+    if "node_modules" in REPO.parts:
+        return "npm"
+    return "unknown"
+
+
+def update_command() -> str:
+    """The command that fetches a newer che for this kind of install."""
+    if install_source() == "git":
+        return "git pull"
+    return f"npm install -g {PACKAGE_NAME}@latest"
+
+
 def update(*, check_only: bool = False, dry_run: bool = False) -> int:
     """Pull the latest scripts, then refresh whatever is installed.
 
     This is the "update the app itself" path: it moves the repo forward, then
     re-runs the install with the recorded settings so new commands get wrappers
     without the user having to remember a second step.
+
+    Only a git clone can be moved forward from here. A copy installed from npm
+    has no ``.git``, so it is told the npm command instead of a confusing
+    ``git fetch failed``.
     """
     colors = palette()
+    if install_source() != "git":
+        warning("❌ This copy of che is not a git checkout, so `che update` cannot pull it.")
+        note(f"   Update it with `{update_command()}`, then `che install` to refresh the wrappers.")
+        return 1
     if not shutil.which("git"):
         warning("❌ git is not installed, so che cannot update itself.")
         return 1

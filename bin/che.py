@@ -60,6 +60,19 @@ def _which(binary: str) -> str | None:
     return shutil.which(binary)
 
 
+@lru_cache(maxsize=1)
+def _interpreter() -> str:
+    """The python the scripts run under.
+
+    Normally this very interpreter: the shell wrapper already chose
+    ``$CHE_PYTHON``. Through the npm ``bin`` link, though, ``che`` starts under
+    whatever ``python3`` is first on PATH, which on a stock Mac is the years-old
+    Command Line Tools build. The dispatcher itself tolerates that; the scripts
+    do not, so hand them the newest suitable interpreter instead.
+    """
+    return installer.find_python()[0]
+
+
 # ---------------------------------------------------------------------------
 # Running a command
 # ---------------------------------------------------------------------------
@@ -67,7 +80,7 @@ def _which(binary: str) -> str | None:
 
 def build_argv(command: Command, extra: list[str], *, dry: bool = False) -> list[str]:
     _, fixed = command.invocation(dry=dry)
-    return [sys.executable, str(BIN / command.script), *fixed, *extra]
+    return [_interpreter(), str(BIN / command.script), *fixed, *extra]
 
 
 def command_env(command: Command, *, dry: bool = False) -> dict[str, str]:
@@ -124,7 +137,7 @@ def script_help(command: Command) -> str:
         return command.summary
     try:
         result = subprocess.run(  # noqa: S603
-            [sys.executable, str(BIN / command.script), "--help"],
+            [_interpreter(), str(BIN / command.script), "--help"],
             capture_output=True,
             text=True,
             timeout=20,
