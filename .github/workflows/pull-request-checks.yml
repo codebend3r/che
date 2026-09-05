@@ -1,13 +1,13 @@
-name: CI
+name: 🧪 Pull Request Checks
 
 on:
+  pull_request:
   push:
-    branches:
-      - '**'
+  workflow_dispatch:
 
 jobs:
-  checks:
-    name: 🧪 Python script checks
+  pull-request-checks:
+    name: 🚦 Pull request checks
     runs-on: ubuntu-latest
 
     steps:
