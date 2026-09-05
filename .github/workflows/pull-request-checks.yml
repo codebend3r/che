@@ -1,9 +1,9 @@
-name: CI
+name: 🧪 Pull request checks
 
 on:
+  pull_request:
   push:
-    branches:
-      - '**'
+  workflow_dispatch:
 
 jobs:
   checks:
