@@ -30,6 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import art
 import install as installer
 import shellgen
 import tui
@@ -427,33 +428,52 @@ def handle_key(state: Menu, key: str) -> str:
     return ""
 
 
+# The face heads the menu only while the list under it keeps at least this
+# many rows. Below that the one-line header takes over, as it always did.
+MIN_LIST_ROWS = 8
+
+
+def banner_fits(screen: tui.Screen, right: list[str]) -> bool:
+    """Whether the face and wordmark can head the menu and still leave a list."""
+    spare = screen.rows - (art.HEIGHT + 1) - 4
+    return spare >= MIN_LIST_ROWS and art.fits(right, screen.columns)
+
+
 def draw(screen: tui.Screen, state: Menu) -> None:
     colors = tui.palette()
     width = screen.columns
 
     total = len(all_commands())
     shown = len(state.matches())
-    title = f"{colors.bright_magenta}{colors.bold}che{colors.reset}"
     counter = f"{shown}/{total}" if state.query else str(total)
-    header = (
-        f"  {title} {colors.grey}v{VERSION}{colors.reset}  "
-        f"{colors.grey}{counter} commands{colors.reset}"
-    )
-    screen.line()
-    screen.line(header)
-
     if state.searching or state.query:
         caret = f"{colors.cyan}▏{colors.reset}" if state.searching else " "
-        screen.line(f"  {colors.grey}search{colors.reset} {caret}{state.query}")
+        prompt = f"  {colors.grey}search{colors.reset} {caret}{state.query}"
     else:
-        screen.line(f"  {colors.grey}type to search   ↑↓ move   ⏎ run   ? keys{colors.reset}")
+        prompt = f"  {colors.grey}type to search   ↑↓ move   ⏎ run   ? keys{colors.reset}"
+
+    right = art.wordmark(colors)
+    right += ["", f"  {colors.grey}v{VERSION}  {counter} commands{colors.reset}", prompt]
+    if banner_fits(screen, right) and not state.show_help:
+        # The face beside the wordmark, with the version, the count and the
+        # search line tucked under the letters.
+        screen.lines(art.banner(right, columns=width, colors=colors))
+    else:
+        title = f"{colors.bright_magenta}{colors.bold}che{colors.reset}"
+        screen.line()
+        screen.line(
+            f"  {title} {colors.grey}v{VERSION}{colors.reset}  "
+            f"{colors.grey}{counter} commands{colors.reset}"
+        )
+        screen.line(prompt)
     screen.line(f"  {colors.grey}{'─' * max(0, width - 4)}{colors.reset}")
+    header_rows = screen.used
 
     if state.show_help:
         draw_help(screen)
         return
 
-    body_rows = max(3, screen.rows - 8)
+    body_rows = max(3, screen.rows - header_rows - 4)
     rows = state.rows()
     if not rows:
         screen.line()

@@ -11,8 +11,33 @@ your shell, and browsable through one menu.**
 ![Dependencies: stdlib only](https://img.shields.io/badge/dependencies-stdlib%20only-brightgreen)
 ![Shells: zsh, bash, fish](https://img.shields.io/badge/shells-zsh%20%7C%20bash%20%7C%20fish-8A2BE2)
 
-<img src="menu.png" alt="The che menu: commands grouped by category on the left, details for the selected command on the right" width="850">
+</div>
 
+<!-- che:banner -->
+```text
+**#*-
+#*-.         .::---:::.
+=       .:+#%@@@@@@@@@%#*+-.
+      .-*%@@@@@@@@@*==----+*-
+     .=-====*%@@@@+:..:===--+:
+     . .-:.  .=%@%+=-+:...=+==
+      .=:-.:=:.+#***+***+++**+.    ██████╗██╗  ██╗███████╗
+      -.:++**+-#@%##%%####%##*-   ██╔════╝██║  ██║██╔════╝
+     .=+**#%#-:-+=--+%%@@####+.   ██║     ███████║█████╗
+     .+*#%@@*...=+::+##%%#***-.   ██║     ██╔══██║██╔══╝
+      -*##%@*=:-#*=-:--==##*+:.   ╚██████╗██║  ██║███████╗
+      .=+#+-::--::-:.:.: :++=:.    ╚═════╝╚═╝  ╚═╝╚══════╝
+       :++...::::---==++:---...
+        :..=**+++-=*#%@%=:::..
+         .:-*%@@@@@@@%#*. :::
+:  .      .  -+**#*=-.
+++-.                       .::
++*+=:                    .-===.
+```
+<!-- /che:banner -->
+
+<div align="center">
+<img src="menu.png" alt="The che menu: commands grouped by category on the left, details for the selected command on the right" width="850">
 </div>
 
 The scripts are Python, standard library only. The names you type
@@ -290,6 +315,7 @@ where you copy one machine's rc file to another.
 
 ```
 bin/
+  art.py              the wordmark and the face beside it, for every screen
   che.py              the dispatcher and the interactive menu
   commands.py         the command manifest: the source of truth for everything
   install.py          installer, first-run wizard, doctor, self-update

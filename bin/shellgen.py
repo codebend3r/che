@@ -20,6 +20,7 @@ from __future__ import annotations
 import shlex
 from pathlib import Path
 
+import art
 from commands import (
     BUILTINS,
     CATEGORIES,
@@ -751,8 +752,15 @@ def _tools_table() -> str:
     return "\n".join(rows)
 
 
+def _banner_island() -> str:
+    """The face beside the wordmark, exactly as ``che`` prints them."""
+    rows = art.compose(art.face_lines(), art.logo_lines())
+    return "```text\n" + "\n".join(rows) + "\n```"
+
+
 def readme_islands() -> dict[str, str]:
     return {
+        "banner": _banner_island(),
         "commands": _commands_table(),
         "builtins": _builtins_table(),
         "keys": _keys_table(),

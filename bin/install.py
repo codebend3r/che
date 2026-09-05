@@ -39,6 +39,7 @@ from pathlib import Path
 # `parent`, where the scripts under bin/<category>/ use `parent.parent`.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import art
 import shellgen
 from commands import PACKAGE_NAME, REPO, VERSION, all_commands, required_binaries
 from tui import choose, confirm, is_interactive, palette
@@ -818,22 +819,15 @@ def _with_fish_path_line(block: str) -> str:
 # The first-run wizard
 # ---------------------------------------------------------------------------
 
-LOGO = r"""
-   ██████╗██╗  ██╗███████╗
-  ██╔════╝██║  ██║██╔════╝
-  ██║     ███████║█████╗
-  ██║     ██╔══██║██╔══╝
-  ╚██████╗██║  ██║███████╗
-   ╚═════╝╚═╝  ╚═╝╚══════╝
-"""
-
 
 def print_logo(subtitle: str = "") -> None:
+    """The face beside the wordmark, with ``subtitle`` under the letters."""
     colors = palette()
-    for line in LOGO.strip("\n").splitlines():
-        print(f"{colors.bright_magenta}{line}{colors.reset}")
+    right = art.wordmark(colors)
     if subtitle:
-        print(f"  {colors.grey}{subtitle}{colors.reset}")
+        right.append(f"  {colors.grey}{subtitle}{colors.reset}")
+    for line in art.banner(right, colors=colors):
+        print(line)
     print()
 
 
