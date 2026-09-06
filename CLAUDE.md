@@ -39,6 +39,10 @@ The scripts were bash until August 2026. Nothing in `bin/` is shell any more.
   screen and raw mode with guaranteed teardown, key decoding, a flicker-free
   frame buffer, width-aware truncation (emoji are two columns), and readline
   prompts.
+- `bin/art.py`: the block-letter wordmark, Che's face as 32x18 text, and the
+  `banner()` that lays them side by side (falling back to the wordmark alone
+  on a narrow terminal). `print_logo`, the menu header and the README's
+  `che:banner` island all draw from it.
 - `bin/<category>/*.py` — scripts grouped by purpose. Categories: `git/`,
   `video/`, `files/`, `drives/`, `system/`. Each script parses its own CLI flags.
 - `bin/utils.py` — shared library at the `bin/` root, imported by every script
@@ -88,9 +92,10 @@ works around the pin rather than counting it as a failure:
 ## Conventions for scripts in `bin/<category>/`
 
 - **Shebang**: `#!/usr/bin/env python3`. The libraries at the `bin/` root
-  (`utils.py`, `commands.py`, `shellgen.py`, `tui.py`) have no shebang and are
-  not executable. `bun run ci` enforces the pairing in both directions: a file
-  with a shebang must be executable, an executable file must have a shebang.
+  (`utils.py`, `commands.py`, `shellgen.py`, `tui.py`, `art.py`) have no
+  shebang and are not executable. `bun run ci` enforces the pairing in both
+  directions: a file with a shebang must be executable, an executable file
+  must have a shebang.
 - **Standard library only.** These run from a bare `python3` on every machine
   the repo is cloned to; a third-party import would mean a venv at call time.
   The sole exception is `detect-green-magenta-videos.py`, which needs OpenCV
