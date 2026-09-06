@@ -1,6 +1,6 @@
 {
   "name": "@codebend3r/che",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Helper scripts shared across machines, called by name from your shell and browsable through one menu",
   "keywords": [
     "cli",
