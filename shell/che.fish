@@ -45,7 +45,7 @@ end
 # Git - Branch hygiene, worktrees and GitHub Actions
 # --------------------------------------------------------------------------
 
-function all-actions --description 'GitHub Actions status for every open PR you authored'
+function all-actions --description 'GitHub Actions status for every open PR and every default branch'
     "$CHE_PYTHON" "$CHE_BIN/git/all-actions.py" $argv
 end
 

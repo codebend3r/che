@@ -6,8 +6,8 @@
 
 _che_flags_for() {
   case "$1" in
-    all-actions) echo "--owner= --author= --pr-limit= --interval= --watch --help" ;;
-    all-actions-watch) echo "--owner= --author= --pr-limit= --interval= --help" ;;
+    all-actions) echo "--owner= --author= --pr-limit= --repo-limit --no-main --interval= --watch --help" ;;
+    all-actions-watch) echo "--owner= --author= --pr-limit= --repo-limit --no-main --interval= --help" ;;
     checkout-my-branches) echo "--author= --limit= --help" ;;
     clean-stale-branches) echo "--dry-run --protect= --help" ;;
     clean-stale-branches-dr) echo "--dry-run --protect= --help" ;;

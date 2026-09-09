@@ -6,8 +6,8 @@
 
 _che_flags_for() {
   case "$1" in
-    all-actions) print -r -- '--owner= --author= --pr-limit= --interval= --watch --help' ;;
-    all-actions-watch) print -r -- '--owner= --author= --pr-limit= --interval= --help' ;;
+    all-actions) print -r -- '--owner= --author= --pr-limit= --repo-limit --no-main --interval= --watch --help' ;;
+    all-actions-watch) print -r -- '--owner= --author= --pr-limit= --repo-limit --no-main --interval= --help' ;;
     checkout-my-branches) print -r -- '--author= --limit= --help' ;;
     clean-stale-branches) print -r -- '--dry-run --protect= --help' ;;
     clean-stale-branches-dr) print -r -- '--dry-run --protect= --help' ;;
@@ -78,7 +78,7 @@ _che_flag_complete() {
 _che() {
   local -a subcommands
   subcommands=(
-    'all-actions:GitHub Actions status for every open PR you authored'
+    'all-actions:GitHub Actions status for every open PR and every default branch'
     'all-actions-watch:Same as all-actions, refreshed on an interval'
     'checkout-my-branches:Check out recent remote branches you authored that aren'"'"'t local yet'
     'clean-stale-branches:Delete local branches whose upstream is gone'
