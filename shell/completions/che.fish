@@ -4,7 +4,7 @@
 # To change a wrapper, edit that manifest and run `che install` again.
 
 complete -c che -f
-complete -c che -n __fish_use_subcommand -a all-actions -d 'GitHub Actions status for every open PR you authored'
+complete -c che -n __fish_use_subcommand -a all-actions -d 'GitHub Actions status for every open PR and every default branch'
 complete -c che -n __fish_use_subcommand -a all-actions-watch -d 'Same as all-actions, refreshed on an interval'
 complete -c che -n __fish_use_subcommand -a checkout-my-branches -d 'Check out recent remote branches you authored that aren\'t local yet'
 complete -c che -n __fish_use_subcommand -a clean-stale-branches -d 'Delete local branches whose upstream is gone'
@@ -58,11 +58,15 @@ complete -c che -n __fish_use_subcommand -a completions -d 'Print the completion
 complete -c che -n "__fish_seen_subcommand_from all-actions" -l owner -r
 complete -c che -n "__fish_seen_subcommand_from all-actions" -l author -r
 complete -c che -n "__fish_seen_subcommand_from all-actions" -l pr-limit -r
+complete -c che -n "__fish_seen_subcommand_from all-actions" -l repo-limit
+complete -c che -n "__fish_seen_subcommand_from all-actions" -l no-main
 complete -c che -n "__fish_seen_subcommand_from all-actions" -l interval -r
 complete -c che -n "__fish_seen_subcommand_from all-actions" -l watch
 complete -c che -n "__fish_seen_subcommand_from all-actions-watch" -l owner -r
 complete -c che -n "__fish_seen_subcommand_from all-actions-watch" -l author -r
 complete -c che -n "__fish_seen_subcommand_from all-actions-watch" -l pr-limit -r
+complete -c che -n "__fish_seen_subcommand_from all-actions-watch" -l repo-limit
+complete -c che -n "__fish_seen_subcommand_from all-actions-watch" -l no-main
 complete -c che -n "__fish_seen_subcommand_from all-actions-watch" -l interval -r
 complete -c che -n "__fish_seen_subcommand_from checkout-my-branches" -l author -r
 complete -c che -n "__fish_seen_subcommand_from checkout-my-branches" -l limit -r
@@ -228,11 +232,15 @@ complete -c che -n "__fish_seen_subcommand_from completions" -l l
 complete -c all-actions -l owner -r
 complete -c all-actions -l author -r
 complete -c all-actions -l pr-limit -r
+complete -c all-actions -l repo-limit
+complete -c all-actions -l no-main
 complete -c all-actions -l interval -r
 complete -c all-actions -l watch
 complete -c all-actions-watch -l owner -r
 complete -c all-actions-watch -l author -r
 complete -c all-actions-watch -l pr-limit -r
+complete -c all-actions-watch -l repo-limit
+complete -c all-actions-watch -l no-main
 complete -c all-actions-watch -l interval -r
 complete -c checkout-my-branches -l author -r
 complete -c checkout-my-branches -l limit -r

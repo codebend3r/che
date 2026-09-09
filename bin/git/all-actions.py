@@ -1,20 +1,25 @@
 #!/usr/bin/env python3
-"""🎬 Show the latest GitHub Actions run for every open PR you authored.
+"""🎬 Show the latest GitHub Actions run per open PR and per default branch.
 
-One row per PR, so a repo with five open PRs gets five rows. The repo name is a
-terminal hyperlink to that run.
+Two tables. The first is one row per open PR you authored, so a repo with five
+open PRs gets five rows. The second is one row per repo you own, showing the
+run on its default branch - the sanity checks and anything else that fires on
+a push to main. The repo name is a terminal hyperlink to that run.
 
-When a PR's head commit has several workflow runs, the row shows the one worth
-acting on: anything still in flight, else a failure, else the most recent run.
+When a commit has several workflow runs, the row shows the one worth acting
+on: anything still in flight, else a failure, else the most recent run.
 
 Usage:
   all-actions.py [--owner=NAME[,NAME...]] [--author=NAME] [--pr-limit=N]
+                 [--repo-limit=N] [--no-main]
                  [--watch[=SECONDS]] [--interval=SECONDS]
 
 Options:
   --owner=NAME       Owner(s) to scan, comma-separated (default: your gh login)
   --author=NAME      PR author to match (default: your gh login)
   --pr-limit=N       Open PRs to inspect, max 100 (default: 100)
+  --repo-limit=N     Repos to sweep for default-branch runs, max 100 (default: 100)
+  --no-main          Skip the default-branch table, showing PRs only
   --interval=SECONDS Refresh interval used by --watch (default: 15)
   --watch[=SECONDS]  Refresh every interval until interrupted
   --help             Show help
@@ -27,6 +32,7 @@ import re
 import sys
 import time
 import unicodedata
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -39,6 +45,7 @@ from utils import (
     NC,
     RED,
     YELLOW,
+    add_bool_flag,
     build_parser,
     color_enabled,
     info,
@@ -51,7 +58,7 @@ from utils import (
     warning,
 )
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 
 STATUS_COLORS = {
     "in_progress": CYAN,
@@ -96,6 +103,51 @@ query($q: String!, $first: Int!) {
         commits(last: 1) {
           nodes {
             commit {
+              checkSuites(first: 20) {
+                nodes {
+                  status
+                  conclusion
+                  workflowRun {
+                    url
+                    createdAt
+                    updatedAt
+                    workflow { name }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+# The default-branch sweep. `repositoryOwner` takes one login, unlike the
+# search query's `user:` qualifiers, so this runs once per --owner.
+#
+# `isFork: false, isArchived: false` on purpose: a fork's CI belongs to whoever
+# you forked from, and an archived repo cannot have a run you would act on.
+# PUSHED_AT ordering means a --repo-limit below the account's repo count keeps
+# the repos you actually touch.
+BRANCH_GRAPHQL_QUERY = """
+query($login: String!, $first: Int!) {
+  repositoryOwner(login: $login) {
+    repositories(
+      first: $first
+      isFork: false
+      isArchived: false
+      ownerAffiliations: [OWNER]
+      orderBy: {field: PUSHED_AT, direction: DESC}
+    ) {
+      nodes {
+        nameWithOwner
+        defaultBranchRef {
+          name
+          target {
+            ... on Commit {
               checkSuites(first: 20) {
                 nodes {
                   status
@@ -253,6 +305,42 @@ def pick_suite(suites: list[dict]) -> dict | None:
     return sorted(usable, key=created)[-1]
 
 
+def suite_fields(suite: dict | None, fallback_url: str = "") -> dict:
+    """The display fields for one check suite.
+
+    Shared by both queries: a PR's head commit and a repo's default-branch tip
+    return the same ``checkSuites`` shape, so they render from the same code.
+    """
+    if suite is None:
+        return {
+            "live": False,
+            "status": "none",
+            "workflow": "-",
+            "created": "",
+            "updated": "",
+            "url": fallback_url,
+        }
+
+    workflow_run = suite["workflowRun"]
+    if suite.get("status") != "COMPLETED":
+        # `or "unknown"`: jq died outright on a null status, taking the whole
+        # run's output with it. An empty cell would be worse than saying so.
+        status = (suite.get("status") or "unknown").lower()
+        live = True
+    else:
+        status = (suite.get("conclusion") or "unknown").lower()
+        live = False
+
+    return {
+        "live": live,
+        "status": status,
+        "workflow": ((workflow_run.get("workflow") or {}).get("name")) or "-",
+        "created": workflow_run.get("createdAt") or "",
+        "updated": workflow_run.get("updatedAt") or "",
+        "url": workflow_run.get("url") or "",
+    }
+
+
 def build_rows(payload: dict) -> list[dict]:
     """Flatten the GraphQL response into one row per PR.
 
@@ -272,43 +360,48 @@ def build_rows(payload: dict) -> list[dict]:
             commit = (commits[0] or {}).get("commit") or {}
             suites = ((commit.get("checkSuites") or {}).get("nodes")) or []
 
+        # A PR with no run still links somewhere useful, so it keeps its row.
+        # A repo with no run does not - see build_branch_rows.
+        row = suite_fields(pick_suite(suites), pr.get("url") or "")
+        row["repo"] = (pr.get("repository") or {}).get("nameWithOwner") or ""
+        row["number"] = pr["number"]
+        row["branch"] = pr.get("headRefName") or ""
+        rows.append(row)
+
+    return rows
+
+
+def build_branch_rows(payload: dict) -> list[dict]:
+    """Flatten the repository response into one row per default branch.
+
+    Repos whose default-branch tip has no workflow run are dropped rather than
+    shown as a "none" row: an account owns far more repos without CI than with
+    it, and thirty empty rows would bury the handful worth looking at.
+
+    The branch shown is each repo's DEFAULT branch, whatever it is named -
+    plenty of older repos still default to `master`, and their sanity checks
+    are as worth seeing as anything on `main`.
+    """
+    rows = []
+    owner = (payload.get("data") or {}).get("repositoryOwner") or {}
+    nodes = (owner.get("repositories") or {}).get("nodes") or []
+
+    for repo in nodes:
+        if not repo:
+            continue
+
+        ref = repo.get("defaultBranchRef") or {}
+        target = ref.get("target") or {}
+        suites = ((target.get("checkSuites") or {}).get("nodes")) or []
+
         suite = pick_suite(suites)
-
         if suite is None:
-            status = "none"
-            workflow = "-"
-            created = updated = ""
-            url = pr.get("url") or ""
-            live = False
-        else:
-            workflow_run = suite["workflowRun"]
-            if suite.get("status") != "COMPLETED":
-                # `or "unknown"`: jq died outright on a null status, taking the
-                # whole run's output with it. An empty cell would be worse
-                # than saying so.
-                status = (suite.get("status") or "unknown").lower()
-                live = True
-            else:
-                status = (suite.get("conclusion") or "unknown").lower()
-                live = False
-            workflow = ((workflow_run.get("workflow") or {}).get("name")) or "-"
-            created = workflow_run.get("createdAt") or ""
-            updated = workflow_run.get("updatedAt") or ""
-            url = workflow_run.get("url") or ""
+            continue
 
-        rows.append(
-            {
-                "repo": (pr.get("repository") or {}).get("nameWithOwner") or "",
-                "number": pr["number"],
-                "branch": pr.get("headRefName") or "",
-                "live": live,
-                "status": status,
-                "workflow": workflow,
-                "created": created,
-                "updated": updated,
-                "url": url,
-            }
-        )
+        row = suite_fields(suite)
+        row["repo"] = repo.get("nameWithOwner") or ""
+        row["branch"] = ref.get("name") or ""
+        rows.append(row)
 
     return rows
 
@@ -352,33 +445,111 @@ def fetch_rows(owners: str, author: str, pr_limit: int) -> list[dict]:
     return build_rows(payload)
 
 
-def render(owners: str, author: str, pr_limit: int) -> None:
-    """Draw the table once."""
-    single_owner = "," not in owners
+def fetch_branch_rows(owners: str, repo_limit: int) -> list[dict]:
+    """Default-branch runs for every repo each owner owns outright.
 
-    rows = fetch_rows(owners, author, pr_limit)
-    # After the fetch, not before: the shell called date(1) inside the banner,
-    # so in --watch mode the timestamp reflects when the data landed.
-    clock = datetime.now().strftime("%H:%M:%S")
+    One call per owner rather than one per repo: sweeping fifty repos through
+    the REST API would be fifty calls a cycle, which a 15-second --watch would
+    spend the whole rate limit on.
+    """
+    rows: list[dict] = []
 
-    if not rows:
-        note("═══════════════════════════════════════════")
-        note(f"🎬  all-actions — {clock}")
-        note("═══════════════════════════════════════════")
-        info(f"🫙 No open pull requests authored by {author} under: {owners}")
-        return
+    for owner in owners.split(","):
+        owner = owner.strip()
+        if not owner:
+            continue
 
-    # In-flight rows first, then grouped by repo, newest run first. Two passes
-    # because Python's sort is stable: the second pass preserves the ordering
-    # the first established within each group.
+        completed = run(
+            [
+                "gh",
+                "api",
+                "graphql",
+                "-f",
+                f"query={BRANCH_GRAPHQL_QUERY}",
+                "-f",
+                f"login={owner}",
+                "-F",
+                f"first={repo_limit}",
+            ],
+            check=False,
+            capture=True,
+        )
+        if completed.returncode != 0:
+            # One bad owner (a typo, an org you lost access to) must not sink
+            # the sweep for the others.
+            continue
+
+        try:
+            payload = json.loads(completed.stdout or "{}")
+        except json.JSONDecodeError:
+            continue
+
+        rows.extend(build_branch_rows(payload))
+
+    return rows
+
+
+def sort_rows(rows: list[dict]) -> None:
+    """In-flight rows first, then grouped by repo, newest run first.
+
+    Two passes because Python's sort is stable: the second preserves the
+    ordering the first established within each group.
+    """
     rows.sort(key=lambda r: r["created"] or "", reverse=True)
     rows.sort(key=lambda r: (not r["live"], r["repo"]))
 
-    repo_count = len({r["repo"] for r in rows})
 
-    note("═══════════════════════════════════════════")
-    note(f"🎬  all-actions — {len(rows)} open PR(s) · {repo_count} repo(s) · {clock}")
-    note("═══════════════════════════════════════════")
+def draw_table(
+    rows: list[dict],
+    columns: Sequence[tuple[str, Callable[[dict], str], int]],
+    link: Callable[[dict], str] | None = None,
+) -> None:
+    """Print one aligned table of ``rows``.
+
+    ``columns`` is (title, cell, minimum width) per column; every column is
+    sized to its widest cell. ``link`` supplies the URL that wraps the first
+    column, which is the repo name in both tables.
+
+    Factored out when the default-branch table arrived: it shares every column
+    but PR with the pull request table, and two copies of the width arithmetic
+    would drift the moment either grew a column.
+    """
+    widths = [
+        max([minimum, *(display_width(cell(row)) for row in rows)]) for _, cell, minimum in columns
+    ]
+    last = len(columns) - 1
+    colors = color_enabled()
+
+    # The header's final cell is not padded, so the line has no trailing
+    # whitespace; data cells are, matching what the shell version emitted.
+    header = "  ".join(
+        title if index == last else pad(title, width)
+        for index, ((title, _, _), width) in enumerate(zip(columns, widths, strict=True))
+    )
+    print(f"{MAGENTA}{header}{NC}" if colors else header, flush=True)
+
+    for row in rows:
+        cells = []
+        for index, ((_, cell, _), width) in enumerate(zip(columns, widths, strict=True)):
+            value = cell(row)
+            if index == 0 and link is not None:
+                cells.append(pad_link(link(row), value, width))
+            else:
+                cells.append(pad(value, width))
+        line = "  ".join(cells)
+        color = STATUS_COLORS.get(row.get("status", ""), NC)
+        print(f"{color}{line}{NC}" if colors else line, flush=True)
+
+
+def render(owners: str, author: str, pr_limit: int, repo_limit: int, include_main: bool) -> None:
+    """Draw both tables once."""
+    single_owner = "," not in owners
+
+    rows = fetch_rows(owners, author, pr_limit)
+    branch_rows = fetch_branch_rows(owners, repo_limit) if include_main else []
+    # After the fetch, not before: the shell called date(1) inside the banner,
+    # so in --watch mode the timestamp reflects when the data landed.
+    clock = datetime.now().strftime("%H:%M:%S")
 
     def label(row: dict) -> str:
         return row["repo"].split("/", 1)[-1] if single_owner else row["repo"]
@@ -386,49 +557,76 @@ def render(owners: str, author: str, pr_limit: int) -> None:
     def status_cell(row: dict) -> str:
         return f"{STATUS_ICONS.get(row['status'], '⚪')} {row['status']}"
 
-    w_repo = max(4, *(display_width(label(r)) for r in rows))
-    w_pr = max(3, *(display_width(f"#{r['number']}") for r in rows))
-    w_status = max(6, *(display_width(status_cell(r)) for r in rows))
-    w_workflow = max(8, *(display_width(r["workflow"]) for r in rows))
-    w_branch = max(6, *(display_width(r["branch"]) for r in rows))
-    w_age, w_took = 4, 5
+    def age_cell(row: dict) -> str:
+        return iso_to_age(row["created"])
 
-    header = "  ".join(
-        [
-            pad("REPO", w_repo),
-            pad("PR", w_pr),
-            pad("STATUS", w_status),
-            pad("WORKFLOW", w_workflow),
-            pad("BRANCH", w_branch),
-            pad("AGE", w_age),
-            "TOOK",
-        ]
-    )
-    colors = color_enabled()
-    print(f"{MAGENTA}{header}{NC}" if colors else header, flush=True)
+    def took_cell(row: dict) -> str:
+        return run_duration(row["status"], row["created"], row["updated"])
 
-    live_count = 0
-    for row in rows:
-        cells = "  ".join(
-            [
-                pad_link(row["url"], label(row), w_repo),
-                pad(f"#{row['number']}", w_pr),
-                pad(status_cell(row), w_status),
-                pad(row["workflow"], w_workflow),
-                pad(row["branch"], w_branch),
-                pad(iso_to_age(row["created"]), w_age),
-                pad(run_duration(row["status"], row["created"], row["updated"]), w_took),
-            ]
+    if not rows and not branch_rows:
+        note("═══════════════════════════════════════════")
+        note(f"🎬  all-actions — {clock}")
+        note("═══════════════════════════════════════════")
+        info(f"🫙 No open pull requests authored by {author} under: {owners}")
+        if include_main:
+            info(f"🫙 No default-branch runs either, under: {owners}")
+        return
+
+    sort_rows(rows)
+    sort_rows(branch_rows)
+
+    repo_count = len({r["repo"] for r in rows})
+
+    note("═══════════════════════════════════════════")
+    note(f"🎬  all-actions — {len(rows)} open PR(s) · {repo_count} repo(s) · {clock}")
+    note("═══════════════════════════════════════════")
+
+    if rows:
+        draw_table(
+            rows,
+            (
+                ("REPO", label, 4),
+                ("PR", lambda r: f"#{r['number']}", 3),
+                ("STATUS", status_cell, 6),
+                ("WORKFLOW", lambda r: r["workflow"], 8),
+                ("BRANCH", lambda r: r["branch"], 6),
+                ("AGE", age_cell, 4),
+                ("TOOK", took_cell, 5),
+            ),
+            link=lambda r: r["url"],
         )
-        color = STATUS_COLORS.get(row["status"], NC)
-        print(f"{color}{cells}{NC}" if colors else cells, flush=True)
-        if row["live"]:
-            live_count += 1
+    else:
+        info(f"🫙 No open pull requests authored by {author} under: {owners}")
 
-    idle_count = len(rows) - live_count
+    if include_main:
+        print(flush=True)
+        # No PR column here: a push to the default branch has no pull request
+        # behind it, and a column of dashes would just take width from the
+        # workflow names, which are the point of this table.
+        note(f"🌳  default branch — {len(branch_rows)} repo(s)")
+        if branch_rows:
+            draw_table(
+                branch_rows,
+                (
+                    ("REPO", label, 4),
+                    ("STATUS", status_cell, 6),
+                    ("WORKFLOW", lambda r: r["workflow"], 8),
+                    ("BRANCH", lambda r: r["branch"], 6),
+                    ("AGE", age_cell, 4),
+                    ("TOOK", took_cell, 5),
+                ),
+                link=lambda r: r["url"],
+            )
+        else:
+            info(f"🫙 No default-branch runs found under: {owners}")
+
+    total = len(rows) + len(branch_rows)
+    live_count = sum(1 for row in (*rows, *branch_rows) if row["live"])
+    idle_count = total - live_count
+
     print(flush=True)
     if live_count == 0:
-        success(f"😴 Nothing in flight — {idle_count} open PR(s) showing their last run.")
+        success(f"😴 Nothing in flight — {idle_count} run(s) showing their last result.")
     else:
         success(f"═══ {live_count} in flight · {idle_count} settled (last run) ═══")
 
@@ -437,13 +635,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser(
         prog="all-actions",
         description=(
-            "🎬 Show the latest GitHub Actions run for every open pull request you\n"
-            "   authored, across every repo you own - one row per PR, so a repo with\n"
-            "   five open PRs gets five rows. The repo name is a terminal hyperlink\n"
-            "   to that run.\n\n"
-            "   When a PR's head commit has several workflow runs, the row shows the\n"
-            "   one worth acting on: anything still in flight, else a failure, else\n"
-            "   the most recent run."
+            "🎬 Show the latest GitHub Actions run per open pull request and per\n"
+            "   default branch, across every repo you own.\n\n"
+            "   The first table is one row per open PR you authored, so a repo with\n"
+            "   five open PRs gets five rows. The second is one row per repo, showing\n"
+            "   the run on its default branch - the sanity checks and anything else\n"
+            "   that fires on a push to main. Pass --no-main to skip it. The repo\n"
+            "   name is a terminal hyperlink to that run.\n\n"
+            "   When a commit has several workflow runs, the row shows the one worth\n"
+            "   acting on: anything still in flight, else a failure, else the most\n"
+            "   recent run."
         ),
     )
     parser.add_argument(
@@ -464,6 +665,22 @@ def main(argv: list[str] | None = None) -> int:
         metavar="N",
         dest="pr_limit",
         help="Open PRs to inspect, max 100 (default: 100)",
+    )
+    parser.add_argument(
+        "--repo-limit",
+        default="100",
+        metavar="N",
+        dest="repo_limit",
+        help="Repos to sweep for default-branch runs, max 100 (default: 100)",
+    )
+    # allow_value=False, per the convention for inverted flags: `--no-main=false`
+    # is a double negative nobody should have to decode.
+    add_bool_flag(
+        parser,
+        "--no-main",
+        dest="no_main",
+        help="Skip the default-branch table, showing pull requests only",
+        allow_value=False,
     )
     parser.add_argument(
         "--interval",
@@ -491,15 +708,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.watch:
         interval_raw = args.watch
 
-    for name, value in (("pr-limit", args.pr_limit), ("interval", interval_raw)):
+    for name, value in (
+        ("pr-limit", args.pr_limit),
+        ("repo-limit", args.repo_limit),
+        ("interval", interval_raw),
+    ):
         if not re.fullmatch(r"[0-9]+", value):
             warning(f"❌ --{name} must be a non-negative integer (got: {value})")
             return 1
 
-    # The GraphQL search connection caps out at 100 nodes per page.
+    # Both GraphQL connections cap out at 100 nodes per page.
     pr_limit = min(100, max(1, int(args.pr_limit)))
+    repo_limit = min(100, max(1, int(args.repo_limit)))
     interval = max(1, int(interval_raw))
     watch = args.watch is not None
+    include_main = not args.no_main
 
     if run(["gh", "auth", "status"], check=False, capture=True).returncode != 0:
         warning("❌ Not logged in to GitHub. Run: gh auth login")
@@ -519,7 +742,7 @@ def main(argv: list[str] | None = None) -> int:
         author = author or login
 
     if not watch:
-        render(owners, author, pr_limit)
+        render(owners, author, pr_limit, repo_limit, include_main)
         return 0
 
     try:
@@ -527,7 +750,7 @@ def main(argv: list[str] | None = None) -> int:
             # ANSI clear + home, rather than shelling out to clear(1).
             print("\033[2J\033[H", end="", flush=True)
             try:
-                render(owners, author, pr_limit)
+                render(owners, author, pr_limit, repo_limit, include_main)
             # Broad on purpose: the shell wrapped this as `render || true`.
             except Exception as exc:
                 # One unexpected payload shape must not end a long watch.

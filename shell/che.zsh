@@ -104,7 +104,7 @@ _che_stash_aliases che all-actions all-actions-watch checkout-my-branches \
 # Git - Branch hygiene, worktrees and GitHub Actions
 # --------------------------------------------------------------------------
 
-# GitHub Actions status for every open PR you authored
+# GitHub Actions status for every open PR and every default branch
 all-actions() {
   "$CHE_PYTHON" "$CHE_BIN/git/all-actions.py" "$@"
 }

@@ -214,7 +214,7 @@ have used, and `che help <command>` prints that script's own `--help`.
 | Command | Does | Preview |
 | --- | --- | --- |
 | **Git** | *Branch hygiene, worktrees and GitHub Actions* | |
-| `all-actions` | GitHub Actions status for every open PR you authored |  |
+| `all-actions` | GitHub Actions status for every open PR and every default branch |  |
 | `all-actions-watch` | Same as all-actions, refreshed on an interval |  |
 | `checkout-my-branches` | Check out recent remote branches you authored that aren't local yet |  |
 | `clean-stale-branches` | Delete local branches whose upstream is gone | `clean-stale-branches-dr` |
