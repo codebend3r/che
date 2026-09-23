@@ -36,7 +36,8 @@
   },
   "scripts": {
     "test": "uv run --no-project --with-requirements requirements-dev.txt -- pytest",
-    "ci": "run-s lint format syntax executable shebang generated test",
+    "ci": "bun run --sequential lint format syntax executable shebang generated test",
+    "system-check": "bun run --sequential lint format syntax executable shebang generated test",
     "lint": "uv run --no-project --with-requirements requirements-dev.txt -- ruff check bin test",
     "format": "uv run --no-project --with-requirements requirements-dev.txt -- ruff format --check bin test",
     "syntax": "find bin test -type f -name '*.py' -print0 | xargs -0 -n1 python3 -m py_compile",
@@ -47,8 +48,5 @@
     "version": "bun run generate && git add shell .zshrc README.md",
     "prepublishOnly": "bun run ci"
   },
-  "packageManager": "bun@1.3.14",
-  "devDependencies": {
-    "npm-run-all2": "9.0.1"
-  }
+  "packageManager": "bun@1.4.2"
 }
