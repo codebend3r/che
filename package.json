@@ -48,7 +48,7 @@
     "version": "bun run generate && git add shell .zshrc README.md",
     "prepublishOnly": "bun run ci"
   },
-  "packageManager": "bun@1.3.14",
+  "packageManager": "bun@1.4.2",
   "devDependencies": {
     "npm-run-all2": "9.0.1"
   }
