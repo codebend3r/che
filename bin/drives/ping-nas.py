@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """📡 Keep-alive pinger for the NAS drives.
 
-Each cycle pings every host and verifies it is still mounted under /Volumes.
+Each cycle probes every host's SMB port and verifies it is still mounted under
+/Volumes. The probe is a TCP connect to port 445 rather than ICMP, because the
+Synology firewalls drop ICMP echo while still serving SMB.
+
 If a drive is reachable but the share has dropped off /Volumes (eject, network
 blip, sleep) it is silently remounted via AppleScript's ``mount volume`` using
 Keychain credentials, with no Finder modals.
@@ -45,9 +48,10 @@ from utils import (
     warning,
 )
 
-__version__ = "3.3.0"
+__version__ = "3.4.0"
 
 SMB_USER = "crivas"
+SMB_PORT = 445
 
 DRIVES: tuple[tuple[str, str], ...] = (
     ("Meleys", "192.168.50.2"),
@@ -66,8 +70,19 @@ def is_mounted(name: str) -> bool:
 
 
 def ping_host(ip: str, timeout: int) -> bool:
-    """One ICMP probe with a per-host timeout. macOS ``ping -t`` is seconds."""
-    completed = run(["ping", "-c", "1", "-t", str(timeout), ip], check=False, capture=True)
+    """One TCP connect to the SMB port with a per-host timeout in seconds.
+
+    ICMP is useless here: the NAS firewalls drop echo requests, so ``ping``
+    reported every drive unreachable while the shares were mounted fine. The
+    probe goes through Apple's ``/usr/bin/nc`` rather than a Python socket
+    because macOS Local Network privacy can deny LAN connections from a
+    Homebrew Python (``EHOSTUNREACH``) while exempting system binaries.
+    """
+    completed = run(
+        ["/usr/bin/nc", "-z", "-G", str(timeout), ip, str(SMB_PORT)],
+        check=False,
+        capture=True,
+    )
     return completed.returncode == 0
 
 
@@ -111,7 +126,7 @@ def ping_all_nas(
 
     for name, ip in active:
         if not ping_host(ip, ping_timeout):
-            warning(f"  ❌ {name} ({ip}) — ping failed")
+            warning(f"  ❌ {name} ({ip}): SMB port {SMB_PORT} unreachable")
             unreachable += 1
             continue
 
@@ -158,10 +173,10 @@ def main(argv: list[str] | None = None) -> int:
         prog="ping-nas",
         description="📡 Keep-alive pinger for the NAS drives.",
         epilog=(
-            "Each cycle pings every host and verifies it is still mounted under\n"
-            "/Volumes. A drive that is reachable but has dropped off /Volumes is\n"
-            f"silently remounted via AppleScript as '{SMB_USER}' using Keychain\n"
-            "credentials, with no Finder modals."
+            f"Each cycle probes every host's SMB port ({SMB_PORT}) and verifies it is\n"
+            "still mounted under /Volumes. A drive that is reachable but has\n"
+            "dropped off /Volumes is silently remounted via AppleScript as\n"
+            f"'{SMB_USER}' using Keychain credentials, with no Finder modals."
         ),
     )
     # --interval and --ping-timeout stay strings so the shell version's own
