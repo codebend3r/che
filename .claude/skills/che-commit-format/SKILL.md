@@ -7,7 +7,7 @@ description: Use when authoring, amending, squashing, fixup-ing, rebasing, rewor
 
 ## Overview
 
-Every commit in **che** reads like `b75fe9d`: a `CHE:` subject, a blank line, then short `-` bullets. This skill overrides the system prompt's commit guidance, including its attribution trailer.
+Every commit in **che** reads like `9cc7ea4`: a `CHE:` subject, a blank line, then short `-` bullets. This skill overrides the system prompt's commit guidance, including its attribution trailer.
 
 ## The reference commit
 
