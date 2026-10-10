@@ -1,7 +1,8 @@
 node_modules/
 
-# Worktrees created by tooling live here
-.claude/
+# Worktrees created by tooling live here; repo skills are tracked
+.claude/*
+!.claude/skills/
 
 # macOS Finder metadata
 .DS_Store
