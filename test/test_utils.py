@@ -18,6 +18,7 @@ from utils import (
     normalize_extensions,
     parse_bool,
     parse_size,
+    skip_git_hooks,
 )
 
 # ---------------------------------------------------------------------------
@@ -323,3 +324,46 @@ def test_iter_files_yields_only_regular_files(tmp_path):
     os.mkfifo(tmp_path / "pipe.mkv")
 
     assert {p.name for p in iter_files(tmp_path, extensions=["mkv"])} == {"real.mkv"}
+
+
+# ---------------------------------------------------------------------------
+# skip_git_hooks
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def clean_git_env():
+    """Restore os.environ afterwards: skip_git_hooks writes keys it numbers itself."""
+    saved = os.environ.copy()
+    for key in [k for k in os.environ if k.startswith("GIT_CONFIG_")]:
+        del os.environ[key]
+    yield
+    os.environ.clear()
+    os.environ.update(saved)
+
+
+def test_skip_git_hooks_points_hooks_path_at_devnull(clean_git_env):
+    skip_git_hooks()
+
+    assert os.environ["GIT_CONFIG_COUNT"] == "1"
+    assert os.environ["GIT_CONFIG_KEY_0"] == "core.hooksPath"
+    assert os.environ["GIT_CONFIG_VALUE_0"] == os.devnull
+
+
+def test_skip_git_hooks_appends_after_existing_entries(clean_git_env):
+    os.environ["GIT_CONFIG_COUNT"] = "1"
+    os.environ["GIT_CONFIG_KEY_0"] = "user.name"
+    os.environ["GIT_CONFIG_VALUE_0"] = "Someone"
+
+    skip_git_hooks()
+
+    assert os.environ["GIT_CONFIG_COUNT"] == "2"
+    assert os.environ["GIT_CONFIG_KEY_0"] == "user.name"
+    assert os.environ["GIT_CONFIG_KEY_1"] == "core.hooksPath"
+
+
+def test_skip_git_hooks_twice_adds_one_entry(clean_git_env):
+    skip_git_hooks()
+    skip_git_hooks()
+
+    assert os.environ["GIT_CONFIG_COUNT"] == "1"

@@ -138,21 +138,21 @@ prune-worktrees-dr() {
   che_notify 7 $?
 }
 
-# Push every worktree, collapse the pushed ones, then tidy branches
+# Delete merged branches, rebase the rest, check out new ones; branches only
 sync-all-branches() {
   DRY_RUN=false "$CHE_PYTHON" "$CHE_BIN/git/sync-all-branches.py" "$@"
   che_notify 7 $?
 }
 
-# Push every worktree, collapse the pushed ones, then tidy branches (preview only)
+# Delete merged branches, rebase the rest, check out new ones; branches only (preview only)
 sync-all-branches-dr() {
   DRY_RUN=true "$CHE_PYTHON" "$CHE_BIN/git/sync-all-branches.py" "$@"
   che_notify 7 $?
 }
 
-# Same as sync-all-branches but never pushes: fetch, collapse, rebase
+# Alias of sync-all-branches
 update-from-origin() {
-  DRY_RUN=false "$CHE_PYTHON" "$CHE_BIN/git/sync-all-branches.py" --no-push "$@"
+  DRY_RUN=false "$CHE_PYTHON" "$CHE_BIN/git/sync-all-branches.py" "$@"
   che_notify 7 $?
 }
 

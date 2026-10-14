@@ -219,8 +219,8 @@ have used, and `che help <command>` prints that script's own `--help`.
 | `checkout-my-branches` | Check out recent remote branches you authored that aren't local yet |  |
 | `clean-stale-branches` | Delete local branches whose upstream is gone | `clean-stale-branches-dr` |
 | `prune-worktrees` | Remove every linked worktree, then prune stale admin records | `prune-worktrees-dr` |
-| `sync-all-branches` | Push every worktree, collapse the pushed ones, then tidy branches | `sync-all-branches-dr` |
-| `update-from-origin` | Same as sync-all-branches but never pushes: fetch, collapse, rebase |  |
+| `sync-all-branches` | Delete merged branches, rebase the rest, check out new ones; branches only | `sync-all-branches-dr` |
+| `update-from-origin` | Alias of sync-all-branches |  |
 | `update-local-branches` | Rebase every local branch that has an upstream onto origin | `--dry-run` |
 | **Video** | *Codecs, renaming, dedupe and metadata* | |
 | `show-codecs` | Report media files outside the Direct Play codec/container set |  |
@@ -351,22 +351,26 @@ Every script follows the same shape, described in full at the top of
   point, so pointing a delete tool at `~/media -> /Volumes/...` used to be a
   silent no-op. Pass the real path to act on it.
 
-## Syncing branches and worktrees
+## Syncing branches
 
 ```sh
-sync-all-branches       # push every worktree, collapse the pushed ones, then sync
+sync-all-branches       # delete merged branches, rebase the rest, check out new ones
 sync-all-branches-dr    # preview only
-update-from-origin      # same, but --no-push: only collapses already-pushed worktrees
+update-from-origin      # alias of sync-all-branches
 ```
 
-A worktree is a temporary workspace. Once its commits are on origin the
-directory holds nothing the remote doesn't, so `sync-all-branches` pushes it,
-removes the directory, and leaves the branch behind as an ordinary local
-branch. That also clears the `already used by worktree` pin, which is what
-otherwise makes `main` un-checkoutable and stale branches un-deletable.
+Only branches change. The sync deletes local branches whose upstream is gone,
+`pull --rebase`s every branch with an upstream, and checks out the remote
+branches you authored that aren't local yet.
 
-A worktree is only collapsed when it is **clean** *and* **fully pushed**.
-Anything else is kept and reported with the reason.
+It **never pushes**, **never touches a worktree** and **never runs the repo's
+git hooks**. A branch checked out in a linked worktree is rebased in place
+there when that worktree is clean; a stale one is reported and kept, since git
+won't delete a branch a worktree has checked out. The
+branch scripts (`clean-stale-branches`, `update-local-branches`,
+`checkout-my-branches`, `sync-all-branches`) point `core.hooksPath` at
+`/dev/null` for every git they run, so a lefthook or husky pre-commit,
+pre-push or post-checkout never fires on a checkout or a rebase.
 
 ## External tools
 

@@ -13,9 +13,9 @@ _che_flags_for() {
     clean-stale-branches-dr) echo "--dry-run --protect= --help" ;;
     prune-worktrees) echo "--dry-run --force --help" ;;
     prune-worktrees-dr) echo "--dry-run --force --help" ;;
-    sync-all-branches) echo "--dry-run --no-push --keep-locked --author= --limit= --help" ;;
-    sync-all-branches-dr) echo "--dry-run --no-push --keep-locked --author= --limit= --help" ;;
-    update-from-origin) echo "--dry-run --keep-locked --author= --limit= --help" ;;
+    sync-all-branches) echo "--dry-run --author= --limit= --help" ;;
+    sync-all-branches-dr) echo "--dry-run --author= --limit= --help" ;;
+    update-from-origin) echo "--dry-run --author= --limit= --help" ;;
     update-local-branches) echo "--limit= --dry-run --help" ;;
     show-codecs) echo "--path= --verbose --help" ;;
     fix-codecs) echo "--path= --delete-original --dry-run --help" ;;

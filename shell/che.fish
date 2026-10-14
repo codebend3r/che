@@ -78,18 +78,18 @@ function prune-worktrees-dr --description 'Remove every linked worktree, then pr
     che_notify 7 $status
 end
 
-function sync-all-branches --description 'Push every worktree, collapse the pushed ones, then tidy branches'
+function sync-all-branches --description 'Delete merged branches, rebase the rest, check out new ones; branches only'
     env DRY_RUN=false "$CHE_PYTHON" "$CHE_BIN/git/sync-all-branches.py" $argv
     che_notify 7 $status
 end
 
-function sync-all-branches-dr --description 'Push every worktree, collapse the pushed ones, then tidy branches (preview only)'
+function sync-all-branches-dr --description 'Delete merged branches, rebase the rest, check out new ones; branches only (preview only)'
     env DRY_RUN=true "$CHE_PYTHON" "$CHE_BIN/git/sync-all-branches.py" $argv
     che_notify 7 $status
 end
 
-function update-from-origin --description 'Same as sync-all-branches but never pushes: fetch, collapse, rebase'
-    env DRY_RUN=false "$CHE_PYTHON" "$CHE_BIN/git/sync-all-branches.py" --no-push $argv
+function update-from-origin --description 'Alias of sync-all-branches'
+    env DRY_RUN=false "$CHE_PYTHON" "$CHE_BIN/git/sync-all-branches.py" $argv
     che_notify 7 $status
 end
 
