@@ -19,6 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from utils import build_parser, info, run_cli, warning
 
+__version__ = "1.0.0"
+
 BUCKETS = ("#", *string.ascii_uppercase)
 
 
