@@ -26,22 +26,21 @@ Options:
 
 from __future__ import annotations
 
-import os
-import re
 import signal
 import sys
 import time
 from pathlib import Path
-from types import FrameType
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from nas import SMB_USER, NasDrive, is_mounted, mount_smb, select_drives, smb_url
 from utils import (
     add_bool_flag,
     build_parser,
+    heading,
     info,
     log,
-    note,
+    parse_count,
     run,
     run_cli,
     success,
@@ -50,26 +49,10 @@ from utils import (
 
 __version__ = "3.4.0"
 
-SMB_USER = "crivas"
 SMB_PORT = 445
 
-DRIVES: tuple[tuple[str, str], ...] = (
-    ("Meleys", "192.168.50.2"),
-    ("Vermithor", "192.168.50.3"),
-    ("Caraxes", "192.168.50.4"),
-    ("Syrax", "192.168.50.5"),
-    ("Vhagar", "192.168.50.6"),
-)
 
-_cycle = 0
-
-
-def is_mounted(name: str) -> bool:
-    """True when something is actually mounted at ``/Volumes/<name>``."""
-    return os.path.ismount(f"/Volumes/{name}")
-
-
-def ping_host(ip: str, timeout: int) -> bool:
+def smb_reachable(ip: str, timeout: int) -> bool:
     """One TCP connect to the SMB port with a per-host timeout in seconds.
 
     ICMP is useless here: the NAS firewalls drop echo requests, so ``ping``
@@ -88,58 +71,48 @@ def ping_host(ip: str, timeout: int) -> bool:
 
 def remount_drive(name: str, host: str) -> bool:
     """Remount one drive via AppleScript. True on success."""
-    url = f"smb://{SMB_USER}@{host}/{name}"
-    log(f"  🔗 Remounting {name} ({url})...")
+    log(f"  🔗 Remounting {name} ({smb_url(name, host)})...")
+    if not mount_smb(name, host):
+        return False
 
-    completed = run(["osascript", "-e", f'mount volume "{url}"'], check=False, capture=True)
-    if completed.returncode == 0:
-        success(f"  ✅ {name} remounted 🐉")
-        return True
-
-    warning(f"  ❌ mount failed for {url}")
-    stderr = (completed.stderr or "").strip()
-    if stderr:
-        warning(f"     {stderr}")
-    warning(f"     Check that Keychain has a password for '{SMB_USER}@{host}'.")
-    return False
+    success(f"  ✅ {name} remounted 🐉")
+    return True
 
 
 def ping_all_nas(
-    active: list[tuple[str, str]],
+    active: list[NasDrive],
     *,
+    cycle: int,
     ping_timeout: int,
     remount: bool,
     use_ip: bool,
     quiet: bool,
 ) -> None:
-    """Run one full check cycle over the active drive list."""
-    global _cycle
-    _cycle += 1
-
+    """Run check cycle number ``cycle`` over the active drive list."""
     unreachable = 0
     unmounted = 0
     remounted = 0
     remount_failed = 0
 
     if not quiet:
-        log(f"🔄 Cycle #{_cycle} — checking {len(active)} NAS drive(s)...")
+        log(f"🔄 Cycle #{cycle} — checking {len(active)} NAS drive(s)...")
 
-    for name, ip in active:
-        if not ping_host(ip, ping_timeout):
-            warning(f"  ❌ {name} ({ip}): SMB port {SMB_PORT} unreachable")
+    for drive in active:
+        if not smb_reachable(drive.ip, ping_timeout):
+            warning(f"  ❌ {drive.name} ({drive.ip}): SMB port {SMB_PORT} unreachable")
             unreachable += 1
             continue
 
-        if is_mounted(name):
+        if is_mounted(drive.name):
             if not quiet:
-                log(f"  ✅ 🐉 {name} ({ip}) — mounted")
+                log(f"  ✅ 🐉 {drive.name} ({drive.ip}) — mounted")
             continue
 
-        warning(f"  ⚠️  {name} ({ip}) — reachable but not mounted")
+        warning(f"  ⚠️  {drive.name} ({drive.ip}) — reachable but not mounted")
         unmounted += 1
 
         if remount:
-            if remount_drive(name, ip if use_ip else name):
+            if remount_drive(drive.name, drive.host(use_ip=use_ip)):
                 remounted += 1
             else:
                 remount_failed += 1
@@ -161,13 +134,6 @@ def ping_all_nas(
     warning(f"⚠️  Cycle summary: {' '.join(parts)}")
 
 
-def _shutdown(signum: int, frame: FrameType | None) -> None:
-    """Exit 0 on Ctrl-C, matching the shell version's INT/TERM trap."""
-    print()
-    info(f"👋 Stopping keep-alive pinger after {_cycle} cycle(s).")
-    sys.exit(0)
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser(
         prog="ping-nas",
@@ -179,14 +145,12 @@ def main(argv: list[str] | None = None) -> int:
             f"'{SMB_USER}' using Keychain credentials, with no Finder modals."
         ),
     )
-    # --interval and --ping-timeout stay strings so the shell version's own
-    # message survives; `type=int` would let argparse own the failure first.
+    # Strings, validated by parse_count below rather than `type=int`.
     parser.add_argument(
         "--interval", default="300", metavar="N", help="Seconds between cycles (default: 300)"
     )
     parser.add_argument(
         "--ping-timeout",
-        dest="ping_timeout",
         default="2",
         metavar="N",
         help="Per-host ping timeout in seconds (default: 2)",
@@ -197,60 +161,53 @@ def main(argv: list[str] | None = None) -> int:
     add_bool_flag(
         parser,
         "--no-remount",
-        dest="no_remount",
         allow_value=False,
         help="Detect-only: warn about missing mounts, don't remount",
     )
-    add_bool_flag(
-        parser,
-        "--use-ip",
-        dest="use_ip",
-        help="Remount via //USER@IP/NAME instead of //USER@NAME/NAME",
-    )
+    add_bool_flag(parser, "--use-ip", help="Remount via //USER@IP/NAME instead of //USER@NAME/NAME")
     add_bool_flag(parser, "--once", help="Run a single cycle and exit (useful from cron)")
     add_bool_flag(parser, "--quiet", help="Only log failures, remount attempts, and cycle summary")
     args = parser.parse_args(argv)
 
-    values: dict[str, int] = {}
-    for flag, raw in (("--interval", args.interval), ("--ping-timeout", args.ping_timeout)):
-        if not re.fullmatch(r"[0-9]+", raw) or int(raw) < 1:
-            warning(f"❌ {flag} must be a positive integer (got: {raw})")
-            return 1
-        values[flag] = int(raw)
-    interval = values["--interval"]
-    ping_timeout = values["--ping-timeout"]
+    interval = parse_count(args.interval, "--interval", minimum=1)
+    ping_timeout = parse_count(args.ping_timeout, "--ping-timeout", minimum=1)
 
-    active = [(n, ip) for n, ip in DRIVES if not args.only or n.lower() == args.only.lower()]
+    active = select_drives(args.only)
     if not active:
         warning(f"❌ No drives matched --only={args.only}")
         return 1
 
-    signal.signal(signal.SIGINT, _shutdown)
-    signal.signal(signal.SIGTERM, _shutdown)
+    # INT and TERM both stop the pinger with exit 0, matching the shell
+    # version's trap. SIGINT is set too, not left to Python's default, because
+    # a pinger started in the background by a script inherits it ignored.
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(signum, signal.default_int_handler)
+    cycle = 0
+    try:
+        heading("📡  ping-nas")
+        if not args.once:
+            info(
+                f"🚀 Keep-alive pinger started for {len(active)} NAS "
+                f"(every {interval}s). Press Ctrl-C to stop."
+            )
 
-    note("═══════════════════════════════════════════")
-    note("📡  ping-nas")
-    note("═══════════════════════════════════════════")
-
-    cycle_kwargs = {
-        "ping_timeout": ping_timeout,
-        "remount": not args.no_remount,
-        "use_ip": args.use_ip,
-        "quiet": args.quiet,
-    }
-
-    if args.once:
-        ping_all_nas(active, **cycle_kwargs)
+        while True:
+            cycle += 1
+            ping_all_nas(
+                active,
+                cycle=cycle,
+                ping_timeout=ping_timeout,
+                remount=not args.no_remount,
+                use_ip=args.use_ip,
+                quiet=args.quiet,
+            )
+            if args.once:
+                return 0
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        print()
+        info(f"👋 Stopping keep-alive pinger after {cycle} cycle(s).")
         return 0
-
-    info(
-        f"🚀 Keep-alive pinger started for {len(active)} NAS "
-        f"(every {interval}s). Press Ctrl-C to stop."
-    )
-
-    while True:
-        ping_all_nas(active, **cycle_kwargs)
-        time.sleep(interval)
 
 
 if __name__ == "__main__":

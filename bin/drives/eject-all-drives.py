@@ -30,12 +30,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from nas import NasDrive, select_drives, warn_unknown_drive
 from utils import (
     add_bool_flag,
     build_parser,
+    dry_run_complete,
+    footer_rule,
+    heading,
     info,
     log,
-    note,
     require_binary,
     run,
     run_cli,
@@ -44,14 +47,6 @@ from utils import (
 )
 
 __version__ = "3.3.0"
-
-DRIVES: tuple[tuple[str, str], ...] = (
-    ("Meleys", "192.168.50.2"),
-    ("Vermithor", "192.168.50.3"),
-    ("Caraxes", "192.168.50.4"),
-    ("Syrax", "192.168.50.5"),
-    ("Vhagar", "192.168.50.6"),
-)
 
 
 def eject_volume(label: str, *, dry_run: bool, force: bool, quiet: bool) -> str:
@@ -90,19 +85,17 @@ def eject_volume(label: str, *, dry_run: bool, force: bool, quiet: bool) -> str:
     return "ejected"
 
 
-def reset_finder_state(
-    selected: list[tuple[str, str]], *, clear_favorites: bool, only: str
-) -> None:
+def reset_finder_state(selected: list[NasDrive], *, reset_lists: bool) -> None:
     """Drop Finder's server-level entries so the sidebar stops resurrecting them."""
     log("🪪 Asking Finder to drop any server-level entries...")
-    for name, _ in selected:
+    for drive in selected:
         run(
             [
                 "osascript",
                 "-e",
                 'tell application "Finder" to try',
                 "-e",
-                f'eject disk "{name}"',
+                f'eject disk "{drive.name}"',
                 "-e",
                 "end try",
             ],
@@ -110,9 +103,7 @@ def reset_finder_state(
             capture=True,
         )
 
-    # Skipped when --only is set: resetlist is all-or-nothing and would nuke
-    # the other drives' favorites too.
-    if not only and clear_favorites:
+    if reset_lists:
         log("🧽 Resetting Finder Favorite Servers + Recent Hosts lists...")
         for list_name in (
             "com.apple.LSSharedFileList.FavoriteServers",
@@ -138,54 +129,44 @@ def main(argv: list[str] | None = None) -> int:
     add_bool_flag(
         parser,
         "--no-force",
-        dest="no_force",
         allow_value=False,
         help="Use 'diskutil unmount' instead of 'diskutil unmount force'",
     )
     add_bool_flag(
         parser,
         "--no-clear-favorites",
-        dest="no_clear_favorites",
         allow_value=False,
         help="Don't reset Finder's Favorite Servers / Recent Hosts lists",
     )
     add_bool_flag(parser, "--quiet", help="Only log unmounts and failures")
     args = parser.parse_args(argv)
 
-    force = not args.no_force
-    clear_favorites = not args.no_clear_favorites
-
     # Only gate on diskutil for a real run: the shell version's dry-run never
     # invoked it, so previewing worked anywhere.
     if not args.dry_run:
         require_binary("diskutil", hint="This script is macOS-only.")
 
-    header_suffix = " 🌵 (dry run)" if args.dry_run else ""
-    note("═══════════════════════════════════════════")
-    note(f"📤  eject-all-drives{header_suffix}")
-    note("═══════════════════════════════════════════")
+    heading("📤  eject-all-drives", dry_run=args.dry_run)
 
-    selected = [(n, ip) for n, ip in DRIVES if not args.only or n.lower() == args.only.lower()]
-    if args.only and not selected:
-        # Warn, but keep the shell version's exit code and control flow: an
-        # unknown --only printed a 0/0 summary and still exited 0.
-        warning(f"⚠️  No drive named '{args.only}'. Known: {', '.join(n for n, _ in DRIVES)}")
+    selected = select_drives(args.only)
+    if not selected:
+        warn_unknown_drive(args.only)
 
+    force = not args.no_force
     counts = {"ejected": 0, "skipped": 0, "failed": 0}
 
-    for name, ip in selected:
-        info(f"🐉 {name} ({ip})")
+    for drive in selected:
+        info(f"🐉 {drive.name} ({drive.ip})")
         # macOS re-mounts of the same share land at "<name>-1" or at the IP.
-        for label in (name, f"{name}-1", ip):
+        for label in (drive.name, f"{drive.name}-1", drive.ip):
             counts[eject_volume(label, dry_run=args.dry_run, force=force, quiet=args.quiet)] += 1
 
-    print()
-    note("─────────────────────────────────────────────")
+    footer_rule()
 
     if args.dry_run:
         success(f"🌵 Would eject:  {counts['ejected']}")
         info(f"⏭️  Skipped:     {counts['skipped']} (not mounted)")
-        log("💡 Dry run complete. Nothing was actually ejected.")
+        dry_run_complete("ejected")
         return 0
 
     success(f"✅ Ejected:  {counts['ejected']}")
@@ -194,7 +175,9 @@ def main(argv: list[str] | None = None) -> int:
         warning(f"❌ Failed:   {counts['failed']}")
         return 1
 
-    reset_finder_state(selected, clear_favorites=clear_favorites, only=args.only)
+    # The lists are left alone under --only: resetlist is all-or-nothing and
+    # would nuke the other drives' favorites too.
+    reset_finder_state(selected, reset_lists=not args.only and not args.no_clear_favorites)
     log("🎉 All clean! 🧹✨")
     return 0
 
