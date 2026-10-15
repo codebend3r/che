@@ -10,7 +10,7 @@ Options:
   --help        Show help
 
 Env:
-  DRY_RUN=false Opt out of the preview-only default (used by the .zshrc wrapper)
+  DRY_RUN=false Opt out of the preview-only default (used by the generated wrapper)
 """
 
 from __future__ import annotations
@@ -27,13 +27,13 @@ from utils import (
     info,
     iter_files,
     log,
-    note,
+    note_settings,
+    remove_or_warn,
     run_cli,
     scan_root,
-    warning,
 )
 
-__version__ = "2.1.0"
+__version__ = "2.1.1"
 
 PREFIX = ".smbdelete"
 
@@ -54,14 +54,10 @@ def main(argv: list[str] | None = None) -> int:
     info(f"Running command in {Path.cwd()}")
     args = parser.parse_args(argv)
 
-    note(f"Searching in: {args.path}")
-    note(f"Dry run: {str(args.dry_run).lower()}")
+    note_settings(("Searching in", args.path), ("Dry run", args.dry_run), rule=False)
 
-    if not args.path:
-        warning("Error: --path is required.")
-        warning("Usage: delete-smb-files.py --path=/directory/to/scan")
-        return 1
-
+    # An empty --path reads "--path is required", where the shell version
+    # printed "Error: --path is required." and a usage line.
     root = scan_root(args.path)
 
     info(f"Scanning for .smbdelete* files under: {args.path}")
@@ -72,9 +68,9 @@ def main(argv: list[str] | None = None) -> int:
     deleted = 0
     failures = 0
 
-    # These sidecars are hidden files, so hidden entries must NOT be skipped.
-    # `._*` filtering is likewise off - a `._.smbdeleteX` is still junk.
-    for path in iter_files(root, skip_macos_metadata=False):
+    # Case-sensitive prefix, as `find -name '.smbdelete*'` matched. That never
+    # reached a `._.smbdelete*` AppleDouble sidecar, and neither does this.
+    for path in iter_files(root):
         if not path.name.startswith(PREFIX):
             continue
 
@@ -82,13 +78,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.dry_run:
             continue
 
-        try:
-            path.unlink()
-        except OSError as exc:
-            # A file held open by the SMB client fails with "Resource busy".
-            # The shell version swallowed these with `2>/dev/null || true`;
-            # naming them is strictly more useful and still non-fatal.
-            warning(f"  ✗ Could not delete {path}: {exc}")
+        # A file held open by the SMB client fails with "Resource busy".
+        if not remove_or_warn(path):
             failures += 1
             continue
         deleted += 1
