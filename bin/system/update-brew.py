@@ -19,12 +19,16 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from utils import (
     add_bool_flag,
     build_parser,
+    dry_run_complete,
+    footer_rule,
+    heading,
     info,
     log,
     note,
@@ -35,34 +39,28 @@ from utils import (
     warning,
 )
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 
-def brew(
-    argv: list[str],
-    *,
-    dry_run: bool,
-    dry_run_argv: list[str] | None = None,
-    echo: bool = False,
-) -> None:
-    """Run a brew subcommand, or its --dry-run form.
+class Step(NamedTuple):
+    """One brew command the update runs, and what skips it."""
 
-    Homebrew's own ``--dry-run`` exits non-zero in some situations that are not
-    really failures, so the preview calls are non-fatal - the same ``|| true``
-    the shell version used. The real calls stay fatal.
+    banner: str
+    command: list[str]
+    skip: str = ""  # what a passed --no-* flag skips, for the skip note
+
+
+def brew(command: list[str], *, dry_run: bool) -> None:
+    """Run a brew subcommand, or preview it with Homebrew's own ``--dry-run``.
+
+    That ``--dry-run`` exits non-zero in some situations that are not really
+    failures, so the preview calls are non-fatal - the same ``|| true`` the
+    shell version used. The real calls stay fatal.
     """
     if dry_run:
-        if dry_run_argv is None:
-            warning(f"  🪄 Would run: {' '.join(argv)}")
-            return
-        run(dry_run_argv, check=False)
-        return
-
-    # Only `brew update` echoed its command in the shell version; the other
-    # steps called brew directly, and brew narrates itself.
-    if echo:
-        log(f"  ▶ {' '.join(argv)}")
-    run(argv)
+        run([*command, "--dry-run"], check=False)
+    else:
+        run(command)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -71,9 +69,11 @@ def main(argv: list[str] | None = None) -> int:
         description="🍺 Update Homebrew, upgrade formulae and casks, then clean up.",
     )
     add_bool_flag(parser, "--dry-run", help="Show what would change, change nothing")
-    add_bool_flag(parser, "--no-cask", dest="no_cask", help="Skip upgrading casks")
-    add_bool_flag(parser, "--no-cleanup", dest="no_cleanup", help="Skip 'brew cleanup'")
-    add_bool_flag(parser, "--no-autoremove", dest="no_autoremove", help="Skip 'brew autoremove'")
+    # Bare spellings only, as the shell version took them: `--no-cask=false`
+    # is a double negative, not a way to ask for casks.
+    add_bool_flag(parser, "--no-cask", allow_value=False, help="Skip upgrading casks")
+    add_bool_flag(parser, "--no-cleanup", allow_value=False, help="Skip 'brew cleanup'")
+    add_bool_flag(parser, "--no-autoremove", allow_value=False, help="Skip 'brew autoremove'")
     add_bool_flag(parser, "--greedy", help="Pass --greedy to cask upgrade")
     add_bool_flag(parser, "--doctor", help="Run 'brew doctor' at the very end")
     args = parser.parse_args(argv)
@@ -81,50 +81,40 @@ def main(argv: list[str] | None = None) -> int:
     require_binary("brew", hint="Install Homebrew first: https://brew.sh")
 
     dry = args.dry_run
-    header_suffix = " 🌵 (dry run)" if dry else ""
-    note("═══════════════════════════════════════════")
-    note(f"🍺  update-brew{header_suffix}")
-    note("═══════════════════════════════════════════")
+    heading("🍺  update-brew", dry_run=dry)
 
-    # 1. Refresh Homebrew itself and tap metadata
+    # 1. Refresh Homebrew itself and tap metadata. brew has no preview for
+    # this, and it is the one step whose command the shell version echoed;
+    # brew narrates the others itself.
     info("📡 Updating Homebrew metadata...")
-    brew(["brew", "update"], dry_run=dry, echo=True)
-
-    # 2. Upgrade formulae
-    info("⬆️  Upgrading formulae...")
-    brew(["brew", "upgrade"], dry_run=dry, dry_run_argv=["brew", "upgrade", "--dry-run"])
-
-    # 3. Upgrade casks (apps)
-    if args.no_cask:
-        note("⏭️  Skipping cask upgrades (--no-cask)")
+    if dry:
+        warning("  🪄 Would run: brew update")
     else:
-        info("📦 Upgrading casks...")
-        cask_argv = ["brew", "upgrade", "--cask"]
-        if args.greedy:
-            cask_argv.append("--greedy")
-        brew(cask_argv, dry_run=dry, dry_run_argv=[*cask_argv, "--dry-run"])
+        log("  ▶ brew update")
+        run(["brew", "update"])
 
-    # 4. Remove unused dependencies
-    if args.no_autoremove:
-        note("⏭️  Skipping autoremove (--no-autoremove)")
-    else:
-        info("🧹 Removing unused dependencies...")
-        brew(
+    # 2-5.
+    cask = ["brew", "upgrade", "--cask", *(["--greedy"] if args.greedy else [])]
+    steps = (
+        Step("⬆️  Upgrading formulae...", ["brew", "upgrade"]),
+        Step("📦 Upgrading casks...", cask, "cask upgrades (--no-cask)" if args.no_cask else ""),
+        Step(
+            "🧹 Removing unused dependencies...",
             ["brew", "autoremove"],
-            dry_run=dry,
-            dry_run_argv=["brew", "autoremove", "--dry-run"],
-        )
-
-    # 5. Cleanup old versions + cache
-    if args.no_cleanup:
-        note("⏭️  Skipping cleanup (--no-cleanup)")
-    else:
-        info("🗑️  Cleaning up old versions and cache...")
-        brew(
+            "autoremove (--no-autoremove)" if args.no_autoremove else "",
+        ),
+        Step(
+            "🗑️  Cleaning up old versions and cache...",
             ["brew", "cleanup", "-s"],
-            dry_run=dry,
-            dry_run_argv=["brew", "cleanup", "--dry-run", "-s"],
-        )
+            "cleanup (--no-cleanup)" if args.no_cleanup else "",
+        ),
+    )
+    for step in steps:
+        if step.skip:
+            note(f"⏭️  Skipping {step.skip}")
+            continue
+        info(step.banner)
+        brew(step.command, dry_run=dry)
 
     # 6. Optional doctor pass - advisory, never fatal
     if args.doctor:
@@ -133,10 +123,9 @@ def main(argv: list[str] | None = None) -> int:
         if completed.returncode != 0:
             warning("⚠️  brew doctor reported issues (non-fatal)")
 
-    print()
-    note("─────────────────────────────────────────────")
+    footer_rule()
     if dry:
-        log("💡 Dry run complete. Nothing was actually changed.")
+        dry_run_complete()
     else:
         success("🎉 Homebrew is up to date and tidy! 🍺✨")
     return 0
