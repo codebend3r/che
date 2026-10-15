@@ -12,7 +12,7 @@ Options:
   --help        Show help
 
 Env:
-  DRY_RUN=false Opt out of the preview-only default (used by the .zshrc wrapper)
+  DRY_RUN=false Opt out of the preview-only default (used by the generated wrapper)
 """
 
 from __future__ import annotations
@@ -31,7 +31,9 @@ from utils import (
     iter_files,
     log,
     note,
+    note_settings,
     parse_size,
+    remove_or_warn,
     run_cli,
     scan_root,
     warning,
@@ -70,10 +72,7 @@ def main(argv: list[str] | None = None) -> int:
     info(f"Running command in {Path.cwd()}")
     args = parser.parse_args(argv)
 
-    note(f"Scanning: {args.path}")
-    note(f"Size threshold: {args.size}")
-    note(f"Dry run: {str(args.dry_run).lower()}")
-    note("----------------------------------------------------")
+    note_settings(("Scanning", args.path), ("Size threshold", args.size), ("Dry run", args.dry_run))
 
     if not args.size or not args.path:
         warning("❌ --size and --path are required")
@@ -116,12 +115,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
 
         warning(f"[{index}/{total}] Deleting: {format_bytes(size)} - {path}")
-        try:
-            path.unlink()
-        except OSError as exc:
-            # The shell version aborted the run here; reporting and continuing
-            # means one busy file cannot strand the rest of the sweep.
-            warning(f"  ✗ Failed to delete {path}: {exc}")
+        if not remove_or_warn(path):
             failures += 1
 
     log("Done.")
