@@ -32,7 +32,7 @@ from utils import (
     warning,
 )
 
-__version__ = "2.1.0"
+__version__ = "2.1.1"
 
 DEFAULT_EXTS = (
     "mp4",
@@ -68,11 +68,8 @@ def main(argv: list[str] | None = None) -> int:
     info(f"Running command in {Path.cwd()}")
     args = parser.parse_args(argv)
 
-    if not args.path:
-        warning("❌ --path must be specified")
-        parser.print_help()
-        return 1
-
+    # An empty --path reads "--path is required", where the shell version
+    # printed "--path must be specified" and the full usage.
     root = scan_root(args.path)
 
     require_binary("exiftool", hint="Install exiftool and retry.")

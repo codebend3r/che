@@ -25,14 +25,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from media import CODEC_SCAN_EXTENSIONS
 from utils import (
     add_bool_flag,
     build_parser,
+    dry_run_complete,
     env_bool,
     info,
     iter_files,
     log,
-    note,
+    note_settings,
+    remove_or_warn,
     require_binary,
     run,
     run_cli,
@@ -41,9 +44,7 @@ from utils import (
     warning,
 )
 
-__version__ = "3.0.0"
-
-SCAN_EXTENSIONS = ("mp4", "mkv", "mov", "avi")
+__version__ = "3.1.0"
 
 FFMPEG_ARGS = (
     "-map",
@@ -120,7 +121,6 @@ def main(argv: list[str] | None = None) -> int:
     add_bool_flag(
         parser,
         "--delete-original",
-        dest="delete_original",
         help="Delete each source file after a successful convert",
     )
     add_bool_flag(
@@ -133,25 +133,24 @@ def main(argv: list[str] | None = None) -> int:
     info(f"Running command in {Path.cwd()}")
     args = parser.parse_args(argv)
 
-    if not args.path:
-        warning("Error: You must provide a path with --path=")
-        return 1
-
-    # Binary check before the path check, matching the shell version's order,
-    # so a missing ffmpeg is reported even when the path is also wrong.
+    # Binary check before the directory check, matching the shell version's
+    # order, so a missing ffmpeg is reported even when the path is also wrong.
+    # An empty --path reads "--path is required" after it, where the shell
+    # version said "Error: You must provide a path with --path=" before it.
     require_binary("ffmpeg", hint="Install FFmpeg first.")
 
     root = scan_root(args.path)
 
-    note(f"Scanning: {args.path}")
-    note(f"Delete original after conversion: {str(args.delete_original).lower()}")
-    note(f"Dry run: {str(args.dry_run).lower()}")
-    note("----------------------------------------------------")
+    note_settings(
+        ("Scanning", args.path),
+        ("Delete original after conversion", args.delete_original),
+        ("Dry run", args.dry_run),
+    )
 
     converted = 0
     failed = 0
 
-    for path in iter_files(root, extensions=SCAN_EXTENSIONS):
+    for path in iter_files(root, extensions=CODEC_SCAN_EXTENSIONS):
         # Don't re-encode our own output on a second run. Announced rather than
         # silent, because scene "PROPER/FIXED" repacks legitimately end in
         # _fixed and would otherwise vanish from the listing with no trace.
@@ -161,17 +160,18 @@ def main(argv: list[str] | None = None) -> int:
 
         output = path.with_name(f"{path.stem}_fixed.mp4")
 
+        # Never silently replace an existing conversion; the user may have
+        # produced it deliberately, and there is no way to tell it apart from
+        # one this run just made for a different same-stem source. Checked
+        # before the dry-run branch so a preview reports the same skips.
+        if output.exists():
+            warning(f"⏭️  Skipping (output already exists): {output}")
+            continue
+
         if args.dry_run:
             info(f"[DRY RUN] Would re-encode: {path} -> {output}")
             if args.delete_original:
                 info(f"[DRY RUN] Would delete original: {path}")
-            continue
-
-        # Never silently replace an existing conversion; the user may have
-        # produced it deliberately, and there is no way to tell it apart from
-        # one this run just made for a different same-stem source.
-        if output.exists():
-            warning(f"⏭️  Skipping (output already exists): {output}")
             continue
 
         log(f"Processing: {path}")
@@ -184,16 +184,11 @@ def main(argv: list[str] | None = None) -> int:
         log(f"✅ Converted to: {output}")
         converted += 1
 
-        if args.delete_original:
-            try:
-                path.unlink()
-            except OSError as exc:
-                warning(f"  ✗ Could not delete {path}: {exc}")
-                continue
+        if args.delete_original and remove_or_warn(path):
             warning(f"🗑 Deleted original: {path}")
 
     if args.dry_run:
-        log("💡 Dry run complete. Nothing was actually changed.")
+        dry_run_complete()
         return 0
 
     # Summary and the non-zero exit on failure are both new; the shell version

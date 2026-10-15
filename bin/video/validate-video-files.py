@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from media import LIBRARY_EXTENSIONS
 from utils import (
     add_bool_flag,
     build_parser,
@@ -31,9 +32,7 @@ from utils import (
     warning,
 )
 
-__version__ = "3.0.0"
-
-VIDEO_EXTENSIONS = ("mp4", "mkv")
+__version__ = "3.1.0"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -46,10 +45,8 @@ def main(argv: list[str] | None = None) -> int:
     info(f"Running command in {Path.cwd()}")
     args = parser.parse_args(argv)
 
-    if not args.path:
-        warning(f"❌ Error: '{args.path}' is not a valid directory")
-        return 1
-
+    # An empty --path reads "--path is required", where the shell version
+    # reported `'' is not a valid directory`.
     root = scan_root(args.path)
 
     require_binary("mpv", hint="Install it using Homebrew:\n  brew install mpv")
@@ -57,7 +54,7 @@ def main(argv: list[str] | None = None) -> int:
     checked = 0
     bad: list[Path] = []
 
-    for path in iter_files(root, extensions=VIDEO_EXTENSIONS):
+    for path in iter_files(root, extensions=LIBRARY_EXTENSIONS):
         # The shell version gated this on `[[ -z "$VERBOSE" ]]`, but VERBOSE is
         # the literal string "false" when unset, which is never empty - so the
         # line never printed and --verbose did nothing. Wired up properly here.
