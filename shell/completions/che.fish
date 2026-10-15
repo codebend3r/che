@@ -11,9 +11,9 @@ complete -c che -n __fish_use_subcommand -a clean-stale-branches -d 'Delete loca
 complete -c che -n __fish_use_subcommand -a clean-stale-branches-dr -d 'Delete local branches whose upstream is gone (preview)'
 complete -c che -n __fish_use_subcommand -a prune-worktrees -d 'Remove every linked worktree, then prune stale admin records'
 complete -c che -n __fish_use_subcommand -a prune-worktrees-dr -d 'Remove every linked worktree, then prune stale admin records (preview)'
-complete -c che -n __fish_use_subcommand -a sync-all-branches -d 'Push every worktree, collapse the pushed ones, then tidy branches'
-complete -c che -n __fish_use_subcommand -a sync-all-branches-dr -d 'Push every worktree, collapse the pushed ones, then tidy branches (preview)'
-complete -c che -n __fish_use_subcommand -a update-from-origin -d 'Same as sync-all-branches but never pushes: fetch, collapse, rebase'
+complete -c che -n __fish_use_subcommand -a sync-all-branches -d 'Delete merged branches, rebase the rest, check out new ones; branches only'
+complete -c che -n __fish_use_subcommand -a sync-all-branches-dr -d 'Delete merged branches, rebase the rest, check out new ones; branches only (preview)'
+complete -c che -n __fish_use_subcommand -a update-from-origin -d 'Alias of sync-all-branches'
 complete -c che -n __fish_use_subcommand -a update-local-branches -d 'Rebase every local branch that has an upstream onto origin'
 complete -c che -n __fish_use_subcommand -a show-codecs -d 'Report media files outside the Direct Play codec/container set'
 complete -c che -n __fish_use_subcommand -a fix-codecs -d 'Re-encode media to h265/aac mp4 so it Direct Plays'
@@ -79,17 +79,12 @@ complete -c che -n "__fish_seen_subcommand_from prune-worktrees" -l force
 complete -c che -n "__fish_seen_subcommand_from prune-worktrees-dr" -l dry-run
 complete -c che -n "__fish_seen_subcommand_from prune-worktrees-dr" -l force
 complete -c che -n "__fish_seen_subcommand_from sync-all-branches" -l dry-run
-complete -c che -n "__fish_seen_subcommand_from sync-all-branches" -l no-push
-complete -c che -n "__fish_seen_subcommand_from sync-all-branches" -l keep-locked
 complete -c che -n "__fish_seen_subcommand_from sync-all-branches" -l author -r
 complete -c che -n "__fish_seen_subcommand_from sync-all-branches" -l limit -r
 complete -c che -n "__fish_seen_subcommand_from sync-all-branches-dr" -l dry-run
-complete -c che -n "__fish_seen_subcommand_from sync-all-branches-dr" -l no-push
-complete -c che -n "__fish_seen_subcommand_from sync-all-branches-dr" -l keep-locked
 complete -c che -n "__fish_seen_subcommand_from sync-all-branches-dr" -l author -r
 complete -c che -n "__fish_seen_subcommand_from sync-all-branches-dr" -l limit -r
 complete -c che -n "__fish_seen_subcommand_from update-from-origin" -l dry-run
-complete -c che -n "__fish_seen_subcommand_from update-from-origin" -l keep-locked
 complete -c che -n "__fish_seen_subcommand_from update-from-origin" -l author -r
 complete -c che -n "__fish_seen_subcommand_from update-from-origin" -l limit -r
 complete -c che -n "__fish_seen_subcommand_from update-local-branches" -l limit -r
@@ -253,17 +248,12 @@ complete -c prune-worktrees -l force
 complete -c prune-worktrees-dr -l dry-run
 complete -c prune-worktrees-dr -l force
 complete -c sync-all-branches -l dry-run
-complete -c sync-all-branches -l no-push
-complete -c sync-all-branches -l keep-locked
 complete -c sync-all-branches -l author -r
 complete -c sync-all-branches -l limit -r
 complete -c sync-all-branches-dr -l dry-run
-complete -c sync-all-branches-dr -l no-push
-complete -c sync-all-branches-dr -l keep-locked
 complete -c sync-all-branches-dr -l author -r
 complete -c sync-all-branches-dr -l limit -r
 complete -c update-from-origin -l dry-run
-complete -c update-from-origin -l keep-locked
 complete -c update-from-origin -l author -r
 complete -c update-from-origin -l limit -r
 complete -c update-local-branches -l limit -r

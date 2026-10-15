@@ -34,6 +34,7 @@ from utils import (
     run,
     run_cli,
     run_lines,
+    skip_git_hooks,
     success,
     warning,
     worktree_branch_map,
@@ -101,6 +102,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     require_binary("git")
+    skip_git_hooks()
 
     protected = set(DEFAULT_PROTECTED)
     protected.update(name for name in args.protect.split(",") if name)
@@ -124,8 +126,8 @@ def main(argv: list[str] | None = None) -> int:
 
     # A branch checked out in a worktree cannot be deleted — git refuses with
     # "already used by worktree". Split those out so one pinned branch doesn't
-    # abort the whole run; sync-all-branches collapses worktrees before it gets
-    # here, so this only bites when the script is run on its own.
+    # abort the whole run. Worktrees are the user's, so they are reported and
+    # left alone, never removed to free the branch.
     # One `git worktree list` for the whole set, not one per branch as the
     # shell's per-branch `worktree_for_branch` did.
     pinned_by_branch = worktree_branch_map()
@@ -136,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
         warning(f"⏭️  {len(pinned)} stale branch(es) are checked out in a worktree:")
         for branch, path in pinned:
             warning(f"  • 🌿 {branch} (in {path})")
-        info("💡 Run sync-all-branches to push and collapse those worktrees first.")
+        info("💡 Remove those worktrees yourself, and the next run deletes their branches.")
 
     if not deletable:
         success("✨ Nothing left to delete. 🎉")

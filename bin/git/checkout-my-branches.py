@@ -28,6 +28,7 @@ from utils import (
     run_cli,
     run_lines,
     run_output,
+    skip_git_hooks,
     success,
     warning,
 )
@@ -68,6 +69,7 @@ def main(argv: list[str] | None = None) -> int:
     limit = int(args.limit)
 
     require_binary("git")
+    skip_git_hooks()
 
     note("═══════════════════════════════════════════")
     note("🌿  checkout-my-branches")

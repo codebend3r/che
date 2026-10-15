@@ -1,34 +1,24 @@
 #!/usr/bin/env python3
-"""🔄 Sync everything: push every worktree, collapse the pushed ones, then tidy branches.
-
-A worktree is a temporary workspace. Once its commits are on origin, the
-directory holds nothing the remote does not, so it is removed and the branch
-stays behind as a plain local branch that the later steps can update normally.
-That also clears the "already used by worktree" pin, which is what otherwise
-makes main un-checkoutable and stale branches un-deletable.
+"""🔄 Sync every branch: delete merged ones, rebase the rest, check out new ones.
 
 Steps, in order:
   1. git fetch --all --prune
-  2. Push every linked worktree's branch to origin
-  3. Remove each pushed + clean worktree, keeping its branch
-  4. Prune stale worktree admin records
-  5. Switch the main clone to the main branch
-  6. clean-stale-branches   (delete branches whose upstream is gone)
-  7. update-local-branches  (rebase every branch onto its upstream)
-  8. checkout-my-branches   (check out your remote branches that aren't local)
+  2. Switch the main clone to the main branch
+  3. clean-stale-branches   (delete branches whose upstream is gone)
+  4. update-local-branches  (rebase every branch onto its upstream)
+  5. checkout-my-branches   (check out your remote branches that aren't local)
 
-A worktree is only collapsed when it is clean AND fully pushed. Anything else
-is kept and reported with the reason.
+Only branches change. It never pushes, never adds, removes or prunes a
+worktree, and never runs a repo's git hooks: pushing and worktrees are the
+user's call, and a lefthook or husky pre-commit or pre-push gates the user's
+own work, not this bookkeeping. A branch checked out in a linked worktree is
+rebased in place there; a stale one is reported, not deleted.
 
 Usage:
-  sync-all-branches.py [--dry-run] [--no-push] [--keep-locked]
-                       [--author=EMAIL] [--limit=N]
+  sync-all-branches.py [--dry-run] [--author=EMAIL] [--limit=N]
 
 Options:
-  --dry-run        Report what would be pushed / removed / synced, change nothing
-  --no-push        Never push; only collapse worktrees that are already pushed
-  --keep-locked    Leave locked worktrees alone (default: release the lock once
-                   the worktree is pushed and clean)
+  --dry-run        Report what would be deleted / synced, change nothing
   --author=EMAIL   Passed through to checkout-my-branches
   --limit=N        Passed through to checkout-my-branches
   --help           Show help
@@ -39,6 +29,7 @@ Env:
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -46,7 +37,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from utils import (
     add_bool_flag,
-    branch_is_pushed,
     build_parser,
     env_bool,
     find_main_branch,
@@ -58,13 +48,11 @@ from utils import (
     run,
     run_cli,
     run_output,
-    success,
+    skip_git_hooks,
     warning,
-    worktree_branch_map,
-    worktree_is_clean,
 )
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -86,147 +74,21 @@ def delegate(script: str, args: list[str], *, cwd: Path, dry_run: bool) -> None:
     )
 
 
-def collapse_worktrees(
-    *,
-    main_wt: Path,
-    push: bool,
-    keep_locked: bool,
-    dry_run: bool,
-) -> tuple[list[str], list[str], list[str]]:
-    """Push, then remove, every linked worktree that is clean and fully pushed.
-
-    Returns ``(pushed, collapsed, kept)`` for the summary. ``kept`` entries
-    carry the reason, because "nothing happened" is the one outcome a user
-    needs explained.
-    """
-    pushed: list[str] = []
-    collapsed: list[str] = []
-    kept: list[str] = []
-
-    info("🌿 Inspecting linked worktrees...")
-
-    # Snapshot the map first: removing a worktree mutates the list git reports.
-    worktrees = [
-        (branch, path)
-        for branch, path in worktree_branch_map(cwd=main_wt).items()
-        if path and Path(path) != main_wt
-    ]
-
-    if not worktrees:
-        info("  ℹ️  No linked worktrees with a branch checked out.")  # noqa: RUF001
-
-    for branch, path in worktrees:
-        # A dirty worktree holds work that only exists there. Never touch it.
-        if not worktree_is_clean(path):
-            kept.append(f"{branch} ({path}) — dirty")
-            warning(f"  ⏭️  {branch} — dirty, keeping {path}")
-            continue
-
-        # Push whatever is not on origin yet, so the directory becomes redundant.
-        if not branch_is_pushed(branch, cwd=main_wt):
-            if not push:
-                kept.append(f"{branch} ({path}) — unpushed, --no-push")
-                warning(f"  ⏭️  {branch} — unpushed and --no-push, keeping {path}")
-                continue
-
-            if dry_run:
-                info(f"  🌵 Would push: {branch} → origin")
-                pushed.append(branch)
-            else:
-                log(f"  ⬆️  Pushing {branch} → origin")
-                result = run(
-                    ["git", "-C", path, "push", "--quiet", "--set-upstream", "origin", branch],
-                    check=False,
-                )
-                if result.returncode != 0:
-                    kept.append(f"{branch} ({path}) — push failed")
-                    warning(f"  ❌ push failed for {branch}, keeping {path}")
-                    continue
-                pushed.append(branch)
-
-        # Re-check rather than assume: a push can succeed and still leave the
-        # branch behind its upstream if someone else pushed in between.
-        if not dry_run and not branch_is_pushed(branch, cwd=main_wt):
-            kept.append(f"{branch} ({path}) — still not fully pushed")
-            warning(f"  ⏭️  {branch} — still not fully pushed, keeping {path}")
-            continue
-
-        if dry_run:
-            info(f"  🌵 Would collapse: {path} (branch {branch} kept)")
-            collapsed.append(f"{branch} ({path})")
-            continue
-
-        # A lock is metadata stamped by whatever created the worktree (a tool,
-        # an agent, the user), and `git worktree remove` refuses while one is
-        # set. The lock says nothing about unsaved work — the clean and pushed
-        # gates above are what protect that — so release it rather than
-        # skipping. This is NOT --force, which is the flag that discards work.
-        if not keep_locked:
-            run(["git", "worktree", "unlock", path], check=False, capture=True, cwd=main_wt)
-
-        removed = run(["git", "worktree", "remove", path], check=False, cwd=main_wt)
-        if removed.returncode == 0:
-            success(f"  ✅ Collapsed {path} — branch {branch} kept")
-            collapsed.append(f"{branch} ({path})")
-        else:
-            kept.append(f"{branch} ({path}) — removal failed (locked?)")
-            warning(f"  ❌ Could not remove {path}")
-
-    return pushed, collapsed, kept
-
-
-def report(
-    *,
-    pushed: list[str],
-    collapsed: list[str],
-    kept: list[str],
-    started_in: Path,
-    main_wt: Path,
-) -> None:
-    """Print the worktree summary."""
-    print()
-    note("─────────────────────────────────────────────")
-    success("═══ worktree summary ═══")
-    success(f"⬆️  Pushed:    {len(pushed)}")
-    for branch in pushed:
-        success(f"  • 🌿 {branch}")
-    success(f"📦 Collapsed: {len(collapsed)}")
-    for branch in collapsed:
-        success(f"  • 🪦 {branch}")
-    if kept:
-        warning(f"⏭️  Kept:      {len(kept)}")
-        for branch in kept:
-            warning(f"  • 🌿 {branch}")
-
-    if started_in != main_wt:
-        info(f"📍 Started in {started_in}; finished in {main_wt}.")
-        if not started_in.is_dir():
-            warning(f"⚠️  {started_in} was collapsed — your shell is in a stale directory.")
-            warning(f"   Run: cd {main_wt}")
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser(
         prog="sync-all-branches",
-        description="🔄 Push every worktree, collapse the pushed ones, then tidy branches.",
+        description="🔄 Delete merged branches, rebase the rest, check out new ones.",
     )
     add_bool_flag(
         parser,
         "--dry-run",
         default=env_bool("DRY_RUN", False),
-        help="Report what would be pushed / removed / synced, change nothing",
+        help="Report what would be deleted / synced, change nothing",
     )
-    add_bool_flag(
-        parser,
-        "--no-push",
-        allow_value=False,
-        help="Never push; only collapse worktrees that are already pushed",
-    )
-    add_bool_flag(
-        parser,
-        "--keep-locked",
-        help="Leave locked worktrees alone (default: release the lock once pushed and clean)",
-    )
+    # Accepted and ignored, from when the sync pushed and collapsed worktrees:
+    # chip's "Update from Origin" still passes --no-push and must keep running.
+    add_bool_flag(parser, "--no-push", allow_value=False, help=argparse.SUPPRESS)
+    add_bool_flag(parser, "--keep-locked", help=argparse.SUPPRESS)
     parser.add_argument(
         "--author",
         default="",
@@ -242,6 +104,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     require_binary("git")
+    skip_git_hooks()
 
     inside = run(["git", "rev-parse", "--is-inside-work-tree"], check=False, capture=True)
     if inside.returncode != 0:
@@ -253,19 +116,15 @@ def main(argv: list[str] | None = None) -> int:
     note(f"🔄  sync-all-branches{header_suffix}")
     note("═══════════════════════════════════════════")
 
-    # Every later step runs from the main worktree: a worktree cannot be
-    # removed while we are standing inside it, and the delegated scripts
-    # expect the main clone.
+    # Every later step runs from the main worktree, because the delegated
+    # scripts expect the main clone. Passing cwd= to each call rather than
+    # `cd`-ing keeps the process's own directory untouched.
     main_wt_raw = main_worktree()
     if not main_wt_raw:
         warning("❌ Could not determine main worktree.")
         return 1
 
     main_wt = Path(main_wt_raw)
-    # The shell version `cd`-ed here. Passing cwd= to each call instead keeps
-    # the process's own directory untouched, so a caller that sourced this in
-    # the same shell would not be moved out from under itself.
-    started_in = Path.cwd().resolve()
 
     main_branch = find_main_branch(main_wt)
     if not main_branch:
@@ -283,27 +142,7 @@ def main(argv: list[str] | None = None) -> int:
         run(["git", "fetch", "--all", "--prune", "--quiet"], cwd=main_wt)
 
     # -----------------------------------------------------------------------
-    # Steps 2-3 — push every worktree, then collapse the pushed ones
-    # -----------------------------------------------------------------------
-
-    pushed, collapsed, kept = collapse_worktrees(
-        main_wt=main_wt,
-        push=not args.no_push,
-        keep_locked=args.keep_locked,
-        dry_run=args.dry_run,
-    )
-
-    # -----------------------------------------------------------------------
-    # Step 4 — prune stale admin records
-    # -----------------------------------------------------------------------
-
-    if args.dry_run:
-        info("🌵 Would run: git worktree prune")
-    else:
-        run(["git", "worktree", "prune"], cwd=main_wt)
-
-    # -----------------------------------------------------------------------
-    # Step 5 — park on main before anything tries to delete or rebase branches
+    # Step 2 — park on main before anything tries to delete or rebase branches
     # -----------------------------------------------------------------------
 
     current = run_output(
@@ -326,39 +165,28 @@ def main(argv: list[str] | None = None) -> int:
         info(f"📍 Already on 🌿 {main_branch}")
 
     # -----------------------------------------------------------------------
-    # Steps 6-8 — delegate to the single-purpose scripts
+    # Steps 3-5 — delegate to the single-purpose scripts
     # -----------------------------------------------------------------------
 
     delegate_args = ["--dry-run"] if args.dry_run else []
 
-    # DELIBERATE DIVERGENCE: the summary is printed even when a delegate fails.
-    # The pushes and collapses above already happened; aborting without saying
-    # which ones would leave the user guessing what state the repo is in.
-    try:
-        print()
-        delegate("clean-stale-branches.py", delegate_args, cwd=main_wt, dry_run=args.dry_run)
+    print()
+    delegate("clean-stale-branches.py", delegate_args, cwd=main_wt, dry_run=args.dry_run)
 
-        print()
-        delegate("update-local-branches.py", delegate_args, cwd=main_wt, dry_run=args.dry_run)
+    print()
+    delegate("update-local-branches.py", delegate_args, cwd=main_wt, dry_run=args.dry_run)
 
-        checkout_args = []
-        if args.author:
-            checkout_args.append(f"--author={args.author}")
-        if args.limit:
-            checkout_args.append(f"--limit={args.limit}")
+    checkout_args = []
+    if args.author:
+        checkout_args.append(f"--author={args.author}")
+    if args.limit:
+        checkout_args.append(f"--limit={args.limit}")
 
-        print()
-        if args.dry_run:
-            info(f"🌵 Would run: checkout-my-branches {' '.join(checkout_args)}".rstrip())
-        else:
-            delegate("checkout-my-branches.py", checkout_args, cwd=main_wt, dry_run=args.dry_run)
-    except BaseException:
-        report(
-            pushed=pushed, collapsed=collapsed, kept=kept, started_in=started_in, main_wt=main_wt
-        )
-        raise
-
-    report(pushed=pushed, collapsed=collapsed, kept=kept, started_in=started_in, main_wt=main_wt)
+    print()
+    if args.dry_run:
+        info(f"🌵 Would run: checkout-my-branches {' '.join(checkout_args)}".rstrip())
+    else:
+        delegate("checkout-my-branches.py", checkout_args, cwd=main_wt, dry_run=args.dry_run)
 
     log("🎉 Sync complete.")
     return 0

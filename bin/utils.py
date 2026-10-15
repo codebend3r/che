@@ -469,6 +469,32 @@ def run_cli(entry: Callable[[], int]) -> None:
         sys.exit(130)
 
 
+def skip_git_hooks() -> None:
+    """Stop every git this process runs, and every script it spawns, running hooks.
+
+    The branch scripts only check out, rebase and delete branches. A repo's
+    hooks (lefthook, husky) gate the user's own commits and pushes, yet
+    ``git checkout`` fires post-checkout and ``git pull --rebase`` fires
+    pre-rebase, prepare-commit-msg, post-commit and post-rewrite as it replays
+    each commit. A hooks path of /dev/null holds no hooks at all.
+
+    It is set through GIT_CONFIG_COUNT (git 2.31+) rather than ``-c`` on each
+    call so no git invocation can miss it and a delegated script inherits it.
+    Repeat calls are no-ops, so a script and the scripts it delegates to can
+    all call it.
+    """
+    count = int(os.environ.get("GIT_CONFIG_COUNT") or 0)
+    for index in range(count):
+        if (
+            os.environ.get(f"GIT_CONFIG_KEY_{index}") == "core.hooksPath"
+            and os.environ.get(f"GIT_CONFIG_VALUE_{index}") == os.devnull
+        ):
+            return
+    os.environ[f"GIT_CONFIG_KEY_{count}"] = "core.hooksPath"
+    os.environ[f"GIT_CONFIG_VALUE_{count}"] = os.devnull
+    os.environ["GIT_CONFIG_COUNT"] = str(count + 1)
+
+
 # ---------------------------------------------------------------------------
 # Worktrees
 #

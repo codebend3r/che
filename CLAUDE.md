@@ -83,11 +83,13 @@ works around the pin rather than counting it as a failure:
 
 - `clean-stale-branches` reports pinned stale branches and deletes the rest.
 - `update-local-branches` rebases a pinned branch in place with `git -C <wt>`.
-- `sync-all-branches` pushes each worktree, collapses the clean + fully pushed
-  ones back into plain local branches, then delegates to the three scripts
-  above. Only clean **and** pushed worktrees are collapsed; anything else is
-  kept and reported with the reason. It releases a worktree lock before
-  removal, never `--force` (which discards real work).
+- `sync-all-branches` fetches, parks the main clone on main, then delegates to
+  the three scripts above. It only updates branches: it never pushes and
+  never adds, removes or prunes a worktree. `--no-push` and `--keep-locked`
+  are still accepted, and ignored, because chip passes `--no-push`.
+- All four call `skip_git_hooks()` first, so no repo hook (lefthook, husky)
+  runs on their checkouts and rebases. A new script in `bin/git/` that checks
+  out, rebases or commits should call it too.
 
 ## Conventions for scripts in `bin/<category>/`
 

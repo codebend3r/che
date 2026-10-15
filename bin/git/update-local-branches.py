@@ -31,6 +31,7 @@ from utils import (
     run_cli,
     run_lines,
     run_output,
+    skip_git_hooks,
     success,
     warning,
     worktree_branch_map,
@@ -92,6 +93,7 @@ def main(argv: list[str] | None = None) -> int:
     limit = int(args.limit)
 
     require_binary("git")
+    skip_git_hooks()
 
     header_suffix = " 🌵 (dry run)" if args.dry_run else ""
     note("═══════════════════════════════════════════")
@@ -127,6 +129,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     succeeded: list[str] = []
+    skipped: list[str] = []
     failed: list[str] = []
 
     # One `git worktree list` for the whole run, not one per branch as the
@@ -142,9 +145,12 @@ def main(argv: list[str] | None = None) -> int:
         pinned = pinned_by_branch.get(branch, "")
 
         if pinned and Path(pinned).resolve() != here:
+            # Uncommitted work in a worktree is the user's, left exactly as it
+            # is. Skipping it is not a failure, or one worktree in progress
+            # would stop every run of sync-all-branches at this step.
             if not worktree_is_clean(pinned):
                 warning(f"  ⏭️  {branch} — worktree is dirty ({pinned}), skipping")
-                failed.append(branch)
+                skipped.append(branch)
                 continue
 
             log(f"⬇️  Rebasing {branch} in its worktree ({pinned})")
@@ -181,6 +187,10 @@ def main(argv: list[str] | None = None) -> int:
     print()
     success("═══ summary ═══")
     success(f"✅ Updated: {len(succeeded)}")
+    if skipped:
+        warning(f"⏭️  Skipped: {len(skipped)} (dirty worktree)")
+        for branch in skipped:
+            warning(f"  • 🌿 {branch}")
     if failed:
         warning(f"❌ Failed:  {len(failed)}")
         for branch in failed:

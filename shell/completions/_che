@@ -13,9 +13,9 @@ _che_flags_for() {
     clean-stale-branches-dr) print -r -- '--dry-run --protect= --help' ;;
     prune-worktrees) print -r -- '--dry-run --force --help' ;;
     prune-worktrees-dr) print -r -- '--dry-run --force --help' ;;
-    sync-all-branches) print -r -- '--dry-run --no-push --keep-locked --author= --limit= --help' ;;
-    sync-all-branches-dr) print -r -- '--dry-run --no-push --keep-locked --author= --limit= --help' ;;
-    update-from-origin) print -r -- '--dry-run --keep-locked --author= --limit= --help' ;;
+    sync-all-branches) print -r -- '--dry-run --author= --limit= --help' ;;
+    sync-all-branches-dr) print -r -- '--dry-run --author= --limit= --help' ;;
+    update-from-origin) print -r -- '--dry-run --author= --limit= --help' ;;
     update-local-branches) print -r -- '--limit= --dry-run --help' ;;
     show-codecs) print -r -- '--path= --verbose --help' ;;
     fix-codecs) print -r -- '--path= --delete-original --dry-run --help' ;;
@@ -85,9 +85,9 @@ _che() {
     'clean-stale-branches-dr:Delete local branches whose upstream is gone (preview)'
     'prune-worktrees:Remove every linked worktree, then prune stale admin records'
     'prune-worktrees-dr:Remove every linked worktree, then prune stale admin records (preview)'
-    'sync-all-branches:Push every worktree, collapse the pushed ones, then tidy branches'
-    'sync-all-branches-dr:Push every worktree, collapse the pushed ones, then tidy branches (preview)'
-    'update-from-origin:Same as sync-all-branches but never pushes: fetch, collapse, rebase'
+    'sync-all-branches:Delete merged branches, rebase the rest, check out new ones; branches only'
+    'sync-all-branches-dr:Delete merged branches, rebase the rest, check out new ones; branches only (preview)'
+    'update-from-origin:Alias of sync-all-branches'
     'update-local-branches:Rebase every local branch that has an upstream onto origin'
     'show-codecs:Report media files outside the Direct Play codec/container set'
     'fix-codecs:Re-encode media to h265/aac mp4 so it Direct Plays'
