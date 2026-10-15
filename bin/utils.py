@@ -36,6 +36,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -850,6 +851,57 @@ def scan_root(raw: str, *, flag: str = "--path") -> Path:
         sys.exit(1)
 
     return path
+
+
+def _umask() -> int:
+    current = os.umask(0)
+    os.umask(current)
+    return current
+
+
+def atomic_write_text(path: Path, text: str, *, mode: int | None = None) -> None:
+    """Replace ``path``'s contents so a crash leaves the old file or the new one.
+
+    The text goes to a temporary file beside the target, which is then renamed
+    over it. The target is ``path`` resolved, so a symlinked dotfile (a
+    ``~/.zshrc`` that points into a dotfiles repo) has its target rewritten and
+    the link itself survives. An existing file keeps its permission bits; a new
+    one gets ``mode``, or the usual ``0o666`` less the umask where ``mkstemp``
+    alone would leave it ``0o600``.
+
+    UTF-8 with ``surrogateescape``: bytes that are not UTF-8, read the same way,
+    are written back exactly as they came in.
+
+    A hard-linked file is written in place instead. Renaming over one of its
+    names would split it from the others, which would keep the old contents.
+    """
+    target = path.resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    if target.exists() and target.stat().st_nlink > 1:
+        with target.open("w", encoding="utf-8", errors="surrogateescape") as handle:
+            handle.write(text)
+        if mode is not None:
+            target.chmod(mode)
+        return
+
+    descriptor, temp_name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.")
+    temp = Path(temp_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", errors="surrogateescape") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if mode is not None:
+            temp.chmod(mode)
+        elif target.exists():
+            shutil.copymode(target, temp)
+        else:
+            temp.chmod(0o666 & ~_umask())
+        temp.replace(target)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
 
 
 def remove_or_warn(path: Path, remove: Callable[[Path], None] = Path.unlink) -> bool:
