@@ -21,10 +21,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from media import LIBRARY_EXTENSIONS
 from utils import (
     CYAN,
     GREEN,
-    NC,
     YELLOW,
     add_bool_flag,
     build_parser,
@@ -32,15 +32,14 @@ from utils import (
     info,
     iter_files,
     log,
-    note,
+    note_settings,
+    paint,
     run_cli,
     scan_root,
-    warning,
 )
 
-__version__ = "3.0.0"
+__version__ = "3.1.0"
 
-VIDEO_EXTENSIONS = ("mp4", "mkv")
 SORT_METHODS = ("alpha", "fileSizeAsc", "fileSizeDesc")
 
 
@@ -51,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--path", default="", metavar="DIR", help="Directory to scan (required)")
     add_bool_flag(parser, "--recursive", help="Recurse into subdirectories")
-    add_bool_flag(parser, "--with-folder", dest="with_folder", help="Prefix with folder name")
+    add_bool_flag(parser, "--with-folder", help="Prefix with folder name")
     parser.add_argument(
         "--sort",
         default="alpha",
@@ -62,15 +61,12 @@ def main(argv: list[str] | None = None) -> int:
     info(f"Running command in {Path.cwd()}")
     args = parser.parse_args(argv)
 
-    note(f"Scanning: {args.path}")
-    note(f"Recursive: {str(args.recursive).lower()}")
-    note(f"Sort method: {args.sort}")
-    note(f"With folder: {str(args.with_folder).lower()}")
-    note("----------------------------------------------------")
-
-    if not args.path:
-        warning("❌ --path is required")
-        return 1
+    note_settings(
+        ("Scanning", args.path),
+        ("Recursive", args.recursive),
+        ("Sort method", args.sort),
+        ("With folder", args.with_folder),
+    )
 
     # Replaces the shell version's `find` error on a missing path with a
     # styled message; the exit code is unchanged.
@@ -79,7 +75,7 @@ def main(argv: list[str] | None = None) -> int:
     entries: list[tuple[int, Path]] = []
     for path in iter_files(
         root,
-        extensions=VIDEO_EXTENSIONS,
+        extensions=LIBRARY_EXTENSIONS,
         recursive=args.recursive,
         skip_hidden=True,
     ):
@@ -101,16 +97,17 @@ def main(argv: list[str] | None = None) -> int:
         locale.setlocale(locale.LC_COLLATE, "")
         entries.sort(key=lambda item: locale.strxfrm(str(item[1])))
 
+    # DELIBERATE DIVERGENCE: the shell version baked these escapes into every
+    # line unconditionally, so NO_COLOR or a pipe still got them raw. paint()
+    # honours both, like every other coloured line in the repo.
     for size, path in entries:
-        size_human = format_bytes(size)
+        display = f"{paint(path.name, GREEN)} {paint(f'[{format_bytes(size)}]', YELLOW)}"
         if args.with_folder:
             # `basename $(dirname ./x.mkv)` is ".", but pathlib collapses the
             # "." away and leaves parent.name empty - which would render as a
             # bare leading slash and read like an absolute path.
             folder = path.parent.name or path.parent.as_posix()
-            display = f"{CYAN}{folder}{NC}/{GREEN}{path.name}{NC} {YELLOW}[{size_human}]{NC}"
-        else:
-            display = f"{GREEN}{path.name}{NC} {YELLOW}[{size_human}]{NC}"
+            display = f"{paint(folder, CYAN)}/{display}"
         log(display)
 
     return 0
