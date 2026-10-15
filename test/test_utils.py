@@ -17,6 +17,7 @@ from utils import (
     RED,
     YELLOW,
     add_bool_flag,
+    atomic_write_text,
     build_parser,
     dry_run_complete,
     footer_rule,
@@ -228,6 +229,69 @@ def test_normalize_extensions_preserves_globs():
 def test_normalize_extensions_rejects_leading_dot():
     with pytest.raises(SystemExit):
         normalize_extensions(".jpg")
+
+
+# ---------------------------------------------------------------------------
+# atomic_write_text
+# ---------------------------------------------------------------------------
+
+
+def test_atomic_write_keeps_the_mode_and_leaves_no_temp_file(tmp_path):
+    target = tmp_path / "rc"
+    target.write_text("old\n")
+    target.chmod(0o640)
+
+    atomic_write_text(target, "new\n")
+
+    assert target.read_text() == "new\n"
+    assert target.stat().st_mode & 0o777 == 0o640
+    assert [path.name for path in tmp_path.iterdir()] == ["rc"]
+
+
+def test_atomic_write_gives_a_new_file_the_umask_not_0600(tmp_path):
+    previous = os.umask(0o022)
+    try:
+        atomic_write_text(tmp_path / "sub" / "new", "x\n")
+    finally:
+        os.umask(previous)
+    assert (tmp_path / "sub" / "new").stat().st_mode & 0o777 == 0o644
+
+
+def test_atomic_write_honours_an_explicit_mode(tmp_path):
+    atomic_write_text(tmp_path / "shim", "#!/bin/sh\n", mode=0o755)
+    assert (tmp_path / "shim").stat().st_mode & 0o777 == 0o755
+
+
+def test_atomic_write_rewrites_a_symlinks_target_not_the_link(tmp_path):
+    real = tmp_path / "dotfiles" / "zshrc"
+    real.parent.mkdir()
+    real.write_text("old\n")
+    link = tmp_path / ".zshrc"
+    link.symlink_to(real)
+
+    atomic_write_text(link, "new\n")
+
+    assert link.is_symlink()
+    assert real.read_text() == "new\n"
+
+
+def test_atomic_write_keeps_hard_links_together(tmp_path):
+    first = tmp_path / "a"
+    first.write_text("old\n")
+    second = tmp_path / "b"
+    os.link(first, second)
+
+    atomic_write_text(first, "new\n")
+
+    assert second.read_text() == "new\n"
+
+
+def test_atomic_write_round_trips_bytes_that_are_not_utf8(tmp_path):
+    target = tmp_path / "rc"
+    raw = b"caf\xe9\n"
+    text = raw.decode("utf-8", errors="surrogateescape")
+    atomic_write_text(target, text)
+    assert target.read_bytes() == raw
 
 
 # ---------------------------------------------------------------------------

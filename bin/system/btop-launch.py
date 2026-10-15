@@ -20,9 +20,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from utils import info, require_binary, run, warning
+from utils import atomic_write_text, info, require_binary, run, run_cli, warning
 
-__version__ = "1.0.1"
+__version__ = "1.1.0"
 
 CONF = Path.home() / ".config" / "btop" / "btop.conf"
 LIGHT_THEME = "gruvbox_light"
@@ -37,10 +37,15 @@ Description:
   Any extra arguments are passed straight through to btop.
 """
 
-# `[^\S\n]` rather than `\s`: \s matches newlines, so a config with a line
+# `[^\S\r\n]` rather than `\s`: \s matches newlines, so a config with a line
 # break between "color_theme" and "=" would have two lines collapsed into one.
 # perl -p works a line at a time and cannot do that.
-_COLOR_THEME_RE = re.compile(r"^color_theme[^\S\n]*=.*$", re.MULTILINE)
+#
+# DELIBERATE DIVERGENCE: the value stops at `\r` as well as `\n`. perl's `.`
+# (like Python's) matches `\r`, so the shell version turned the rewritten line
+# of a CRLF config into LF. A CR-only config has no `\n` at all, so to both it
+# was one long line, and the match replaced everything after the theme.
+_COLOR_THEME_RE = re.compile(r"^color_theme[^\S\r\n]*=[^\r\n]*", re.MULTILINE)
 
 
 def current_theme() -> str:
@@ -61,11 +66,12 @@ def apply_theme(theme: str) -> None:
         return
 
     try:
-        # newline="" so existing CRLF (or CR) line endings survive the
-        # round-trip; read_text/write_text would rewrite every line ending in
-        # the file, where `perl -i` only ever touched the matched line.
-        # surrogateescape so a config carrying non-UTF-8 bytes still round-trips
-        # instead of raising and leaving btop unlaunchable.
+        # newline="" so existing CRLF (or CR) line endings survive the read;
+        # read_text would turn every line ending in the file into \n, where
+        # `perl -i` only ever touched the matched line. surrogateescape so a
+        # config carrying non-UTF-8 bytes still round-trips instead of raising
+        # and leaving btop unlaunchable. atomic_write_text writes both back
+        # untouched.
         with CONF.open("r", encoding="utf-8", errors="surrogateescape", newline="") as handle:
             original = handle.read()
     except OSError as exc:
@@ -79,8 +85,7 @@ def apply_theme(theme: str) -> None:
 
     if updated != original:
         try:
-            with CONF.open("w", encoding="utf-8", errors="surrogateescape", newline="") as handle:
-                handle.write(updated)
+            atomic_write_text(CONF, updated)
         except OSError as exc:
             warning(f"Could not write {CONF}: {exc}; launching with existing theme")
             return
@@ -107,8 +112,7 @@ def main(argv: list[str] | None = None) -> int:
     # identical to running btop directly, exactly like `exec btop "$@"`.
     # argv[0] stays the bare name, which is what btop echoes in its own usage.
     os.execv(btop, ["btop", *args])  # noqa: S606 - absolute path, no shell
-    return 0  # unreachable; execv never returns
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    run_cli(main)
