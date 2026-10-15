@@ -31,8 +31,9 @@ Defaults:
   --strategy=episode
 
 Security:
-  Defaults to dry-run when invoked by path. The .zshrc wrapper sources it with
-  DRY_RUN=false so interactive use deletes; delete-duplicate-videos-dr previews.
+  Defaults to dry-run when invoked by path. The generated
+  delete-duplicate-videos wrapper runs it with DRY_RUN=false so interactive use
+  deletes; delete-duplicate-videos-dr previews.
 
 Options:
   --path=PATH      Required directory to scan
@@ -61,6 +62,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from media import LIBRARY_EXTENSIONS
 from utils import (
     add_bool_flag,
     build_parser,
@@ -70,20 +72,20 @@ from utils import (
     iter_files,
     log,
     note,
+    note_settings,
+    remove_or_warn,
     run_cli,
     scan_root,
     warning,
 )
 
-__version__ = "2.2.1"
+__version__ = "2.2.2"
 
 # Glue multiple logical fields into one key without a separator that could
 # plausibly appear in a directory name.
 KEY_RS = "\x1e"
 
 EPISODE_RE = re.compile(r"[Ss][0-9]{2}[Ee][0-9]{2,3}")
-
-VIDEO_EXTENSIONS = ("mkv", "mp4")
 
 STRATEGY_ALIASES = {
     "episode": "episode",
@@ -100,6 +102,17 @@ STRATEGY_ALIASES = {
     "digest": "hash",
     "all": "all",
     "combined": "all",
+}
+
+# The fields each strategy's group key is joined from, in order. Size comes
+# before the digest for `all`, so a file whose size cannot be read is skipped
+# before anything spends a full read hashing it.
+STRATEGY_FIELDS: dict[str, tuple[str, ...]] = {
+    "episode": ("dir", "episode"),
+    "filename": ("dir", "name"),
+    "size": ("dir", "size"),
+    "hash": ("digest",),
+    "all": ("dir", "name", "size", "digest"),
 }
 
 # 1 MiB chunks: large enough that syscall overhead is irrelevant, small enough
@@ -126,52 +139,44 @@ def sha256_hex(path: Path) -> str:
     return digest.hexdigest()
 
 
+def key_field(path: Path, field: str, *, verbose: bool) -> str | None:
+    """One field of a file's group key, or None when the file must be skipped."""
+    match field:
+        case "dir":
+            return str(path.parent)
+        case "name":
+            return path.name
+        case "episode":
+            # None when the name is not TV-shaped: ignored, as in the shell version.
+            found = EPISODE_RE.search(path.name)
+            return found.group(0) if found else None
+        case "size":
+            try:
+                return str(path.stat().st_size)
+            except OSError:
+                warning(f"SKIP: unreadable size: {path}")
+                return None
+        case "digest":
+            if verbose:
+                note(f"HASH: {path}")
+            try:
+                return sha256_hex(path)
+            except OSError:
+                warning(f"SKIP: could not hash: {path}")
+                return None
+        case _:
+            raise ValueError(f"unknown key field: {field}")
+
+
 def group_key(path: Path, strategy: str, *, verbose: bool) -> str | None:
     """The duplicate-group key for one file, or None to skip it."""
-    directory = str(path.parent)
-    name = path.name
-
-    if strategy == "episode":
-        match = EPISODE_RE.search(name)
-        if match is None:
-            return None  # not TV-shaped; ignored, as in the shell version
-        return f"{directory}{KEY_RS}{match.group(0)}"
-
-    if strategy == "filename":
-        return f"{directory}{KEY_RS}{name}"
-
-    if strategy == "size":
-        try:
-            return f"{directory}{KEY_RS}{path.stat().st_size}"
-        except OSError:
-            warning(f"SKIP: unreadable size: {path}")
+    fields: list[str] = []
+    for field in STRATEGY_FIELDS[strategy]:
+        value = key_field(path, field, verbose=verbose)
+        if value is None:
             return None
-
-    if strategy == "hash":
-        if verbose:
-            note(f"HASH: {path}")
-        try:
-            return sha256_hex(path)
-        except OSError:
-            warning(f"SKIP: could not hash: {path}")
-            return None
-
-    if strategy == "all":
-        try:
-            size = path.stat().st_size
-        except OSError:
-            warning(f"SKIP: unreadable size: {path}")
-            return None
-        if verbose:
-            note(f"HASH: {path}")
-        try:
-            digest = sha256_hex(path)
-        except OSError:
-            warning(f"SKIP: could not hash: {path}")
-            return None
-        return f"{directory}{KEY_RS}{name}{KEY_RS}{size}{KEY_RS}{digest}"
-
-    raise ValueError(f"Internal error: unknown strategy {strategy!r}")
+        fields.append(value)
+    return KEY_RS.join(fields)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -210,16 +215,16 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 1
 
-    note(f"Scanning: {args.path}")
-    note(f"Strategy: {strategy}")
-    note(f"Dry run: {str(args.dry_run).lower()}")
-    note(f"Verbose: {str(args.verbose).lower()}")
-    note("----------------------------------------------------")
+    note_settings(
+        ("Scanning", args.path),
+        ("Strategy", strategy),
+        ("Dry run", args.dry_run),
+        ("Verbose", args.verbose),
+    )
 
-    if not args.path:
-        warning("Missing required argument: --path")
-        return 1
-
+    # An empty --path reads "--path is required", where the shell version
+    # reported "Missing required argument: --path".
+    #
     # Absolute, with ../ collapsed, so group keys built from the parent
     # directory are stable regardless of how --path was spelled. Note this also
     # resolves symlinks mid-path, so a logged path can differ from the one the
@@ -240,7 +245,7 @@ def main(argv: list[str] | None = None) -> int:
     scanned = 0
     groups: dict[str, list[Path]] = {}
 
-    for path in iter_files(root, extensions=VIDEO_EXTENSIONS):
+    for path in iter_files(root, extensions=LIBRARY_EXTENSIONS):
         scanned += 1
         if args.verbose:
             info(f"SCANNING: {path}")
@@ -287,10 +292,7 @@ def main(argv: list[str] | None = None) -> int:
                 continue
 
             warning(f"❌ Deleting: {path} ({human})")
-            try:
-                path.unlink()
-            except OSError as exc:
-                warning(f"  ✗ Failed to delete {path}: {exc}")
+            if not remove_or_warn(path):
                 continue
             deleted += 1
             reclaimed += size
