@@ -20,25 +20,25 @@ from __future__ import annotations
 import os
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from media import LIBRARY_EXTENSIONS
 from utils import (
     add_bool_flag,
     build_parser,
     info,
     iter_files,
     log,
-    note,
+    note_settings,
     run_cli,
     scan_root,
     warning,
 )
 
 __version__ = "3.0.0"
-
-VIDEO_EXTENSIONS = ("mp4", "mkv")
 
 # Every flavour of curly quote, backtick and acute accent people end up with,
 # normalised to a plain straight apostrophe.
@@ -100,8 +100,8 @@ def title_case(text: str, pattern: re.Pattern[str]) -> str:
     def replace(match: re.Match[str]) -> str:
         if match.group("code"):
             return match.group("code").upper()
-        if "keep" in match.groupdict() and match.group("keep"):
-            return match.group("keep")
+        if keep := match.groupdict().get("keep"):
+            return keep
         return match.group("first").upper() + match.group("rest").lower()
 
     return pattern.sub(replace, text)
@@ -123,51 +123,59 @@ def normalize(text: str) -> str:
     return _CODE_REJOIN.sub(r"\1-\2", text)
 
 
-def clean_segment(text: str, pattern: re.Pattern[str], *, capitalize_preps: bool) -> str:
-    """Title-case one name segment end to end."""
-    result = title_case(text, pattern)
-    if not capitalize_preps:
-        result = apply_preposition_rules(result)
-    return result
+def _lower_contractions(text: str) -> str:
+    """Lowercase the one or two letters after an apostrophe: "It'S" -> "It's"."""
+    return _APOSTROPHE_SUFFIX.sub(lambda m: "'" + m.group(1).lower(), text)
 
 
-def clean_folder_name(name: str, pattern: re.Pattern[str], *, capitalize_preps: bool) -> str:
-    """The corrected name for a folder.
+@dataclass(frozen=True)
+class TitleCaser:
+    """The casing policy for one run: the words to keep, and the prepositions rule."""
 
-    Folders now get the same curly-quote normalisation as files. The shell
-    version appeared to do this too, but both of its folder-branch sed patterns
-    were the plain ASCII apostrophe - two no-ops - so a folder called
-    ``l'auberge`` with a typographic apostrophe was left alone.
-    """
-    result = clean_segment(normalize(name), pattern, capitalize_preps=capitalize_preps)
-    return _APOSTROPHE_SUFFIX.sub(lambda m: "'" + m.group(1).lower(), result)
+    pattern: re.Pattern[str]
+    capitalize_preps: bool
 
+    @classmethod
+    def build(cls, ignore_words: list[str], *, capitalize_preps: bool) -> TitleCaser:
+        return cls(build_title_pattern(ignore_words), capitalize_preps)
 
-def clean_file_name(name: str, pattern: re.Pattern[str], *, capitalize_preps: bool) -> str | None:
-    """The corrected name for a file, or None when it cannot be parsed.
+    def segment(self, text: str) -> str:
+        """Title-case one name segment end to end."""
+        result = title_case(text, self.pattern)
+        return result if self.capitalize_preps else apply_preposition_rules(result)
 
-    Anchored with ``fullmatch`` where the shell version used an unanchored
-    ``[[ =~ ]]`` search. The two agree on every ordinary name; the difference
-    is dot-leading ones, where the shell version matched from after the dot and
-    so renamed ``.hidden movie.mkv`` to ``Hidden Movie.mkv`` - silently
-    un-hiding the file. Those are reported as unparseable instead.
-    """
-    normalized = normalize(name)
+    def folder_name(self, name: str) -> str:
+        """The corrected name for a folder.
 
-    match = _DASHED_NAME.fullmatch(normalized)
-    if match:
-        prefix, title, ext = match.group(1), match.group(2), match.group(3)
-    else:
-        match = _PLAIN_NAME.fullmatch(normalized)
-        if not match:
-            return None
-        prefix, title, ext = "", match.group(1), match.group(2)
+        Folders now get the same curly-quote normalisation as files. The shell
+        version appeared to do this too, but both of its folder-branch sed
+        patterns were the plain ASCII apostrophe - two no-ops - so a folder
+        called ``l'auberge`` with a typographic apostrophe was left alone.
+        """
+        return _lower_contractions(self.segment(normalize(name)))
 
-    prefix = clean_segment(prefix, pattern, capitalize_preps=capitalize_preps)
-    title = clean_segment(title, pattern, capitalize_preps=capitalize_preps)
+    def file_name(self, name: str) -> str | None:
+        """The corrected name for a file, or None when it cannot be parsed.
 
-    result = f"{prefix}{title}{ext}"
-    return _APOSTROPHE_SUFFIX.sub(lambda m: "'" + m.group(1).lower(), result)
+        Anchored with ``fullmatch`` where the shell version used an unanchored
+        ``[[ =~ ]]`` search. The two agree on every ordinary name; the
+        difference is dot-leading ones, where the shell version matched from
+        after the dot and so renamed ``.hidden movie.mkv`` to ``Hidden
+        Movie.mkv`` - silently un-hiding the file. Those are reported as
+        unparseable instead.
+        """
+        normalized = normalize(name)
+
+        match = _DASHED_NAME.fullmatch(normalized)
+        if match:
+            prefix, title, ext = match.group(1), match.group(2), match.group(3)
+        else:
+            match = _PLAIN_NAME.fullmatch(normalized)
+            if not match:
+                return None
+            prefix, title, ext = "", match.group(1), match.group(2)
+
+        return _lower_contractions(f"{self.segment(prefix)}{self.segment(title)}{ext}")
 
 
 def safe_rename(source: Path, target: Path, *, kind: str) -> bool:
@@ -192,29 +200,28 @@ def safe_rename(source: Path, target: Path, *, kind: str) -> bool:
     return True
 
 
-def rename_folders(
-    root: Path, pattern: re.Pattern[str], *, recursive: bool, capitalize_preps: bool, dry_run: bool
-) -> None:
+def rename_folders(root: Path, caser: TitleCaser, *, recursive: bool, dry_run: bool) -> None:
     """Rename folders deepest-first so a parent rename cannot break child paths."""
     directories: list[Path] = []
-    for dirpath, _, _ in os.walk(root, topdown=False, followlinks=False):
+    for dirpath, dirnames, _ in os.walk(root, followlinks=False):
         directory = Path(dirpath)
         if directory == root:
             continue
-        if not recursive and directory.parent != root:
-            continue
         directories.append(directory)
+        # Not recursive: the root's own children are the only folders renamed,
+        # so the walk need not open anything below them.
+        if not recursive:
+            dirnames.clear()
 
-    # Sorting the collected list, not os.walk's dirnames: under topdown=False
-    # the recursion has already happened, so mutating dirnames does nothing.
-    # Deepest first, so renaming a parent cannot invalidate a child's path.
+    # The walk is top-down, so the list is re-sorted: deepest first, so
+    # renaming a parent cannot invalidate a child's path.
     directories.sort(key=lambda p: (-len(p.parts), p))
 
     for folder in directories:
         if folder.name.startswith("._"):
             continue
 
-        new_name = clean_folder_name(folder.name, pattern, capitalize_preps=capitalize_preps)
+        new_name = caser.folder_name(folder.name)
         if new_name == folder.name:
             warning(f"⚠️ Skipping folder (already correct format): {folder.name}")
             continue
@@ -228,16 +235,14 @@ def rename_folders(
             log(f"📁 Renaming folder: {folder.name} ➡️ {new_name}")
 
 
-def rename_files(
-    root: Path, pattern: re.Pattern[str], *, recursive: bool, capitalize_preps: bool, dry_run: bool
-) -> None:
+def rename_files(root: Path, caser: TitleCaser, *, recursive: bool, dry_run: bool) -> None:
     """Rename the .mp4/.mkv files themselves."""
     # case_sensitive: this script's find used -name, not -iname, so a file
     # called "Movie.MKV" was never renamed.
     for path in iter_files(
-        root, extensions=VIDEO_EXTENSIONS, recursive=recursive, case_sensitive=True
+        root, extensions=LIBRARY_EXTENSIONS, recursive=recursive, case_sensitive=True
     ):
-        new_name = clean_file_name(path.name, pattern, capitalize_preps=capitalize_preps)
+        new_name = caser.file_name(path.name)
         if new_name is None:
             warning(f"Could not parse filename: {path.name}")
             continue
@@ -262,13 +267,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--path", default="", metavar="DIR", help="Directory to scan (required)")
     add_bool_flag(parser, "--recursive", default=True, help="Recurse into subdirectories")
-    add_bool_flag(
-        parser, "--rename-folders", dest="rename_folders", default=True, help="Rename folders too"
-    )
+    add_bool_flag(parser, "--rename-folders", default=True, help="Rename folders too")
     add_bool_flag(
         parser,
         "--capitalize-preps",
-        dest="capitalize_preps",
         help="Capitalize articles and prepositions",
     )
     # Deliberately NOT env_bool: unlike the delete tools, the shell version
@@ -284,7 +286,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--ignore-words",
         default="",
-        dest="ignore_words",
         metavar="LIST",
         help="Comma-separated words to leave exactly as written",
     )
@@ -294,34 +295,23 @@ def main(argv: list[str] | None = None) -> int:
 
     ignore_words = [word.strip() for word in args.ignore_words.split(",") if word.strip()]
 
-    note(f"Scanning: {args.path}")
-    note(f"Recursive: {str(args.recursive).lower()}")
-    note(f"Rename Folders: {str(args.rename_folders).lower()}")
-    note(f"Capitalize Prepositions: {str(args.capitalize_preps).lower()}")
-    note(f"Dry Run: {str(args.dry_run).lower()}")
+    settings: list[tuple[str, object]] = [
+        ("Scanning", args.path),
+        ("Recursive", args.recursive),
+        ("Rename Folders", args.rename_folders),
+        ("Capitalize Prepositions", args.capitalize_preps),
+        ("Dry Run", args.dry_run),
+    ]
     if ignore_words:
-        note(f"Ignore Words: {','.join(ignore_words)}")
-    note("----------------------------------------------------")
+        settings.append(("Ignore Words", ",".join(ignore_words)))
+    note_settings(*settings)
 
     root = scan_root(args.path)
-    pattern = build_title_pattern(ignore_words)
+    caser = TitleCaser.build(ignore_words, capitalize_preps=args.capitalize_preps)
 
     if args.rename_folders:
-        rename_folders(
-            root,
-            pattern,
-            recursive=args.recursive,
-            capitalize_preps=args.capitalize_preps,
-            dry_run=args.dry_run,
-        )
-
-    rename_files(
-        root,
-        pattern,
-        recursive=args.recursive,
-        capitalize_preps=args.capitalize_preps,
-        dry_run=args.dry_run,
-    )
+        rename_folders(root, caser, recursive=args.recursive, dry_run=args.dry_run)
+    rename_files(root, caser, recursive=args.recursive, dry_run=args.dry_run)
     return 0
 
 
