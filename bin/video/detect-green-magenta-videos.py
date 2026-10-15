@@ -7,9 +7,9 @@ or mishandled by the decoder. The result is an image dominated by
 green and magenta hues with almost no other colors -- unwatchable.
 
 Usage:
-    python detect_green_magenta.py path/to/video.mp4
-    python detect_green_magenta.py /path/to/folder --verbose
-    python detect_green_magenta.py vids/ --samples 40 --threshold 0.7
+    detect-green-magenta-videos.py path/to/video.mp4
+    detect-green-magenta-videos.py /path/to/folder --verbose
+    detect-green-magenta-videos.py vids/ --samples=40 --threshold=0.7
 
 Requires: opencv-python, numpy
     pip install opencv-python numpy
@@ -21,11 +21,17 @@ PEP 668 "externally managed" and refuses plain pip installs, so the packages
 have to live somewhere isolated. Override the location with $DETECT_GM_PYTHON.
 """
 
-import argparse
 import os
 import sys
 from pathlib import Path
-from typing import NoReturn
+from typing import NamedTuple, NoReturn
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# Standard library only, so this imports the same under the venv interpreter.
+from utils import add_bool_flag, build_parser, iter_files, parse_count, run_cli
+
+__version__ = "2.0.0"
 
 VENV_PYTHON = Path(
     os.environ.get("DETECT_GM_PYTHON", Path.home() / ".venvs" / "green-magenta" / "bin" / "python")
@@ -79,20 +85,30 @@ if not _WANTS_HELP:
     except ImportError:
         _reexec_under_venv()
 
-VIDEO_EXTS = {
-    ".mp4",
-    ".mkv",
-    ".avi",
-    ".mov",
-    ".webm",
-    ".m4v",
-    ".flv",
-    ".wmv",
-    ".mpg",
-    ".mpeg",
-    ".ts",
-    ".m2ts",
-}
+VIDEO_EXTS = (
+    "mp4",
+    "mkv",
+    "avi",
+    "mov",
+    "webm",
+    "m4v",
+    "flv",
+    "wmv",
+    "mpg",
+    "mpeg",
+    "ts",
+    "m2ts",
+)
+
+
+class SkipVideo(Exception):
+    """A video that cannot be judged; the message says why."""
+
+
+class Verdict(NamedTuple):
+    ratio: float  # mean green/magenta fraction, to 3 places
+    saturation: float  # mean saturation, to 1 place
+    flagged: bool
 
 
 def analyze_frame(frame):
@@ -125,47 +141,45 @@ def analyze_frame(frame):
     return float(ratio), float(s.mean())
 
 
-def analyze_video(path, sample_count=20, threshold=0.65):
-    cap = cv2.VideoCapture(str(path))
-    if not cap.isOpened():
-        return {"path": str(path), "error": "could not open"}
+def sample_frames(cap, sample_count):
+    """Yield up to ``sample_count`` decoded frames from an open capture."""
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 0
-
-    if total > sample_count * 2:
-        # Sample evenly, skipping the first/last 5% (intros, credits, black frames)
-        start = int(total * 0.05)
-        end = int(total * 0.95)
-        positions = np.linspace(start, end, sample_count, dtype=int)
-    else:
-        positions = None  # short or unknown-length file -- just read sequentially
-
-    ratios, sats = [], []
-
-    if positions is None:
+    if total <= sample_count * 2:
+        # Short or unknown-length file -- just read sequentially.
         for _ in range(sample_count):
             ok, frame = cap.read()
             if not ok:
-                break
-            r, s = analyze_frame(frame)
-            if r is not None:
-                ratios.append(r)
-            sats.append(s)
-    else:
-        for pos in positions:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, int(pos))
-            ok, frame = cap.read()
-            if not ok:
-                continue
-            r, s = analyze_frame(frame)
-            if r is not None:
-                ratios.append(r)
-            sats.append(s)
+                return
+            yield frame
+        return
 
+    # Sample evenly, skipping the first/last 5% (intros, credits, black frames)
+    start = int(total * 0.05)
+    end = int(total * 0.95)
+    for pos in np.linspace(start, end, sample_count, dtype=int):
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(pos))
+        ok, frame = cap.read()
+        if ok:
+            yield frame
+
+
+def analyze_video(path, sample_count=20, threshold=0.65) -> Verdict:
+    """Judge one video, or raise ``SkipVideo`` when it cannot be judged."""
+    cap = cv2.VideoCapture(str(path))
+    if not cap.isOpened():
+        raise SkipVideo("could not open")
+
+    ratios, sats = [], []
+    for frame in sample_frames(cap, sample_count):
+        r, s = analyze_frame(frame)
+        if r is not None:
+            ratios.append(r)
+        sats.append(s)
     cap.release()
 
     if not ratios:
-        return {"path": str(path), "error": "no usable (color) frames decoded"}
+        raise SkipVideo("no usable (color) frames decoded")
 
     avg_ratio = float(np.mean(ratios))
     avg_sat = float(np.mean(sats))
@@ -175,60 +189,55 @@ def analyze_video(path, sample_count=20, threshold=0.65):
     # cinematography that happens to lean cool/warm).
     flagged = avg_ratio >= threshold and avg_sat > 35
 
-    return {
-        "path": str(path),
-        "frames_sampled": len(ratios),
-        "green_magenta_ratio": round(avg_ratio, 3),
-        "avg_saturation": round(avg_sat, 1),
-        "flagged": flagged,
-    }
+    return Verdict(round(avg_ratio, 3), round(avg_sat, 1), flagged)
 
 
 def iter_videos(paths):
     """Yield every video under the given files and directories.
 
-    Streams per directory rather than materialising the whole tree, and skips
-    macOS ``._*`` sidecars the way the rest of the repo does.
+    Directories go through the repo's ``iter_files``, where this script used
+    to walk them itself. DELIBERATE DIVERGENCE from that walk: a file named
+    just ``.mkv`` now matches, FIFOs and sockets with a video extension are
+    no longer yielded (opening a FIFO blocks forever), and a folder that
+    cannot be read is reported on stderr rather than silently passed over.
     """
-    for p in paths:
-        p = Path(p)
+    for p in map(Path, paths):
         if p.is_dir():
-            for dirpath, dirnames, filenames in os.walk(p, followlinks=False):
-                dirnames.sort()
-                for name in sorted(filenames):
-                    if name.startswith("._"):
-                        continue
-                    f = Path(dirpath) / name
-                    if f.suffix.lower() in VIDEO_EXTS and not f.is_symlink():
-                        yield f
+            yield from iter_files(p, extensions=VIDEO_EXTS)
         elif p.is_file():
             yield p
         else:
             print(f"[skip] {p}: not a file or directory", file=sys.stderr)
 
 
-def main():
-    ap = argparse.ArgumentParser(
-        description="Detect videos with the green/magenta chroma artifact."
+def main(argv=None):
+    # build_parser like every other script, so a usage error exits 1 with the
+    # full help, where plain argparse exited 2. `-v` is gone with it: the repo
+    # takes long flags only, and neither the menu nor the completions offered it.
+    parser = build_parser(
+        prog="detect-green-magenta-videos",
+        description="Detect videos with the green/magenta chroma artifact.",
     )
-    ap.add_argument(
+    parser.add_argument(
         "paths",
         nargs="+",
         help="Video files or directories to scan (directories are searched recursively)",
     )
-    ap.add_argument(
-        "--samples", type=int, default=20, help="Frames to sample per video (default: 20)"
+    # A string checked by parse_count: `type=int` let 0 through, which skipped
+    # every video, and a negative count, which crashed numpy on the first one.
+    parser.add_argument(
+        "--samples", default="20", metavar="N", help="Frames to sample per video (default: 20)"
     )
-    ap.add_argument(
+    parser.add_argument(
         "--threshold",
         type=float,
         default=0.65,
+        metavar="RATIO",
         help="Fraction of saturated pixels that must be green or magenta to flag (default: 0.65)",
     )
-    ap.add_argument(
-        "--verbose", "-v", action="store_true", help="Print every video, not just flagged ones"
-    )
-    args = ap.parse_args()
+    add_bool_flag(parser, "--verbose", help="Print every video, not just flagged ones")
+    args = parser.parse_args(argv)
+    samples = parse_count(args.samples, "--samples", minimum=1)
 
     # The bash launcher printed these before exec'ing, and the rest of the repo
     # opens the same way. After parse_args, so --help stays clean.
@@ -240,29 +249,30 @@ def main():
     any_seen = False
     for v in iter_videos(args.paths):
         any_seen = True
-        res = analyze_video(v, sample_count=args.samples, threshold=args.threshold)
-        if "error" in res:
-            print(f"[skip] {v}: {res['error']}", file=sys.stderr)
+        try:
+            verdict = analyze_video(v, sample_count=samples, threshold=args.threshold)
+        except SkipVideo as exc:
+            print(f"[skip] {v}: {exc}", file=sys.stderr)
             continue
-        tag = "BAD " if res["flagged"] else "ok  "
-        line = (
-            f"{tag} ratio={res['green_magenta_ratio']:.2f} sat={res['avg_saturation']:>5.1f}  {v}"
-        )
-        if res["flagged"] or args.verbose:
-            print(line)
-        if res["flagged"]:
+        if verdict.flagged or args.verbose:
+            tag = "BAD " if verdict.flagged else "ok  "
+            print(f"{tag} ratio={verdict.ratio:.2f} sat={verdict.saturation:>5.1f}  {v}")
+        if verdict.flagged:
             bad.append(str(v))
 
     if not any_seen:
         print("No video files found.", file=sys.stderr)
-        sys.exit(2)
+        return 2
 
     if bad:
         print(f"\n{len(bad)} video(s) flagged as green/magenta-tinted:", file=sys.stderr)
         for b in bad:
             print(f"  {b}", file=sys.stderr)
-        sys.exit(1)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    # run_cli, like every other script: Ctrl-C now exits 130 quietly where it
+    # used to dump a traceback.
+    run_cli(main)

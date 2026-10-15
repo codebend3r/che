@@ -107,7 +107,8 @@ works around the pin rather than counting it as a failure:
 - **Standard library only.** These run from a bare `python3` on every machine
   the repo is cloned to; a third-party import would mean a venv at call time.
   The sole exception is `detect-green-magenta-videos.py`, which needs OpenCV
-  and re-execs itself under `$DETECT_GM_PYTHON`.
+  and re-execs itself under `$DETECT_GM_PYTHON`. It still imports `utils`, which
+  loads under that venv too.
 - **Import utils** via the `sys.path.insert` pattern above so the script works
   regardless of CWD.
 - **CLI flag style**: long flags with `=` for values (`--path=/foo`,
