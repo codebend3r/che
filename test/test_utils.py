@@ -8,17 +8,30 @@ size parsing, boolean-flag parsing, and file walking.
 from __future__ import annotations
 
 import os
+import subprocess
+from pathlib import Path
 
 import pytest
 from utils import (
+    NC,
+    RED,
+    YELLOW,
     add_bool_flag,
     build_parser,
+    dry_run_complete,
+    footer_rule,
     format_bytes,
+    heading,
     iter_files,
     normalize_extensions,
+    note,
+    note_settings,
+    paint,
     parse_bool,
+    parse_count,
     parse_size,
-    skip_git_hooks,
+    remove_or_warn,
+    run_cli,
 )
 
 # ---------------------------------------------------------------------------
@@ -195,6 +208,14 @@ def test_abbreviations_are_rejected():
         make_parser().parse_args(["--dry"])
 
 
+def test_parse_known_args_rewrites_the_equals_form_too():
+    """parse_args goes through parse_known_args, so both entry points rewrite."""
+    args, rest = make_parser(default=True).parse_known_args(["--dry-run=false", "--other"])
+
+    assert args.dry_run is False
+    assert rest == ["--other"]
+
+
 # ---------------------------------------------------------------------------
 # normalize_extensions
 # ---------------------------------------------------------------------------
@@ -327,43 +348,191 @@ def test_iter_files_yields_only_regular_files(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# skip_git_hooks
+# paint
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
-def clean_git_env():
-    """Restore os.environ afterwards: skip_git_hooks writes keys it numbers itself."""
-    saved = os.environ.copy()
-    for key in [k for k in os.environ if k.startswith("GIT_CONFIG_")]:
-        del os.environ[key]
-    yield
-    os.environ.clear()
-    os.environ.update(saved)
+def force_color(monkeypatch):
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setenv("FORCE_COLOR", "1")
 
 
-def test_skip_git_hooks_points_hooks_path_at_devnull(clean_git_env):
-    skip_git_hooks()
-
-    assert os.environ["GIT_CONFIG_COUNT"] == "1"
-    assert os.environ["GIT_CONFIG_KEY_0"] == "core.hooksPath"
-    assert os.environ["GIT_CONFIG_VALUE_0"] == os.devnull
+def test_paint_is_bare_under_no_color(no_color):
+    assert paint("hello", RED) == "hello"
 
 
-def test_skip_git_hooks_appends_after_existing_entries(clean_git_env):
-    os.environ["GIT_CONFIG_COUNT"] = "1"
-    os.environ["GIT_CONFIG_KEY_0"] = "user.name"
-    os.environ["GIT_CONFIG_VALUE_0"] = "Someone"
-
-    skip_git_hooks()
-
-    assert os.environ["GIT_CONFIG_COUNT"] == "2"
-    assert os.environ["GIT_CONFIG_KEY_0"] == "user.name"
-    assert os.environ["GIT_CONFIG_KEY_1"] == "core.hooksPath"
+def test_paint_wraps_when_color_is_on(force_color):
+    assert paint("hello", RED) == f"{RED}hello{NC}"
 
 
-def test_skip_git_hooks_twice_adds_one_entry(clean_git_env):
-    skip_git_hooks()
-    skip_git_hooks()
+def test_log_helpers_paint_the_whole_line(force_color, capsys):
+    note("hello")
 
-    assert os.environ["GIT_CONFIG_COUNT"] == "1"
+    assert capsys.readouterr().out == f"{YELLOW}hello{NC}\n"
+
+
+# ---------------------------------------------------------------------------
+# heading / note_settings / footer_rule
+# ---------------------------------------------------------------------------
+
+HEADING_RULE = "═══════════════════════════════════════════"
+SETTINGS_RULE = "----------------------------------------------------"
+FOOTER_RULE = "─────────────────────────────────────────────"
+
+
+def test_heading(no_color, capsys):
+    heading("🧹  clean-stale-branches")
+
+    assert capsys.readouterr().out == f"{HEADING_RULE}\n🧹  clean-stale-branches\n{HEADING_RULE}\n"
+
+
+def test_heading_marks_a_dry_run(no_color, capsys):
+    heading("🧹  clean-stale-branches", dry_run=True)
+
+    assert capsys.readouterr().out == (
+        f"{HEADING_RULE}\n🧹  clean-stale-branches 🌵 (dry run)\n{HEADING_RULE}\n"
+    )
+
+
+def test_note_settings_lowercases_booleans_only(no_color, capsys):
+    note_settings(("Scanning", "media/tv"), ("Recursive", True), ("Dry run", False), ("Limit", 0))
+
+    assert capsys.readouterr().out == (
+        f"Scanning: media/tv\nRecursive: true\nDry run: false\nLimit: 0\n{SETTINGS_RULE}\n"
+    )
+
+
+def test_note_settings_without_the_rule(no_color, capsys):
+    note_settings(("Searching in", "media/tv"), ("Verbose", True), rule=False)
+
+    assert capsys.readouterr().out == "Searching in: media/tv\nVerbose: true\n"
+
+
+def test_footer_rule(no_color, capsys):
+    footer_rule()
+
+    assert capsys.readouterr().out == f"\n{FOOTER_RULE}\n"
+
+
+def test_dry_run_complete(no_color, capsys):
+    dry_run_complete("ejected")
+
+    assert capsys.readouterr().out == "💡 Dry run complete. Nothing was actually ejected.\n"
+
+
+# ---------------------------------------------------------------------------
+# remove_or_warn
+# ---------------------------------------------------------------------------
+
+
+def test_remove_or_warn_deletes(tmp_path):
+    target = tmp_path / "file"
+    target.touch()
+
+    assert remove_or_warn(target) is True
+    assert not target.exists()
+
+
+def test_remove_or_warn_reports_a_failure_and_carries_on(no_color, capsys, tmp_path):
+    full = tmp_path / "full"
+    (full / "child").mkdir(parents=True)
+
+    assert remove_or_warn(full, Path.rmdir) is False
+    assert full.is_dir()
+    assert capsys.readouterr().out.startswith(f"  ✗ Failed to delete {full}: ")
+
+
+# ---------------------------------------------------------------------------
+# parse_count
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "minimum", "expected"),
+    [
+        ("0", 0, 0),
+        ("42", 0, 42),
+        ("1", 1, 1),
+        # Decimal, not octal: the leading zero does not change the value.
+        ("01", 1, 1),
+    ],
+)
+def test_parse_count_accepts(no_color, capsys, raw, minimum, expected):
+    assert parse_count(raw, "--limit", minimum=minimum) == expected
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "",
+        "-1",
+        # int() accepts these three; the shell's ^[0-9]+$ test did not.
+        "+5",
+        " 5",
+        "5_0",
+        "\u0661",  # Arabic-Indic one: str.isdigit() accepts it
+        "1.5",
+    ],
+)
+def test_parse_count_rejects(no_color, capsys, raw):
+    with pytest.raises(SystemExit) as exited:
+        parse_count(raw, "--limit")
+    assert exited.value.code == 1
+    assert capsys.readouterr().out == f"❌ --limit must be a non-negative integer (got: {raw})\n"
+
+
+def test_parse_count_enforces_the_minimum(no_color, capsys):
+    with pytest.raises(SystemExit) as exited:
+        parse_count("0", "--interval", minimum=1)
+    assert exited.value.code == 1
+    assert capsys.readouterr().out == "❌ --interval must be a positive integer (got: 0)\n"
+
+
+# ---------------------------------------------------------------------------
+# run_cli
+# ---------------------------------------------------------------------------
+
+
+def exit_code(entry) -> int:
+    with pytest.raises(SystemExit) as excinfo:
+        run_cli(entry)
+    return excinfo.value.code
+
+
+def raising(exc: BaseException):
+    def entry() -> int:
+        raise exc
+
+    return entry
+
+
+def test_run_cli_exits_with_mains_return_code():
+    assert exit_code(lambda: 0) == 0
+    assert exit_code(lambda: 3) == 3
+
+
+@pytest.mark.parametrize(
+    ("exc", "code"),
+    [
+        (subprocess.CalledProcessError(2, ["git", "push"]), 2),
+        # Killed by SIGKILL: shells report 128+9, where sys.exit(-9) gives 247.
+        (subprocess.CalledProcessError(-9, ["ffmpeg"]), 137),
+        (FileNotFoundError(2, "No such file or directory", "ffprobe"), 127),
+        (PermissionError(13, "Permission denied", "/Volumes/Meleys"), 1),
+        (KeyboardInterrupt(), 130),
+    ],
+)
+def test_run_cli_exit_codes(no_color, exc, code):
+    assert exit_code(raising(exc)) == code
+
+
+def test_run_cli_surfaces_a_failed_commands_own_stderr(no_color, capsys):
+    exc = subprocess.CalledProcessError(1, ["git", "push"], stderr="fatal: no upstream\n")
+
+    assert exit_code(raising(exc)) == 1
+
+    captured = capsys.readouterr()
+    assert captured.err == "fatal: no upstream\n"
+    assert captured.out == "❌ Command failed: git push\n"

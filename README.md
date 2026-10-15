@@ -360,17 +360,18 @@ update-from-origin      # alias of sync-all-branches
 ```
 
 Only branches change. The sync deletes local branches whose upstream is gone,
-`pull --rebase`s every branch with an upstream, and checks out the remote
-branches you authored that aren't local yet.
+`pull --rebase`s every branch with an upstream, and creates local tracking
+branches for the remote branches you authored that aren't local yet, without
+switching to them. It ends with the main clone on `main`.
 
 It **never pushes**, **never touches a worktree** and **never runs the repo's
 git hooks**. A branch checked out in a linked worktree is rebased in place
 there when that worktree is clean; a stale one is reported and kept, since git
-won't delete a branch a worktree has checked out. The
-branch scripts (`clean-stale-branches`, `update-local-branches`,
-`checkout-my-branches`, `sync-all-branches`) point `core.hooksPath` at
-`/dev/null` for every git they run, so a lefthook or husky pre-commit,
-pre-push or post-checkout never fires on a checkout or a rebase.
+won't delete a branch a worktree has checked out. The branch scripts
+(`clean-stale-branches`, `update-local-branches`, `checkout-my-branches`,
+`prune-worktrees`, `sync-all-branches`) point `core.hooksPath` at `/dev/null`
+for every git they run, so a lefthook or husky pre-commit, pre-push or
+post-checkout never fires on a checkout or a rebase.
 
 ## External tools
 

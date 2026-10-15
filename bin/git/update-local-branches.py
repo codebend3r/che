@@ -14,57 +14,57 @@ Options:
 
 from __future__ import annotations
 
-import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from utils import (
-    add_bool_flag,
-    build_parser,
-    info,
-    log,
-    note,
-    require_binary,
-    run,
-    run_cli,
-    run_lines,
-    run_output,
+from gitutils import (
+    current_branch,
+    fetch_remotes,
+    has_tracked_changes,
+    local_branches,
     skip_git_hooks,
-    success,
-    warning,
     worktree_branch_map,
     worktree_is_clean,
 )
+from utils import (
+    add_bool_flag,
+    build_parser,
+    heading,
+    info,
+    log,
+    parse_count,
+    require_binary,
+    run,
+    run_cli,
+    success,
+    warning,
+)
 
-__version__ = "3.1.0"
+__version__ = "3.2.0"
 
 
 def branches_with_upstream() -> list[str]:
-    """Local branches that have an upstream, most recently committed first.
+    """Local branches that have an upstream, most recently committed first."""
+    return [
+        branch for branch, upstream in local_branches("upstream", sort="-committerdate") if upstream
+    ]
 
-    The separator is \\x01, not the shell version's ``|``. A branch name may
-    legally contain a pipe (``git check-ref-format`` allows it), and splitting
-    on ``|`` then treating the whole remainder as the upstream reports such a
-    branch as *having* an upstream when it does not - after which
-    ``git pull --rebase`` fails on it and the run exits non-zero. Control
-    characters are illegal in ref names, so \\x01 cannot collide.
+
+def rebase(git: list[str]) -> bool:
+    """Rebase onto the upstream with ``git`` (plain, or ``-C <worktree>``); abort on failure.
+
+    DELIBERATE DIVERGENCE: the shell version ran ``pull --rebase`` per branch,
+    a fetch for every branch on top of the one the run opened with. The remotes
+    are fetched once up front, so a bare ``rebase`` (onto ``@{upstream}``, with
+    the same fork-point handling ``pull --rebase`` uses) is the whole job.
     """
-    found = []
-    for line in run_lines(
-        [
-            "git",
-            "for-each-ref",
-            "--sort=-committerdate",
-            "--format=%(refname:short)%01%(upstream)",
-            "refs/heads/",
-        ]
-    ):
-        branch, _, upstream = line.partition("\x01")
-        if branch and upstream:
-            found.append(branch)
-    return found
+    if run([*git, "rebase", "--quiet"], check=False).returncode == 0:
+        return True
+    warning("  ❌ rebase failed — aborting and moving on")
+    run([*git, "rebase", "--abort"], check=False, capture=True)
+    return False
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -72,8 +72,6 @@ def main(argv: list[str] | None = None) -> int:
         prog="update-local-branches",
         description="⬇️  Rebase every local branch that has an upstream onto origin.",
     )
-    # Kept as a string, not `type=int`: argparse's own int conversion would
-    # own the failure and exit before the shell version's message could print.
     parser.add_argument(
         "--limit",
         default="0",
@@ -87,32 +85,28 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if not re.fullmatch(r"[0-9]+", args.limit):
-        warning(f"❌ --limit must be a non-negative integer (got: {args.limit})")
-        return 1
-    limit = int(args.limit)
+    limit = parse_count(args.limit, "--limit")
 
     require_binary("git")
     skip_git_hooks()
 
-    header_suffix = " 🌵 (dry run)" if args.dry_run else ""
-    note("═══════════════════════════════════════════")
-    note(f"⬇️   update-local-branches{header_suffix}")
-    note("═══════════════════════════════════════════")
+    heading("⬇️   update-local-branches", dry_run=args.dry_run)
 
-    original_branch = run_output(
-        ["git", "symbolic-ref", "--quiet", "--short", "HEAD"], check=False
-    ).strip()
+    original_branch = current_branch()
     if not original_branch:
         warning("❌ Detached HEAD — check out a branch first.")
         return 1
 
-    if not args.dry_run and run_output(["git", "status", "--porcelain"]):
+    # Tracked changes only: an untracked file survives checkout and rebase, and
+    # a linked worktree nested in this one is untracked - counting it made
+    # sync-all-branches abort right after parking had allowed the same tree.
+    if not args.dry_run and has_tracked_changes():
         warning("❌ Working tree is dirty. Commit or stash before running. 🧺")
         return 1
 
-    info("📡 Fetching remotes...")
-    run(["git", "fetch", "--all", "--quiet"])
+    # Prunes too, where this script's own fetch did not: it shares the one
+    # fetch sync-all-branches runs.
+    fetch_remotes()
 
     branches = branches_with_upstream()
     if limit > 0:
@@ -132,19 +126,18 @@ def main(argv: list[str] | None = None) -> int:
     skipped: list[str] = []
     failed: list[str] = []
 
-    # One `git worktree list` for the whole run, not one per branch as the
-    # shell's per-branch `worktree_for_branch` did.
-    pinned_by_branch = worktree_branch_map()
-    here = Path.cwd().resolve()
+    # Branches checked out in ANOTHER worktree: every pinned one but the branch
+    # this worktree has checked out. One `git worktree list` for the whole run,
+    # not one per branch as the shell's per-branch `worktree_for_branch` did.
+    elsewhere = worktree_branch_map()
+    elsewhere.pop(original_branch, None)
 
     for branch in branches:
         # A branch checked out in another worktree cannot be checked out here —
         # git refuses with "already used by worktree". That's a mechanical
         # limit, not a conflict, so update it in place rather than counting it
         # as a failure.
-        pinned = pinned_by_branch.get(branch, "")
-
-        if pinned and Path(pinned).resolve() != here:
+        if pinned := elsewhere.get(branch):
             # Uncommitted work in a worktree is the user's, left exactly as it
             # is. Skipping it is not a failure, or one worktree in progress
             # would stop every run of sync-all-branches at this step.
@@ -154,31 +147,22 @@ def main(argv: list[str] | None = None) -> int:
                 continue
 
             log(f"⬇️  Rebasing {branch} in its worktree ({pinned})")
-            rebase = run(["git", "-C", pinned, "pull", "--rebase", "--quiet"], check=False)
-            if rebase.returncode == 0:
-                success(f"  ✅ {branch} up to date (in {pinned})")
-                succeeded.append(branch)
-            else:
-                warning("  ❌ rebase failed — aborting and moving on")
-                run(["git", "-C", pinned, "rebase", "--abort"], check=False, capture=True)
+            git, where = ["git", "-C", pinned], f" (in {pinned})"
+        else:
+            info(f"📂 Switching to 🌿 {branch}")
+            checkout = run(["git", "checkout", "--quiet", branch], check=False, capture=True)
+            if checkout.returncode != 0:
+                warning("  ✗ checkout failed, skipping")
                 failed.append(branch)
-            continue
+                continue
 
-        info(f"📂 Switching to 🌿 {branch}")
-        checkout = run(["git", "checkout", "--quiet", branch], check=False, capture=True)
-        if checkout.returncode != 0:
-            warning("  ✗ checkout failed, skipping")
-            failed.append(branch)
-            continue
+            log(f"⬇️  Rebasing {branch} onto upstream")
+            git, where = ["git"], ""
 
-        log(f"⬇️  Rebasing {branch} onto upstream")
-        pull = run(["git", "pull", "--rebase", "--quiet"], check=False)
-        if pull.returncode == 0:
-            success(f"  ✅ {branch} up to date")
+        if rebase(git):
+            success(f"  ✅ {branch} up to date{where}")
             succeeded.append(branch)
         else:
-            warning("  ❌ rebase failed — aborting and moving on")
-            run(["git", "rebase", "--abort"], check=False, capture=True)
             failed.append(branch)
 
     info(f"🔁 Returning to 🌿 {original_branch}")

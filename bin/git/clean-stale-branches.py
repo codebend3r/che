@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """🧹 Delete local branches whose upstream is gone (the remote branch was deleted).
 
-Protected branches and the current branch are never deleted.
+Protected branches are never deleted, and neither is a branch checked out in a
+worktree - the current one included. Those are reported instead.
 
 Usage:
   clean-stale-branches.py [--dry-run] [--protect=BRANCH1,BRANCH2,...]
@@ -23,63 +24,41 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from gitutils import fetch_remotes, local_branches, skip_git_hooks, worktree_branch_map
 from utils import (
     add_bool_flag,
     build_parser,
+    dry_run_complete,
     env_bool,
+    heading,
     info,
-    log,
-    note,
     require_binary,
     run,
     run_cli,
-    run_lines,
-    skip_git_hooks,
     success,
     warning,
-    worktree_branch_map,
 )
 
-__version__ = "3.1.0"
+__version__ = "3.2.0"
 
 DEFAULT_PROTECTED = ("main", "master", "dev", "develop", "staging")
 
 
-def current_branch() -> str:
-    """The checked-out branch, or "" when HEAD is detached."""
-    completed = run(
-        ["git", "symbolic-ref", "--quiet", "--short", "HEAD"],
-        check=False,
-        capture=True,
-    )
-    return (completed.stdout or "").strip()
-
-
-def stale_branches(protected: set[str], skip: str) -> list[str]:
+def stale_branches(protected: set[str]) -> list[str]:
     """Local branches whose upstream is marked ``[gone]``.
 
     ``[gone]`` means the remote branch was deleted, which is what a merged and
     tidied-up PR leaves behind. It does *not* mean merged - a closed-unmerged
     PR looks identical here, same as in the shell version.
+
+    The current branch gets no special case: its worktree pins it like any
+    other checked-out branch, so ``main`` reports it alongside those.
     """
-    # Separator is \x01, not the shell version's '|': a branch may legally be
-    # named `a|b[gone]`, which made the shell version split the record wrong
-    # and delete branch `a`. Control characters are illegal in ref names.
-    found = []
-    for line in run_lines(
-        ["git", "for-each-ref", "--format=%(refname:short)%01%(upstream:track)", "refs/heads/"]
-    ):
-        branch, _, track = line.partition("\x01")
-        if not branch:
-            continue
-        if branch in protected:
-            continue
-        if branch == skip:
-            note(f"⏭️  Skipping current branch: {branch}")
-            continue
-        if "[gone]" in track:
-            found.append(branch)
-    return found
+    return [
+        branch
+        for branch, track in local_branches("upstream:track")
+        if branch not in protected and "[gone]" in track
+    ]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -107,18 +86,12 @@ def main(argv: list[str] | None = None) -> int:
     protected = set(DEFAULT_PROTECTED)
     protected.update(name for name in args.protect.split(",") if name)
 
-    header_suffix = " 🌵 (dry run)" if args.dry_run else ""
-    note("═══════════════════════════════════════════")
-    note(f"🧹  clean-stale-branches{header_suffix}")
-    note("═══════════════════════════════════════════")
+    heading("🧹  clean-stale-branches", dry_run=args.dry_run)
 
-    info("📡 Fetching + pruning remotes...")
-    # Not wrapped: the shell version ran this bare under `set -e`, so a fetch
-    # failure exited with git's own status (128), not a flattened 1.
-    run(["git", "fetch", "--all", "--prune", "--quiet"])
+    fetch_remotes()
 
     info("🔍 Scanning local branches for gone upstreams...")
-    stale = stale_branches(protected, current_branch())
+    stale = stale_branches(protected)
 
     if not stale:
         success("✨ No stale branches. All clean! 🎉")
@@ -138,7 +111,7 @@ def main(argv: list[str] | None = None) -> int:
         warning(f"⏭️  {len(pinned)} stale branch(es) are checked out in a worktree:")
         for branch, path in pinned:
             warning(f"  • 🌿 {branch} (in {path})")
-        info("💡 Remove those worktrees yourself, and the next run deletes their branches.")
+        info("💡 Switch off or remove those worktrees, and the next run deletes their branches.")
 
     if not deletable:
         success("✨ Nothing left to delete. 🎉")
@@ -148,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
         warning(f"🌵 {len(deletable)} stale branch(es) would be deleted:")
         for branch in deletable:
             warning(f"  • 🪦 {branch}")
-        log("💡 Dry run complete. Nothing was actually deleted.")
+        dry_run_complete("deleted")
         return 0
 
     for branch in deletable:
