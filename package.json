@@ -40,8 +40,7 @@
     "format": "uv run --no-project --with-requirements requirements-dev.txt -- ruff format --check bin test",
     "executable": "find bin -type f -name '*.py' ! -perm -u+x -print0 | xargs -0 awk 'FNR==1 && /^#!/{print \"Has a shebang but is not executable: \" FILENAME; ec=1} END{exit ec+0}'",
     "shebang": "find bin -type f -name '*.py' -perm -u+x -print0 | xargs -0 awk 'FNR==1 && !/^#!/{print \"Executable but has no shebang: \" FILENAME; ec=1} END{exit ec+0}'",
-    "generate": "python3 bin/install.py --generate",
-    "generated": "python3 bin/install.py --check",
+    "generate": "python3 bin/shellgen.py",
     "version": "bun run generate && git add shell .zshrc README.md",
     "prepublishOnly": "bun run ci"
   },

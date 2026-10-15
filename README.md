@@ -79,8 +79,8 @@ git clone https://github.com/codebend3r/che.git ~/Developer/git/che
 ~/Developer/git/che/install.sh
 ```
 
-Or in one line, which clones for you (into `~/Developer/git/shell-functions`,
-or wherever `CHE_HOME` points):
+Or in one line, which clones for you (into `~/Developer/git/che`, or wherever
+`CHE_HOME` points):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/codebend3r/che/main/install.sh | bash
@@ -103,7 +103,9 @@ which opens a first-run wizard: it lists the shells it found and the rc files
 it would touch, asks whether to add a `che` on `PATH` and whether to keep the
 completion chimes, offers to remove hand-written wrappers left over from before
 the installer existed, and reports any missing external tool (offering to
-`brew install` them when Homebrew is present).
+`brew install` them when Homebrew is present). A question already answered on
+the command line (`--no-sounds`, `--no-path-shim`, `--replace-legacy`,
+`--install-deps`) is not asked again.
 
 <div align="center">
 <img src="first-run.png" alt="The first run screen: che is not installed in this shell yet, offering to install, open the menu, or quit" width="700">
@@ -118,7 +120,7 @@ Skip the wizard:
 ./install.sh --yes --shells=zsh,fish  # or the ones you name
 ./install.sh --dry-run                # report what would change, write nothing
 ./install.sh --yes --replace-legacy   # also remove pre-che hand-written wrappers
-./install.sh --print                  # print the rc block, install nothing
+./install.sh --print                  # print the exact rc block, install nothing
 ```
 
 Every rc file is copied to `~/.config/che/backups/` before it is edited.
@@ -139,9 +141,9 @@ dotfiles:
 ```zsh
 # >>> che shell functions >>>
 # Managed by `che install` (che 1.0.0). Edits here are overwritten.
-export CHE_HOME=/Users/you/Developer/git/shell-functions
+export CHE_HOME=/Users/you/Developer/git/che
 export CHE_PYTHON=/opt/homebrew/bin/python3
-[ -r /Users/you/Developer/git/shell-functions/shell/che.zsh ] && . /Users/you/Developer/git/shell-functions/shell/che.zsh
+[ -r /Users/you/Developer/git/che/shell/che.zsh ] && . /Users/you/Developer/git/che/shell/che.zsh
 case ":$PATH:" in *":/Users/you/.local/bin:"*) ;; *) PATH="/Users/you/.local/bin:$PATH" ;; esac
 # <<< che shell functions <<<
 ```
@@ -164,7 +166,7 @@ python3 exists. `brew install python@3.13` if none does.
 
 ```sh
 che uninstall           # remove the block, the shim and the completions
-che uninstall --purge   # also delete ~/.config/che
+che uninstall --purge   # also delete ~/.config/che and the menu's input history
 ```
 
 The repo itself is left alone; delete the directory to finish.
@@ -220,7 +222,7 @@ have used, and `che help <command>` prints that script's own `--help`.
 | `clean-stale-branches` | Delete local branches whose upstream is gone | `clean-stale-branches-dr` |
 | `prune-worktrees` | Remove every linked worktree, then prune stale admin records | `prune-worktrees-dr` |
 | `sync-all-branches` | Delete merged branches, rebase the rest, check out new ones; branches only | `sync-all-branches-dr` |
-| `update-from-origin` | Alias of sync-all-branches |  |
+| `update-from-origin` | Alias of sync-all-branches | `--dry-run` |
 | `update-local-branches` | Rebase every local branch that has an upstream onto origin | `--dry-run` |
 | **Video** | *Codecs, renaming, dedupe and metadata* | |
 | `show-codecs` | Report media files outside the Direct Play codec/container set |  |
@@ -316,9 +318,16 @@ where you copy one machine's rc file to another.
 ```
 bin/
   art.py              the wordmark and the face beside it, for every screen
-  che.py              the dispatcher and the interactive menu
+  che.py              the dispatcher, and the loop that runs what the menu picks
   commands.py         the command manifest: the source of truth for everything
-  install.py          installer, first-run wizard, doctor, self-update
+  doctor.py           `che doctor`: every check on the install
+  gitutils.py         shared git helpers: worktrees, main branch, hook skipping
+  install.py          installer, first-run wizard, self-update, uninstall
+  machine.py          shells, rc file paths, python, config: facts about the machine
+  media.py            shared ffprobe helpers for the video scripts
+  menu.py             the menu's list, keys and drawing
+  nas.py              the NAS drive table and SMB mounting, for the drive scripts
+  rcfile.py           edits to rc files: the che block and old hand-written wrappers
   shellgen.py         renders the wrappers, completions and README tables
   tui.py              terminal primitives: raw input, frame buffer, prompts
   utils.py            shared library: logging, arg parsing, subprocess, files

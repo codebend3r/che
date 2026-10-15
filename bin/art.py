@@ -56,28 +56,20 @@ INDENT = "  "
 GAP = 1
 
 
-def logo_lines() -> list[str]:
-    return LOGO.strip("\n").splitlines()
+LOGO_LINES: tuple[str, ...] = tuple(LOGO.strip("\n").splitlines())
+FACE_LINES: tuple[str, ...] = tuple(FACE.strip("\n").splitlines())
+
+HEIGHT = len(FACE_LINES)
+WIDTH = len(INDENT) + max(len(line) for line in FACE_LINES)
 
 
-def face_lines() -> list[str]:
-    return FACE.strip("\n").splitlines()
+def _paint(lines: Sequence[str], colors: tui.Palette, indent: str = "") -> list[str]:
+    return [f"{colors.bright_magenta}{indent}{line}{colors.reset}" for line in lines]
 
 
-HEIGHT = len(face_lines())
-WIDTH = len(INDENT) + max(len(line) for line in face_lines())
-
-
-def wordmark(colors: tui.Palette | None = None) -> list[str]:
+def wordmark(colors: tui.Palette) -> list[str]:
     """The block letters, coloured the way every screen prints them."""
-    colors = colors or tui.palette()
-    return [f"{colors.bright_magenta}{line}{colors.reset}" for line in logo_lines()]
-
-
-def face(colors: tui.Palette | None = None) -> list[str]:
-    """The face, indented to line up with the wordmark and in the same colour."""
-    colors = colors or tui.palette()
-    return [f"{colors.bright_magenta}{INDENT}{line}{colors.reset}" for line in face_lines()]
+    return _paint(LOGO_LINES, colors)
 
 
 def compose(left: Sequence[str], right: Sequence[str], *, gap: int = GAP) -> list[str]:
@@ -105,17 +97,27 @@ def fits(right: Sequence[str], columns: int) -> bool:
     return WIDTH + GAP + right_width <= columns
 
 
-def banner(
-    right: Sequence[str], *, columns: int | None = None, colors: tui.Palette | None = None
-) -> list[str]:
+def banner(right: Sequence[str], *, colors: tui.Palette, columns: int | None = None) -> list[str]:
     """The face with ``right`` beside it, or ``right`` alone when it would not fit.
 
     ``right`` is normally the wordmark plus whatever a screen wants under it (a
     subtitle, the command count). It comes back untouched, indent and all, on a
     terminal too narrow for both, so every caller keeps working at 40 columns.
+    The face is indented to line up with the wordmark and painted in its colour.
     """
     if columns is None:
         columns = tui.size()[0]
     if not fits(right, columns):
         return list(right)
-    return compose(face(colors), right)
+    return compose(_paint(FACE_LINES, colors, INDENT), right)
+
+
+def print_logo(subtitle: str = "") -> None:
+    """The face beside the wordmark, with ``subtitle`` under the letters."""
+    colors = tui.palette()
+    right = wordmark(colors)
+    if subtitle:
+        right.append(f"  {colors.grey}{subtitle}{colors.reset}")
+    for line in banner(right, colors=colors):
+        print(line)
+    print()

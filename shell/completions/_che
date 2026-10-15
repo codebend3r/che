@@ -6,8 +6,8 @@
 
 _che_flags_for() {
   case "$1" in
-    all-actions) print -r -- '--owner= --author= --pr-limit= --repo-limit --no-main --interval= --watch --help' ;;
-    all-actions-watch) print -r -- '--owner= --author= --pr-limit= --repo-limit --no-main --interval= --help' ;;
+    all-actions) print -r -- '--owner= --author= --pr-limit= --repo-limit= --no-main --interval= --watch --help' ;;
+    all-actions-watch) print -r -- '--owner= --author= --pr-limit= --repo-limit= --no-main --interval= --help' ;;
     checkout-my-branches) print -r -- '--author= --limit= --help' ;;
     clean-stale-branches) print -r -- '--dry-run --protect= --help' ;;
     clean-stale-branches-dr) print -r -- '--dry-run --protect= --help' ;;
@@ -22,7 +22,7 @@ _che_flags_for() {
     fix-codecs-dr) print -r -- '--path= --delete-original --dry-run --help' ;;
     find-video-mkv-issues) print -r -- '--path= --recursive --help' ;;
     validate-video-files) print -r -- '--path= --verbose --help' ;;
-    scan-videos-audio-language) print -r -- '- - p a t h --help' ;;
+    scan-videos-audio-language) print -r -- '--path= --help' ;;
     remove-metadata) print -r -- '--path= --exts= --help' ;;
     rename-video-file) print -r -- '--path= --recursive --rename-folders --capitalize-preps --dry-run --ignore-words= --help' ;;
     delete-duplicate-videos) print -r -- '--path= --strategy= --dry-run --verbose --help' ;;
@@ -40,22 +40,22 @@ _che_flags_for() {
     files-under-size) print -r -- '--path= --size= --dry-run --help' ;;
     files-under-size-dr) print -r -- '--path= --size= --dry-run --help' ;;
     find-largest-files) print -r -- '--path= --length= --full-path --help' ;;
-    make-alpha-dir) print -r -- '- - p a t h --help' ;;
+    make-alpha-dir) print -r -- '--path= --help' ;;
     compress-folders) print -r -- '--path= --dry-run --verbose --help' ;;
     list-permission) print -r -- --help ;;
     mount-all-drives) print -r -- '--only= --use-ip --quiet --help' ;;
     eject-all-drives) print -r -- '--dry-run --only= --no-force --no-clear-favorites --quiet --help' ;;
     eject-all-drives-dr) print -r -- '--dry-run --only= --no-force --no-clear-favorites --quiet --help' ;;
     ping-nas) print -r -- '--interval= --ping-timeout= --only= --no-remount --use-ip --once --quiet --help' ;;
-    update-brew) print -r -- '--dry-run --no-cask --no-cleanup --help' ;;
-    update-brew-dr) print -r -- '--dry-run --no-cask --no-cleanup --help' ;;
+    update-brew) print -r -- '--dry-run --no-cask --no-cleanup --no-autoremove --greedy --doctor --help' ;;
+    update-brew-dr) print -r -- '--dry-run --no-cask --no-cleanup --no-autoremove --greedy --doctor --help' ;;
     btop) print -r -- --help ;;
-    install) print -r -- '--shells= --all-shells --yes --dry-run --no-completions --no-path-shim --replace-legacy --print --help' ;;
-    update) print -r -- '--check --yes --help' ;;
+    install) print -r -- '--shells= --all-shells --yes --dry-run --no-path-shim --no-sounds --replace-legacy --install-deps --print --help' ;;
+    update) print -r -- '--check --dry-run --help' ;;
     doctor) print -r -- '--json --verbose --help' ;;
-    uninstall) print -r -- '--yes --dry-run --purge --help' ;;
-    list) print -r -- '--category= --json --dry --help' ;;
-    completions) print -r -- '- - s h e l l --help' ;;
+    uninstall) print -r -- '--dry-run --purge --help' ;;
+    list) print -r -- '--category= --json --no-dry --help' ;;
+    completions) print -r -- '--shell= --help' ;;
     *) print -r -- "--help" ;;
   esac
 }

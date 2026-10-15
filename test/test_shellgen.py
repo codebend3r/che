@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 import shellgen
-from commands import COMMANDS, REPO, resolve
+from commands import COMMANDS, REPO
 
 ZSH = shutil.which("zsh")
 BASH = shutil.which("bash")
@@ -54,7 +55,7 @@ def test_generated_bash_completions_parse_on_bash_3(tmp_path):
     assert parse_ok("/bin/bash", target).returncode == 0
 
 
-@pytest.mark.parametrize("shell", shellgen.SHELLS)
+@pytest.mark.parametrize("shell", shellgen.FLAVORS)
 def test_every_command_gets_a_wrapper(shell):
     text = shellgen.wrappers(shell)
     for command in COMMANDS:
@@ -67,34 +68,87 @@ def test_every_command_gets_a_wrapper(shell):
             assert twin in text
 
 
-@pytest.mark.parametrize("shell", shellgen.SHELLS)
+@pytest.mark.parametrize("shell", shellgen.FLAVORS)
 def test_wrappers_never_hardcode_a_machine_path(shell):
     """These files are committed, so they must work from any clone location."""
     text = shellgen.wrappers(shell)
-    assert "/Users/" not in text.replace("~/Developer/git/shell-functions", "")
+    assert "/Users/" not in text
     assert "/opt/homebrew" not in text
 
 
-def test_dry_twin_flips_the_right_switch():
-    text = shellgen.wrappers("zsh")
-    assert 'DRY_RUN=true "$CHE_PYTHON" "$CHE_BIN/files/delete-by-ext.py"' in text
-    assert 'DRY_RUN=false "$CHE_PYTHON" "$CHE_BIN/files/delete-by-ext.py"' in text
-    # eject-all-drives spells its preview as a flag, not an environment variable.
-    assert '"$CHE_BIN/drives/eject-all-drives.py" --dry-run' in text
+@pytest.fixture
+def run_wrappers(tmp_path):
+    """Source the bash wrappers against a stub interpreter and run ``lines``.
+
+    The stub prints the ``DRY_RUN`` it was given and its argv, then exits 3.
+    PATH holds only the system directories plus ``tmp_path/bin``, so no real
+    ``playsound-N`` is reachable unless a test puts one there.
+    """
+    stub = tmp_path / "python"
+    stub.write_text('#!/bin/sh\necho "DRY_RUN=${DRY_RUN:-} $*"\nexit 3\n')
+    stub.chmod(0o755)
+    (tmp_path / "bin").mkdir()
+    wrapper = tmp_path / "che.bash"
+    wrapper.write_text(shellgen.wrappers("bash"))
+
+    def _run(*lines: str, **env: str) -> subprocess.CompletedProcess[str]:
+        probe = tmp_path / "probe.bash"
+        probe.write_text(f"source {wrapper}\n" + "".join(f"{line}\n" for line in lines))
+        environment = {
+            "PATH": f"{tmp_path / 'bin'}:/usr/bin:/bin",
+            "CHE_HOME": str(tmp_path / "che"),
+            "CHE_PYTHON": str(stub),
+            **env,
+        }
+        return subprocess.run(
+            [BASH, str(probe)], capture_output=True, text=True, env=environment, check=False
+        )
+
+    return _run
 
 
-def test_wrappers_preserve_the_scripts_exit_status():
-    """The old wrappers returned playsound's status, not the script's."""
-    text = shellgen.wrappers("zsh")
-    assert "che_notify 6 $?" in text
-    assert 'return "${2:-0}"' in text
+@pytest.mark.skipif(not BASH, reason="bash is not installed")
+def test_wrappers_pass_the_right_switch_and_keep_the_scripts_status(tmp_path, run_wrappers):
+    """Each wrapper runs its script with the preview switch its style calls for,
+    forwards its arguments, and returns the script's own exit status - the old
+    wrappers returned playsound's. With no playsound installed, nothing is
+    printed about it."""
+    result = run_wrappers(
+        'delete-by-ext-dr --x; echo "status=$?"',
+        'delete-by-ext --x; echo "status=$?"',
+        'eject-all-drives-dr; echo "status=$?"',
+        'update-from-origin; echo "status=$?"',
+    )
+
+    bin_dir = tmp_path / "che" / "bin"
+    assert result.stdout.splitlines() == [
+        f"DRY_RUN=true {bin_dir}/files/delete-by-ext.py --x",
+        "status=3",
+        f"DRY_RUN=false {bin_dir}/files/delete-by-ext.py --x",
+        "status=3",
+        f"DRY_RUN= {bin_dir}/drives/eject-all-drives.py --dry-run",
+        "status=3",
+        f"DRY_RUN= {bin_dir}/git/sync-all-branches.py --dry-run=false",
+        "status=3",
+    ]
+    assert result.stderr == ""
 
 
-def test_sound_is_optional():
-    """playsound-N lives outside this repo; a machine without it must not print
-    'command not found' after every command."""
-    text = shellgen.wrappers("bash")
-    assert 'command -v "playsound-$1" >/dev/null 2>&1' in text
+@pytest.mark.skipif(not BASH, reason="bash is not installed")
+@pytest.mark.parametrize(
+    ("sounds", "plays"), [("", True), ("1", True), ("yes", True), ("0", False)]
+)
+def test_only_che_sounds_0_silences_the_chime(tmp_path, run_wrappers, sounds, plays):
+    """The same rule as the fish wrappers: anything but `0` plays."""
+    played = tmp_path / "played"
+    chime = tmp_path / "bin" / "playsound-6"
+    chime.write_text(f'#!/bin/sh\ntouch "{played}"\n')
+    chime.chmod(0o755)
+
+    result = run_wrappers("delete-by-ext --x", CHE_SOUNDS=sounds)
+
+    assert result.stderr == ""
+    assert played.exists() is plays
 
 
 def test_rc_block_is_small_and_marked(tmp_path):
@@ -117,91 +171,109 @@ def test_fish_block_uses_fish_syntax(tmp_path):
     assert "export " not in block
 
 
+@pytest.mark.parametrize(
+    ("shell", "line"),
+    [
+        ("zsh", 'case ":$PATH:" in *:/x/bin:*) ;; *) PATH=/x/bin:"$PATH" ;; esac'),
+        ("bash", 'case ":$PATH:" in *:/x/bin:*) ;; *) PATH=/x/bin:"$PATH" ;; esac'),
+        ("fish", "if not contains /x/bin $PATH\n    set -gx PATH /x/bin $PATH\nend"),
+    ],
+)
+def test_rc_block_puts_the_shim_directory_on_path_last(tmp_path, shell, line):
+    """`che install` writes this block, and `--print` shows the same, when the shim is on."""
+    block = shellgen.rc_block(shell, home=tmp_path, python="python3", path_dir=Path("/x/bin"))
+    assert block.endswith(f"\n{line}\n{shellgen.END_MARKER}\n")
+    bare = shellgen.rc_block(shell, home=tmp_path, python="python3")
+    assert "PATH" not in bare
+
+
+@pytest.mark.skipif(not ZSH, reason="zsh is not installed")
+def test_rc_block_quotes_awkward_paths(tmp_path):
+    """Every value in the block survives a quote, a `$`, a backtick and a
+    space - and the PATH line, run twice, adds its directory once."""
+    home = tmp_path / "it's a home"
+    shim = tmp_path / "a $dir `x` it's"
+    block = shellgen.rc_block("zsh", home=home, python='/odd "py"/python3', path_dir=shim)
+    probe = tmp_path / "probe.zsh"
+    probe.write_text(block + block + 'print -r -- "$CHE_HOME|$CHE_PYTHON"\nprint -r -- "$PATH"\n')
+    result = subprocess.run([ZSH, "-f", str(probe)], capture_output=True, text=True, check=False)
+    assert result.stderr == ""
+    names, path = result.stdout.splitlines()
+    assert names == f'{home}|/odd "py"/python3'
+    assert path.split(":").count(str(shim)) == 1
+    assert path.startswith(f"{shim}:")
+
+
+def test_fish_completes_values_and_paths():
+    text = shellgen.completions("fish")
+    assert "complete -c show-codecs -l path -r -F\n" in text
+    assert "complete -c show-codecs -l verbose\n" in text
+    assert "complete -c all-actions -l repo-limit -r\n" in text
+
+
 def test_completions_offer_every_command():
-    for shell in shellgen.SHELLS:
+    for shell in shellgen.FLAVORS:
         text = shellgen.completions(shell)
         for command in COMMANDS:
             assert command.name in text
 
 
-def test_completion_flags_come_from_the_manifest():
-    text = shellgen.completions("bash")
-    command = resolve("delete-by-ext").command
-    for flag in command.flags:
-        assert flag in text
-
-
-def test_generation_is_deterministic():
-    assert shellgen.generated_files() == shellgen.generated_files()
+# Every name the wrapper file defines, `che` and its sound helper included: an
+# alias on any of them used to abort the file before a single wrapper loaded.
+GUARDED = shellgen.defined_names()
 
 
 @pytest.mark.skipif(not ZSH, reason="zsh is not installed")
-def test_a_colliding_alias_does_not_break_the_file(tmp_path):
+def test_colliding_aliases_do_not_break_the_zsh_file(tmp_path):
     """zsh expands aliases while parsing, so `alias show-codecs=…` turns the
     wrapper's definition into a parse error that aborts everything after it.
-    The guard has to stash the alias, define the functions, and put it back."""
+    The guard has to stash every such alias, define the functions, and put the
+    aliases back - so alias every wrapper's name, and check them all."""
     wrapper = tmp_path / "che.zsh"
     wrapper.write_text(shellgen.wrappers("zsh"))
 
     script = tmp_path / "probe.zsh"
     script.write_text(
-        "alias show-codecs='echo mine'\n"
-        f"source {wrapper}\n"
-        "(( ${+functions[show-codecs]} )) && print function-defined\n"
-        "(( ${+functions[update-brew]} )) && print later-wrapper-defined\n"
-        "print alias=${aliases[show-codecs]}\n"
+        "".join(f"alias -- {name}='echo mine'\n" for name in GUARDED)
+        + f"source {wrapper}\n"
+        + "".join(
+            f"(( ${{+functions[{name}]}} )) || print missing={name}\n"
+            f"[[ ${{aliases[{name}]-}} == 'echo mine' ]] || print lost-alias={name}\n"
+            for name in GUARDED
+        )
     )
 
     result = subprocess.run([ZSH, "-f", str(script)], capture_output=True, text=True, check=False)
-    assert "function-defined" in result.stdout, result.stderr
-    # A wrapper defined *after* the collision proves the file did not abort.
-    assert "later-wrapper-defined" in result.stdout, result.stderr
-    # The user aliased it on purpose, so it survives and still wins.
-    assert "alias=echo mine" in result.stdout
+    assert result.stdout == "", result.stdout + result.stderr
     assert "parse error" not in result.stderr
 
 
 @pytest.mark.skipif(not BASH, reason="bash is not installed")
-def test_bash_guard_restores_a_colliding_alias(tmp_path):
+def test_colliding_aliases_do_not_break_the_bash_file(tmp_path):
     wrapper = tmp_path / "che.bash"
     wrapper.write_text(shellgen.wrappers("bash"))
 
     script = tmp_path / "probe.bash"
     script.write_text(
         "shopt -s expand_aliases\n"
-        "alias show-codecs='echo mine'\n"
-        f"source {wrapper}\n"
-        "declare -F show-codecs >/dev/null && echo function-defined\n"
-        "declare -F update-brew >/dev/null && echo later-wrapper-defined\n"
-        "alias show-codecs\n"
+        + "".join(f"alias {name}='echo mine'\n" for name in GUARDED)
+        + f"source {wrapper}\n"
+        + "".join(
+            f"declare -F {name} >/dev/null || echo missing={name}\n"
+            f'[ "$(alias {name} 2>/dev/null)" = "alias {name}=\'echo mine\'" ]'
+            f" || echo lost-alias={name}\n"
+            for name in GUARDED
+        )
     )
 
     result = subprocess.run([BASH, str(script)], capture_output=True, text=True, check=False)
-    assert "function-defined" in result.stdout, result.stderr
-    assert "later-wrapper-defined" in result.stdout, result.stderr
-    assert "echo mine" in result.stdout
+    assert result.stdout == "", result.stdout + result.stderr
 
 
-@pytest.mark.parametrize("shell", ["zsh", "bash"])
-def test_the_guard_covers_every_name_the_file_defines(shell):
-    text = shellgen.wrappers(shell)
-    stash = text.split("_che_stash_aliases", 2)[2].split("\n\n")[0]
-    for command in COMMANDS:
-        assert command.name in stash, f"{command.name} is missing from the alias guard"
-
-
-def test_readme_keeps_every_generated_marker():
-    """A section that quietly loses its markers stops being checked, which is
-    how a README goes stale without anyone noticing."""
-    readme = (REPO / shellgen.README).read_text()
-    for name in shellgen.readme_islands():
-        assert f"<!-- che:{name} -->" in readme
-        assert f"<!-- /che:{name} -->" in readme
-
-
-def test_readme_islands_match_the_manifest():
-    readme = (REPO / shellgen.README).read_text()
-    assert shellgen.render_readme(readme) == readme, "run `bun run generate`"
+def test_generated_files_in_the_repo_are_current():
+    """The wrappers, completions, `.zshrc` shim and README islands all match
+    the manifest - and every README marker is still there, or this raises."""
+    assert shellgen.sync_generated(dry_run=True) == [], "run `bun run generate` and commit"
 
 
 def test_readme_documents_how_to_install():
