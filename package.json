@@ -27,7 +27,6 @@
   "files": [
     "bin/",
     "shell/",
-    "!bin/version-bump.py",
     "!**/__pycache__/",
     "!**/*.pyc"
   ],
@@ -36,11 +35,9 @@
   },
   "scripts": {
     "test": "uv run --no-project --with-requirements requirements-dev.txt -- pytest",
-    "ci": "bun run --sequential lint format syntax executable shebang generated test",
-    "system-check": "bun run --sequential lint format syntax executable shebang generated test",
+    "ci": "bun run --sequential lint format executable shebang test",
     "lint": "uv run --no-project --with-requirements requirements-dev.txt -- ruff check bin test",
     "format": "uv run --no-project --with-requirements requirements-dev.txt -- ruff format --check bin test",
-    "syntax": "find bin test -type f -name '*.py' -print0 | xargs -0 -n1 python3 -m py_compile",
     "executable": "find bin -type f -name '*.py' ! -perm -u+x -print0 | xargs -0 awk 'FNR==1 && /^#!/{print \"Has a shebang but is not executable: \" FILENAME; ec=1} END{exit ec+0}'",
     "shebang": "find bin -type f -name '*.py' -perm -u+x -print0 | xargs -0 awk 'FNR==1 && !/^#!/{print \"Executable but has no shebang: \" FILENAME; ec=1} END{exit ec+0}'",
     "generate": "python3 bin/install.py --generate",

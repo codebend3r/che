@@ -5,7 +5,7 @@
 **A collection of helper scripts shared amongst computers, called by name from
 your shell, and browsable through one menu.**
 
-[![CI](https://github.com/codebend3r/che/actions/workflows/ci.yml/badge.svg)](https://github.com/codebend3r/che/actions/workflows/ci.yml)
+[![CI](https://github.com/codebend3r/che/actions/workflows/sanity-check.yml/badge.svg)](https://github.com/codebend3r/che/actions/workflows/sanity-check.yml)
 [![npm](https://img.shields.io/npm/v/%40codebend3r%2Fche)](https://www.npmjs.com/package/@codebend3r/che)
 ![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)
 ![Dependencies: stdlib only](https://img.shields.io/badge/dependencies-stdlib%20only-brightgreen)
@@ -413,7 +413,7 @@ This repo uses [Bun](https://bun.sh) as its task runner and
 ```sh
 bun run test        # pytest
 bun run generate    # rewrite shell/ and this README's tables from the manifest
-bun run ci          # ruff + syntax + exec bits + shebangs + generated files + pytest
+bun run ci          # ruff + exec bits + shebangs + pytest (stale generated files fail it)
 ```
 
 Neither `pytest` nor `ruff` needs to be installed globally: the scripts shell

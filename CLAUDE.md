@@ -82,8 +82,6 @@ The scripts were bash until August 2026. Nothing in `bin/` is shell any more.
   a python3 >= 3.12, then hands over to `bin/install.py`.
 - `.zshrc` — a generated shim that sources `shell/che.zsh`, kept only so an
   existing `source .../shell-functions/.zshrc` keeps working.
-- `bin/version-bump.py` — vestigial (uses `npm`/`pnpm`); does not apply to this
-  repo and shouldn't be invoked here.
 
 ## Worktrees
 
@@ -189,9 +187,12 @@ an old one and hands the scripts a new enough interpreter itself).
 2. `git push --follow-tags`.
 3. `npm publish`. `prepublishOnly` runs `bun run ci` first.
 
-The tarball is `bin/` (minus `version-bump.py`) and `shell/` plus the README
-and LICENSE; `npm pack --dry-run` lists it. `che update` refuses to run in a
-copy without `.git` and prints the npm command instead.
+The tarball is `bin/` and `shell/` plus the README and LICENSE;
+`npm pack --dry-run` lists it. `che update` refuses to run in a copy without
+`.git` and prints the npm command instead.
+
+`hooks/pre-push` runs `bun run ci` before every push once enabled with
+`git config core.hooksPath hooks`.
 
 ## Git commit messages
 
