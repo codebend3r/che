@@ -745,13 +745,15 @@ def ffprobe_json(path: Path, argv_extra: Sequence[str]) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def is_macos_metadata(path: Path) -> bool:
-    """True for the AppleDouble sidecars (``._foo``) the shell scripts skipped.
+def report_walk_error(exc: OSError) -> None:
+    """``os.walk``'s ``onerror``: report an unreadable directory and carry on.
 
-    ``.DS_Store`` is deliberately not included: the scripts that skip metadata
-    are matching the ``._*`` pattern specifically.
+    find(1) printed "Permission denied" to stderr and carried on. Staying
+    silent would make a half-readable SMB share look fully scanned. stderr, not
+    the usual :func:`warning`, so these lines never interleave into output a
+    caller is piping.
     """
-    return path.name.startswith("._")
+    print(f"find: {exc.filename}: {exc.strerror}", file=sys.stderr, flush=True)
 
 
 def iter_files(
@@ -795,14 +797,7 @@ def iter_files(
     if extensions is not None:
         patterns = tuple(f"*.{ext}" if case_sensitive else f"*.{ext.lower()}" for ext in extensions)
 
-    def _on_error(exc: OSError) -> None:
-        # find(1) printed "Permission denied" to stderr and carried on. Staying
-        # silent would make a half-readable SMB share look fully scanned.
-        # stderr, not the usual warning() helper, so these lines never
-        # interleave into output a caller is piping.
-        print(f"find: {exc.filename}: {exc.strerror}", file=sys.stderr, flush=True)
-
-    for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=_on_error):
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=report_walk_error):
         dirnames.sort()
         if skip_hidden:
             dirnames[:] = [d for d in dirnames if not d.startswith(".")]
