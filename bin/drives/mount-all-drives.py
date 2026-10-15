@@ -19,49 +19,26 @@ Options:
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from nas import is_mounted, mount_smb, select_drives, smb_url, warn_unknown_drive
 from utils import (
     add_bool_flag,
     build_parser,
+    footer_rule,
+    heading,
     info,
     log,
-    note,
     require_binary,
-    run,
     run_cli,
     success,
     warning,
 )
 
 __version__ = "4.1.0"
-
-SMB_USER = "crivas"
-
-# (name, ip) - the share name is assumed to match the drive name.
-DRIVES: tuple[tuple[str, str], ...] = (
-    ("Meleys", "192.168.50.2"),
-    ("Vermithor", "192.168.50.3"),
-    ("Caraxes", "192.168.50.4"),
-    ("Syrax", "192.168.50.5"),
-    ("Vhagar", "192.168.50.6"),
-)
-
-
-def is_mounted(name: str) -> bool:
-    """True when something is actually mounted at ``/Volumes/<name>``.
-
-    The shell version grepped ``mount`` output for `` on /Volumes/<name> (``;
-    ``os.path.ismount`` asks the kernel directly. The two agree for every
-    healthy mount. The one real difference: ``ismount`` lstats the mount root,
-    so on a wedged SMB mount it can block for the server timeout where reading
-    the mount table cannot.
-    """
-    return os.path.ismount(f"/Volumes/{name}")
 
 
 def mount_drive(name: str, host: str, *, quiet: bool) -> str:
@@ -71,24 +48,12 @@ def mount_drive(name: str, host: str, *, quiet: bool) -> str:
             info(f"⏭️  {name} — already mounted")
         return "skipped"
 
-    url = f"smb://{SMB_USER}@{host}/{name}"
-    log(f"🔗 Mounting {name} ({url})...")
+    log(f"🔗 Mounting {name} ({smb_url(name, host)})...")
+    if not mount_smb(name, host):
+        return "failed"
 
-    completed = run(
-        ["osascript", "-e", f'mount volume "{url}"'],
-        check=False,
-        capture=True,
-    )
-    if completed.returncode == 0:
-        success(f"  ✅ {name} mounted 🐉")
-        return "mounted"
-
-    warning(f"  ❌ mount failed for {url}")
-    stderr = (completed.stderr or "").strip()
-    if stderr:
-        warning(f"     {stderr}")
-    warning(f"     Check that Keychain has a password for '{SMB_USER}@{host}'.")
-    return "failed"
+    success(f"  ✅ {name} mounted 🐉")
+    return "mounted"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -105,27 +70,18 @@ def main(argv: list[str] | None = None) -> int:
 
     require_binary("osascript", hint="This script is macOS-only.")
 
-    note("═══════════════════════════════════════════")
-    note("💿  mount-all-drives")
-    note("═══════════════════════════════════════════")
+    heading("💿  mount-all-drives")
+
+    selected = select_drives(args.only)
+    if not selected:
+        warn_unknown_drive(args.only)
 
     counts = {"mounted": 0, "skipped": 0, "failed": 0}
-    matched = False
+    for drive in selected:
+        host = drive.host(use_ip=args.use_ip)
+        counts[mount_drive(drive.name, host, quiet=args.quiet)] += 1
 
-    for name, ip in DRIVES:
-        if args.only and name.lower() != args.only.lower():
-            continue
-        matched = True
-        host = ip if args.use_ip else name
-        counts[mount_drive(name, host, quiet=args.quiet)] += 1
-
-    if args.only and not matched:
-        # Warn, but keep the shell version's exit code: an unknown --only
-        # printed a 0/0 summary and still exited 0.
-        warning(f"⚠️  No drive named '{args.only}'. Known: {', '.join(n for n, _ in DRIVES)}")
-
-    print()
-    note("─────────────────────────────────────────────")
+    footer_rule()
     success(f"✅ Mounted:  {counts['mounted']}")
     info(f"⏭️  Skipped:  {counts['skipped']} (already mounted)")
     if counts["failed"]:
