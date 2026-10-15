@@ -52,15 +52,27 @@ The scripts were bash until August 2026. Nothing in `bin/` is shell any more.
 
   from utils import build_parser, info, iter_files, run_cli, scan_root, warning
   ```
-  It provides color logging (`log`, `warning`, `info`, `note`, `success`),
-  `format_bytes`, `parse_size`, the arg-parsing helpers (`build_parser`,
-  `add_bool_flag`, `env_bool`), subprocess wrappers (`run`, `run_output`,
-  `run_lines`, `run_cli`, `require_binary`), worktree/branch helpers
-  (`worktree_paths`, `main_worktree`, `worktree_branch_map`,
-  `worktree_for_branch`, `worktree_is_clean`, `branch_is_pushed`,
-  `find_main_branch`), file walking (`iter_files`, `scan_root`,
-  `normalize_extensions`) and ffprobe helpers. Its module docstring is the
-  authoritative statement of the CLI conventions.
+  It provides color logging (`log`, `warning`, `info`, `note`, `success`,
+  `paint`), the fixed banners (`heading`, `note_settings`, `footer_rule`,
+  `dry_run_complete`), `format_bytes`, `parse_size`, the arg-parsing helpers
+  (`build_parser`, `add_bool_flag`, `env_bool`, `parse_count`), subprocess
+  wrappers (`run`, `run_output`, `run_cli`, `require_binary`), file walking and
+  removal (`iter_files`, `scan_root`, `normalize_extensions`,
+  `report_walk_error`, `remove_or_warn`) and `atomic_write_text`. The
+  validators (`scan_root`, `parse_count`, `env_bool`, `require_binary`) report
+  and exit 1 themselves. Its module docstring is the authoritative statement
+  of the CLI conventions.
+- Domain libraries beside it, imported the same way by the scripts that need
+  them:
+  - `bin/gitutils.py` — `skip_git_hooks`, `fetch_remotes`, `current_branch`,
+    `for_each_ref`, `local_branches`, `has_tracked_changes`,
+    `worktrees`/`Worktree`, `worktree_branch_map`, `worktree_is_clean`,
+    `find_main_branch`, `park_main_worktree`.
+  - `bin/media.py` — `probe_media()`, one ffprobe JSON call per file read
+    through `MediaProbe`'s accessors, and the shared video extension lists.
+  - `bin/nas.py` — the NAS drive table (`NasDrive`) and SMB helpers:
+    `select_drives` (`--only`), `warn_unknown_drive`, `is_mounted`, `smb_url`,
+    `mount_smb`.
 - `shell/` — GENERATED. Never edit by hand: change `bin/commands.py` and run
   `bun run generate`. Each wrapper invokes its script through `$CHE_PYTHON`,
   then calls `che_notify <sound> $?`, which plays `playsound-N` when that
