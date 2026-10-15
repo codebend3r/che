@@ -20,7 +20,7 @@ def test_deletes_matching_extensions(tmp_path, run_script):
     (tmp_path / "b.png").touch()
     (tmp_path / "c.mp4").touch()
 
-    run_script(SCRIPT, [f"--path={tmp_path}", "--ext=jpg,png"], env=REAL)
+    run_script(SCRIPT, [f"--path={tmp_path}", "--ext=jpg,png"], env=REAL, check=True)
 
     assert not (tmp_path / "a.jpg").exists()
     assert not (tmp_path / "b.png").exists()
@@ -31,7 +31,7 @@ def test_dry_run_deletes_nothing(tmp_path, run_script):
     (tmp_path / "a.jpg").touch()
     (tmp_path / "b.png").touch()
 
-    run_script(SCRIPT, [f"--path={tmp_path}", "--ext=jpg,png", "--dry-run"])
+    run_script(SCRIPT, [f"--path={tmp_path}", "--ext=jpg,png", "--dry-run"], check=True)
 
     assert (tmp_path / "a.jpg").exists()
     assert (tmp_path / "b.png").exists()
@@ -41,7 +41,7 @@ def test_defaults_to_dry_run(tmp_path, run_script):
     """Repo policy: no DRY_RUN=false and no --dry-run=false means no deletes."""
     (tmp_path / "a.jpg").touch()
 
-    run_script(SCRIPT, [f"--path={tmp_path}", "--ext=jpg"])
+    run_script(SCRIPT, [f"--path={tmp_path}", "--ext=jpg"], check=True)
 
     assert (tmp_path / "a.jpg").exists()
 
@@ -52,7 +52,7 @@ def test_filename_with_spaces(tmp_path, run_script):
     (sub / "with spaces.jpg").touch()
     (sub / "keep.mp4").touch()
 
-    run_script(SCRIPT, [f"--path={tmp_path}", "--ext=jpg"], env=REAL)
+    run_script(SCRIPT, [f"--path={tmp_path}", "--ext=jpg"], env=REAL, check=True)
 
     assert not (sub / "with spaces.jpg").exists()
     assert (sub / "keep.mp4").exists()
@@ -62,7 +62,7 @@ def test_filename_with_single_quote(tmp_path, run_script):
     target = tmp_path / "weird'quote.jpg"
     target.touch()
 
-    run_script(SCRIPT, [f"--path={tmp_path}", "--ext=jpg"], env=REAL)
+    run_script(SCRIPT, [f"--path={tmp_path}", "--ext=jpg"], env=REAL, check=True)
 
     assert not target.exists()
 
@@ -73,7 +73,7 @@ def test_filename_with_newline(tmp_path, run_script):
     target.touch()
     assert target.exists(), "setup: the OS must actually create the file"
 
-    run_script(SCRIPT, [f"--path={tmp_path}", "--ext=jpg"], env=REAL)
+    run_script(SCRIPT, [f"--path={tmp_path}", "--ext=jpg"], env=REAL, check=True)
 
     assert not target.exists()
 
@@ -82,7 +82,7 @@ def test_case_insensitive_extension(tmp_path, run_script):
     (tmp_path / "UPPER.JPG").touch()
     (tmp_path / "MiXeD.PnG").touch()
 
-    run_script(SCRIPT, [f"--path={tmp_path}", "--ext=jpg,png"], env=REAL)
+    run_script(SCRIPT, [f"--path={tmp_path}", "--ext=jpg,png"], env=REAL, check=True)
 
     assert not (tmp_path / "UPPER.JPG").exists()
     assert not (tmp_path / "MiXeD.PnG").exists()
@@ -94,7 +94,7 @@ def test_recurses_into_subdirectories(tmp_path, run_script):
     (deep / "deep.jpg").touch()
     (tmp_path / "a" / "keep.mp4").touch()
 
-    run_script(SCRIPT, [f"--path={tmp_path}", "--ext=jpg"], env=REAL)
+    run_script(SCRIPT, [f"--path={tmp_path}", "--ext=jpg"], env=REAL, check=True)
 
     assert not (deep / "deep.jpg").exists()
     assert (tmp_path / "a" / "keep.mp4").exists()
@@ -110,7 +110,7 @@ def test_partial_extension_does_not_match(tmp_path, run_script):
     (tmp_path / "clip.mpeg").touch()
     (tmp_path / "clip.mpg").touch()
 
-    run_script(SCRIPT, [f"--path={tmp_path}", "--ext=mpg"], env=REAL)
+    run_script(SCRIPT, [f"--path={tmp_path}", "--ext=mpg"], env=REAL, check=True)
 
     assert (tmp_path / "clip.mpeg").exists()
     assert not (tmp_path / "clip.mpg").exists()
@@ -125,7 +125,7 @@ def test_dotfile_named_only_extension_is_matched(tmp_path, run_script):
     target = tmp_path / ".jpg"
     target.touch()
 
-    run_script(SCRIPT, [f"--path={tmp_path}", "--ext=jpg"], env=REAL)
+    run_script(SCRIPT, [f"--path={tmp_path}", "--ext=jpg"], env=REAL, check=True)
 
     assert not target.exists()
 
@@ -135,7 +135,7 @@ def test_glob_metacharacters_in_ext(tmp_path, run_script):
     for name in ("a.mp4", "b.mp3", "c.mpg", "d.txt"):
         (tmp_path / name).touch()
 
-    run_script(SCRIPT, [f"--path={tmp_path}", "--ext=mp*"], env=REAL)
+    run_script(SCRIPT, [f"--path={tmp_path}", "--ext=mp*"], env=REAL, check=True)
 
     assert not (tmp_path / "a.mp4").exists()
     assert not (tmp_path / "b.mp3").exists()
@@ -192,7 +192,7 @@ def test_bare_dry_run_does_not_swallow_next_argument(tmp_path, run_script):
     keep = tmp_path / "a.jpg"
     keep.touch()
 
-    run_script(SCRIPT, ["--dry-run", f"--path={tmp_path}", "--ext=jpg"], env=REAL)
+    run_script(SCRIPT, ["--dry-run", f"--path={tmp_path}", "--ext=jpg"], env=REAL, check=True)
 
     assert keep.exists()
 
@@ -202,7 +202,7 @@ def test_glob_extension_still_anchors_on_the_dot(tmp_path, run_script):
     (tmp_path / "a.mp4").touch()
     (tmp_path / "important.txt").touch()
 
-    run_script(SCRIPT, [f"--path={tmp_path}", "--ext=mp*"], env=REAL)
+    run_script(SCRIPT, [f"--path={tmp_path}", "--ext=mp*"], env=REAL, check=True)
 
     assert not (tmp_path / "a.mp4").exists()
     assert (tmp_path / "important.txt").exists()
