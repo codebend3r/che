@@ -14,7 +14,7 @@ Options:
   --help        Show help
 
 Env:
-  DRY_RUN=false Opt out of the preview-only default (used by the .zshrc wrapper)
+  DRY_RUN=false Opt out of the preview-only default (used by the generated wrapper)
 """
 
 from __future__ import annotations
@@ -32,7 +32,8 @@ from utils import (
     iter_files,
     log,
     normalize_extensions,
-    note,
+    note_settings,
+    remove_or_warn,
     run_cli,
     scan_root,
     warning,
@@ -68,11 +69,12 @@ def main(argv: list[str] | None = None) -> int:
 
     extensions = normalize_extensions(args.ext)
 
-    note(f"Scanning: {args.path}")
-    note(f"Extensions: {' '.join(extensions)}")
-    note(f"Dry run: {str(args.dry_run).lower()}")
-    note(f"Verbose: {str(args.verbose).lower()}")
-    note("----------------------------------------------------")
+    note_settings(
+        ("Scanning", args.path),
+        ("Extensions", " ".join(extensions)),
+        ("Dry run", args.dry_run),
+        ("Verbose", args.verbose),
+    )
 
     if not extensions:
         warning("--ext is required")
@@ -91,13 +93,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
 
         log(f"Deleting: {path}")
-        try:
-            path.unlink()
-        except OSError as exc:
-            # The shell version aborted the whole run here under `set -e`.
-            # Continuing and reporting at the end is more useful on a NAS
-            # where one busy file should not strand the rest of the sweep.
-            warning(f"  ✗ Failed to delete {path}: {exc}")
+        if not remove_or_warn(path):
             failures += 1
 
     log("Completed.")
