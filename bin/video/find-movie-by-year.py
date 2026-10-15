@@ -68,6 +68,9 @@ def main(argv: list[str] | None = None) -> int:
         emit(root)
 
     # Results are sorted for reproducibility; `find` emitted readdir order.
+    # The order also differs in shape: each folder's matching children print
+    # before the walk descends into any of them, so matches `A`, `A/B` and `C`
+    # come out `A, C, A/B` where find's depth-first walk printed `A, A/B, C`.
     for dirpath, dirnames, _ in os.walk(root, followlinks=False):
         dirnames.sort()
         for name in dirnames:

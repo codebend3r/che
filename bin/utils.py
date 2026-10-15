@@ -13,6 +13,10 @@ Everything here is standard library only, on purpose: the scripts have to run
 from a bare ``python3`` on any machine this repo is cloned to, with no venv and
 no install step.
 
+Domain helpers live beside it: git and worktree helpers in ``gitutils.py``,
+ffprobe helpers in ``media.py``, the NAS drive table and SMB mounting in
+``nas.py``.
+
 =============================================================================
 CLI conventions - shared patterns for bin/<category>/*.py
 
