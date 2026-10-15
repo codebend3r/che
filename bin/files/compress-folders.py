@@ -25,6 +25,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from utils import (
     add_bool_flag,
     build_parser,
+    dry_run_complete,
+    footer_rule,
+    heading,
     info,
     log,
     note,
@@ -67,10 +70,7 @@ def _walk_entries(folder: Path) -> list[tuple[Path, str]]:
         dirnames.sort()
         filenames.sort()
 
-        for name in dirnames:
-            child = directory / name
-            entries.append((child, str(child.relative_to(parent))))
-        for name in filenames:
+        for name in (*dirnames, *filenames):
             child = directory / name
             entries.append((child, str(child.relative_to(parent))))
 
@@ -130,10 +130,7 @@ def main(argv: list[str] | None = None) -> int:
 
     root = scan_root(args.path)
 
-    header_suffix = " 🌵 (dry run)" if args.dry_run else ""
-    note("═══════════════════════════════════════════")
-    note(f"📦  compress-folders{header_suffix}")
-    note("═══════════════════════════════════════════")
+    heading("📦  compress-folders", dry_run=args.dry_run)
     note(f"Parent: {root}")
 
     compressed = 0
@@ -168,11 +165,10 @@ def main(argv: list[str] | None = None) -> int:
         success(f"  ✅ {folder.name}.zip")
         compressed += 1
 
-    print()
-    note("─────────────────────────────────────────────")
+    footer_rule()
     if args.dry_run:
         success(f"🌵 Would compress: {compressed} folder(s)")
-        log("💡 Dry run complete. Nothing was actually changed.")
+        dry_run_complete()
         return 0
 
     success(f"✅ Compressed: {compressed}")
