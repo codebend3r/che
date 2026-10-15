@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs the same checks as .github/workflows/ci.yml via package.json scripts.
+# Runs `bun run ci`, the check sanity-check.yml runs on main.
 # Enable for this clone with:
 #   git config core.hooksPath hooks
 

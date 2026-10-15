@@ -18,23 +18,6 @@ jobs:
       - name: 🐍 Install uv
         uses: astral-sh/setup-uv@v5
 
-      - name: 🔍 ruff check
-        run: bun run lint
-
-      - name: 🎨 ruff format
-        run: bun run format
-
-      - name: 📝 syntax
-        run: bun run syntax
-
-      - name: 🔑 executable
-        run: bun run executable
-
-      - name: 👉 shebang
-        run: bun run shebang
-
-      - name: 🧪 pytest
-        run: bun run test
-
-      - name: ✅ All checks passed
-        run: echo "All Python script checks passed."
+      # One step, so this can never drift from the `ci` script it mirrors.
+      - name: 🚦 Full check
+        run: bun run ci
