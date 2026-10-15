@@ -275,6 +275,43 @@ def answers(monkeypatch, no_color):
     return _script
 
 
+@pytest.mark.parametrize(
+    ("name", "yes", "text", "expected"),
+    [
+        # The question defaults to a dry run on scripts that do not: a yes must
+        # pass --dry-run, where it used to pass nothing and run for real.
+        ("update-local-branches", [True], ["", ""], ["--dry-run"]),
+        ("update-local-branches", [False], ["", ""], ["--dry-run=false"]),
+        ("compress-folders", [True], ["/media", ""], ["--path=/media", "--dry-run"]),
+        # A question that defaults to no passes nothing on a no.
+        ("show-codecs", [False], ["/media", ""], ["--path=/media"]),
+        ("show-codecs", [True], ["/media", ""], ["--path=/media", "--verbose"]),
+        ("update-brew", [True, False], [""], ["--no-cask"]),
+        # The script renames folders unless told not to, so a no must say so.
+        (
+            "rename-video-file",
+            [True, False, True],
+            ["/media", "", ""],
+            ["--path=/media", "--recursive", "--rename-folders=false", "--dry-run"],
+        ),
+    ],
+)
+def test_bool_answers_are_passed_explicitly(answers, name, yes, text, expected):
+    answers(yes=yes, text=text)
+    assert dispatcher.collect_arguments(resolve(name).command) == expected
+
+
+def test_a_preview_answer_skips_the_real_run_confirm(answers):
+    """rename-video-file previews by default; a yes used to pass no --dry-run,
+    so the menu asked "changes files for real?" about a preview."""
+    ran = answers(yes=[True, True, True], text=["/media", "", ""])
+
+    assert dispatcher.launch(resolve("rename-video-file"), prompt=True) == 0
+    assert ran == [
+        ("rename-video-file", ["--path=/media", "--recursive", "--rename-folders", "--dry-run"])
+    ]
+
+
 def test_the_echoed_command_line_is_the_one_to_copy(answers, capsys):
     ran = answers(text=["/my media", "xyz", ""])
 

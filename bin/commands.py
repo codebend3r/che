@@ -287,6 +287,7 @@ COMMANDS: tuple[Command, ...] = (
         # a `--dry-run` typed after it still wins.
         args=("--dry-run=false",),
         sound=7,
+        destructive=True,
         needs=("git",),
         tags=("pull", "fetch", "sync"),
     ),
@@ -409,7 +410,7 @@ COMMANDS: tuple[Command, ...] = (
         prompts=(
             PATH_PROMPT,
             Prompt("--recursive", "Recurse into subdirectories", kind="bool", default="true"),
-            Prompt("--rename-folders", "Rename folders too", kind="bool"),
+            Prompt("--rename-folders", "Rename folders too", kind="bool", default="true"),
             Prompt("--dry-run", "Preview only", kind="bool", default="true"),
             Prompt("--ignore-words", "Words to leave as written", help="Comma separated"),
         ),
@@ -723,6 +724,10 @@ BUILTINS: tuple[Command, ...] = (
         summary="Remove the wrappers, the shim and the completions",
         destructive=True,
         tags=("remove", "clean"),
+        prompts=(
+            Prompt("--dry-run", "Preview only", kind="bool", default="true"),
+            Prompt("--purge", "Also delete the config and menu history", kind="bool"),
+        ),
     ),
     Command(
         name="list",
