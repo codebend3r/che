@@ -22,6 +22,7 @@ Library module: no shebang, not executable.
 
 from __future__ import annotations
 
+import functools
 import os
 import re
 import select
@@ -30,11 +31,11 @@ import sys
 import termios
 import tty
 import unicodedata
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from types import TracebackType
+from types import ModuleType, TracebackType
 
 from utils import color_enabled
 
@@ -49,28 +50,14 @@ class Palette:
 
     reset: str = "\033[0m"
     bold: str = "\033[1m"
-    dim: str = "\033[2m"
-    italic: str = "\033[3m"
-    underline: str = "\033[4m"
-    reverse: str = "\033[7m"
 
     red: str = "\033[31m"
     green: str = "\033[32m"
     yellow: str = "\033[33m"
     blue: str = "\033[34m"
-    magenta: str = "\033[35m"
     cyan: str = "\033[36m"
-    white: str = "\033[37m"
     grey: str = "\033[90m"
-
     bright_magenta: str = "\033[95m"
-    bright_cyan: str = "\033[96m"
-    bright_green: str = "\033[92m"
-    bright_yellow: str = "\033[93m"
-    bright_red: str = "\033[91m"
-
-    on_magenta: str = "\033[45m"
-    on_grey: str = "\033[100m"
 
 
 PLAIN = Palette(**{field: "" for field in Palette.__dataclass_fields__})
@@ -92,7 +79,50 @@ def strip_ansi(text: str) -> str:
 # Width
 # ---------------------------------------------------------------------------
 
-_VARIATION_SELECTOR_16 = "️"
+_VARIATION_SELECTOR_16 = "\ufe0f"
+
+
+def _is_modifier(char: str) -> bool:
+    """Takes no columns of its own: U+FE0F or a combining mark.
+
+    U+FE0F only asks for the emoji presentation of the character before it.
+    Counting it as one column was worth two columns of drift per row on 🗑️.
+    """
+    return char == _VARIATION_SELECTOR_16 or bool(unicodedata.combining(char))
+
+
+def _clusters(text: str) -> Iterator[tuple[str, int]]:
+    """``text`` without escapes, as (character plus its modifiers, columns) pairs.
+
+    ``display_width`` and ``truncate`` both measure through this, so a cut can
+    never land between an emoji and the selector that makes it two columns.
+    """
+    chars = strip_ansi(text)
+    index = 0
+    while index < len(chars):
+        end = index + 1
+        while end < len(chars) and _is_modifier(chars[end]):
+            end += 1
+        cluster = chars[index:end]
+        base = cluster[0]
+
+        if _is_modifier(base):
+            # A modifier with nothing before it to modify.
+            width = 0
+        elif unicodedata.east_asian_width(base) in ("W", "F"):
+            width = 2
+        elif ord(base) >= 0x1F300:
+            # Emoji that Unicode still classifies as neutral (🗑, 🎞) but every
+            # terminal draws double width.
+            width = 2
+        elif cluster[1:2] == _VARIATION_SELECTOR_16:
+            # A narrow symbol promoted to emoji presentation (⌨️, ⬆️).
+            width = 2
+        else:
+            width = 1
+
+        yield cluster, width
+        index = end
 
 
 def display_width(text: str) -> int:
@@ -102,29 +132,7 @@ def display_width(text: str) -> int:
     escapes (zero width) and emoji (two columns). Getting it wrong misaligns
     every row after it, so the menu measures with this instead.
     """
-    chars = list(strip_ansi(text))
-    width = 0
-
-    for index, char in enumerate(chars):
-        if char == _VARIATION_SELECTOR_16 or unicodedata.combining(char):
-            # U+FE0F only asks for the emoji presentation of the character
-            # before it; it takes no columns of its own. Counting it as one
-            # was worth two columns of drift per row on 🗑️ and friends.
-            continue
-
-        if unicodedata.east_asian_width(char) in ("W", "F"):
-            width += 2
-        elif ord(char) >= 0x1F300:
-            # Emoji that Unicode still classifies as neutral (🗑, 🎞) but every
-            # terminal draws double width.
-            width += 2
-        elif index + 1 < len(chars) and chars[index + 1] == _VARIATION_SELECTOR_16:
-            # A narrow symbol promoted to emoji presentation (⌨️, ⬆️).
-            width += 2
-        else:
-            width += 1
-
-    return width
+    return sum(width for _, width in _clusters(text))
 
 
 def truncate(text: str, width: int, *, ellipsis: str = "…") -> str:
@@ -137,11 +145,10 @@ def truncate(text: str, width: int, *, ellipsis: str = "…") -> str:
     budget = width - display_width(ellipsis)
     out: list[str] = []
     used = 0
-    for char in strip_ansi(text):
-        step = display_width(char)
+    for cluster, step in _clusters(text):
         if used + step > budget:
             break
-        out.append(char)
+        out.append(cluster)
         used += step
     return "".join(out) + ellipsis
 
@@ -167,7 +174,6 @@ ALT_SCREEN_ON = "\033[?1049h"
 ALT_SCREEN_OFF = "\033[?1049l"
 CURSOR_HIDE = "\033[?25l"
 CURSOR_SHOW = "\033[?25h"
-CLEAR = "\033[H\033[2J"
 
 
 def size() -> tuple[int, int]:
@@ -191,8 +197,9 @@ class Term:
     """Alternate screen + raw input, restored no matter how the block exits.
 
     A TUI that leaves the terminal in raw mode with the cursor hidden is worse
-    than no TUI at all, so teardown runs from ``__exit__`` *and* from handlers
-    for SIGINT/SIGTERM/SIGHUP, and is written to be safe to call twice.
+    than no TUI at all, so teardown runs from ``__exit__`` (which an exception,
+    Ctrl-C's KeyboardInterrupt included, also reaches) *and* from handlers for
+    SIGTERM/SIGHUP, and is written to be safe to call twice.
     """
 
     def __init__(self, *, alt_screen: bool = True) -> None:
@@ -201,17 +208,13 @@ class Term:
         self._saved: list | None = None
         self._active = False
         self._previous_handlers: dict[int, object] = {}
-        self.resized = False
 
     # -- lifecycle ------------------------------------------------------
     def __enter__(self) -> Term:
         self.fd = sys.stdin.fileno()
         with suppress(termios.error, ValueError):
             self._saved = termios.tcgetattr(self.fd)
-            tty.setraw(self.fd)
-
-        if self.alt_screen:
-            self._write(ALT_SCREEN_ON + CURSOR_HIDE)
+        self.resume()
 
         self._active = True
         self._install_handlers()
@@ -229,13 +232,7 @@ class Term:
         if not self._active:
             return
         self._active = False
-
-        if self.alt_screen:
-            self._write(CURSOR_SHOW + ALT_SCREEN_OFF)
-        if self._saved is not None:
-            with suppress(termios.error, ValueError):
-                termios.tcsetattr(self.fd, termios.TCSADRAIN, self._saved)
-
+        self.suspend()
         self._restore_handlers()
 
     # -- suspending, for running a child command in the normal screen ----
@@ -256,19 +253,12 @@ class Term:
 
     # -- signals --------------------------------------------------------
     def _install_handlers(self) -> None:
-        def on_resize(_signum: int, _frame: object) -> None:
-            self.resized = True
-
         def on_kill(signum: int, _frame: object) -> None:
             self.close()
             # Re-raise with the default disposition so the exit status is the
             # 128+N a shell expects, rather than a plain 0.
             signal.signal(signum, signal.SIG_DFL)
             os.kill(os.getpid(), signum)
-
-        for signum, handler in ((signal.SIGWINCH, on_resize),):
-            with suppress(ValueError, OSError):
-                self._previous_handlers[signum] = signal.signal(signum, handler)
 
         for signum in (signal.SIGTERM, signal.SIGHUP):
             with suppress(ValueError, OSError):
@@ -292,6 +282,17 @@ class Term:
 # Input
 # ---------------------------------------------------------------------------
 
+_CONTROL_KEYS = {
+    "\x03": "ctrl-c",
+    "\x04": "eof",
+    "\r": "enter",
+    "\n": "enter",
+    "\t": "tab",
+    "\x7f": "backspace",
+    "\b": "backspace",
+    "\x15": "ctrl-u",
+    "\x17": "ctrl-w",
+}
 _CSI_KEYS = {
     "A": "up",
     "B": "down",
@@ -312,12 +313,23 @@ _CSI_TILDE_KEYS = {
 }
 
 
+def _utf8_tail(lead: int) -> int:
+    """How many continuation bytes follow ``lead`` in a UTF-8 sequence."""
+    if 0xC0 <= lead < 0xE0:
+        return 1
+    if 0xE0 <= lead < 0xF0:
+        return 2
+    if 0xF0 <= lead < 0xF8:
+        return 3
+    return 0
+
+
 def read_key(timeout: float | None = None) -> str | None:
     """Read one keypress in raw mode and return a name for it.
 
-    Returns ``None`` on timeout (used so a SIGWINCH can redraw a frame that is
-    otherwise blocked in ``read``). Unknown escape sequences are swallowed
-    rather than leaking their bytes into a filter box.
+    Returns ``None`` on timeout, which lets the menu redraw for a resize while
+    no key is pressed. Unknown escape sequences are swallowed rather than
+    leaking their bytes into a filter box.
     """
     fd = sys.stdin.fileno()
 
@@ -327,36 +339,25 @@ def read_key(timeout: float | None = None) -> str | None:
             return None
 
     try:
-        first = os.read(fd, 1).decode("utf-8", "replace")
-    except (OSError, InterruptedError):
+        raw = os.read(fd, 1)
+    except OSError:
         return None
-    if not first:
+    if not raw:
         return "eof"
 
-    if first == "\x03":
-        return "ctrl-c"
-    if first == "\x04":
-        return "eof"
-    if first in ("\r", "\n"):
-        return "enter"
-    if first == "\t":
-        return "tab"
-    if first in ("\x7f", "\b"):
-        return "backspace"
-    if first == "\x15":
-        return "ctrl-u"
-    if first == "\x17":
-        return "ctrl-w"
+    # A multi-byte UTF-8 character arrives one byte at a time. Its lead byte
+    # says exactly how many more belong to it, so the next keystroke is never
+    # read along with it.
+    for _ in range(_utf8_tail(raw[0])):
+        ready, _, _ = select.select([fd], [], [], 0.05)
+        if not ready:
+            break
+        raw += os.read(fd, 1)
+    first = raw.decode("utf-8", "replace")
+
+    if first in _CONTROL_KEYS:
+        return _CONTROL_KEYS[first]
     if first != "\033":
-        # A multi-byte UTF-8 character arrives one byte at a time.
-        if ord(first[0]) >= 0x80:
-            extra = b""
-            for _ in range(3):
-                ready, _, _ = select.select([fd], [], [], 0.01)
-                if not ready:
-                    break
-                extra += os.read(fd, 1)
-            return (first.encode("utf-8", "surrogateescape") + extra).decode("utf-8", "replace")
         return first
 
     # Escape, possibly introducing a sequence. A lone Escape has nothing
@@ -392,12 +393,11 @@ class Screen:
     """Compose a frame in memory, then paint it in one write."""
 
     def __init__(self) -> None:
-        self.columns, self.rows = size()
-        self._lines: list[str] = []
+        self.start()
 
     def start(self) -> None:
         self.columns, self.rows = size()
-        self._lines = []
+        self._lines: list[str] = []
 
     def line(self, text: str = "") -> None:
         self._lines.append(truncate(text, self.columns))
@@ -428,8 +428,9 @@ class Screen:
 # ---------------------------------------------------------------------------
 
 
-def _setup_readline(history_file: Path | None = None) -> object | None:
-    """Enable editing, filename completion and history for ``input()``.
+@functools.cache
+def _readline() -> ModuleType | None:
+    """The readline module, set up once for editing and filename completion.
 
     macOS ships readline as libedit, which needs a different bind syntax; both
     are handled. A missing readline module is not fatal - the prompt just loses
@@ -440,21 +441,30 @@ def _setup_readline(history_file: Path | None = None) -> object | None:
     except ImportError:
         return None
 
-    if "libedit" in (getattr(readline, "__doc__", "") or ""):
+    if "libedit" in (readline.__doc__ or ""):
         readline.parse_and_bind("bind ^I rl_complete")
     else:
         readline.parse_and_bind("tab: complete")
 
     readline.set_completer_delims(" \t\n=")
-
-    if history_file is not None:
-        with suppress(OSError):
-            history_file.parent.mkdir(parents=True, exist_ok=True)
-            if history_file.exists():
-                readline.read_history_file(history_file)
-        readline.set_history_length(200)
-
     return readline
+
+
+def _load_history(readline: ModuleType, history_file: Path | None) -> None:
+    """Make ``history_file`` the only history the next ``input()`` offers.
+
+    ``read_history_file`` appends to what is already in memory, so without the
+    clear every prompt would offer every earlier prompt's answers - and save
+    them all into its own file.
+    """
+    readline.clear_history()
+    if history_file is None:
+        return
+    with suppress(OSError):
+        history_file.parent.mkdir(parents=True, exist_ok=True)
+        if history_file.exists():
+            readline.read_history_file(history_file)
+    readline.set_history_length(200)
 
 
 def ask(
@@ -467,17 +477,20 @@ def ask(
 ) -> str:
     """Ask one question and return the answer, or the default on empty input.
 
-    ``kind="path"`` turns on filename completion; ``kind="choice"`` shows the
-    valid values and re-asks until one of them is given.
+    ``kind="path"`` turns on filename completion; ``choices`` shows the valid
+    values and re-asks until one of them is given.
     """
     colors = palette()
-    readline = _setup_readline(history_file)
+    readline = _readline()
 
     if readline is not None:
+        _load_history(readline, history_file)
         if kind == "path":
-            readline.set_completer(_path_completer)
+            readline.set_completer(_completer(_path_matches))
         elif choices:
-            readline.set_completer(_choice_completer(choices))
+            readline.set_completer(
+                _completer(lambda text: [c for c in choices if c.startswith(text)])
+            )
         else:
             readline.set_completer(lambda *_: None)
 
@@ -540,12 +553,12 @@ def choose(
     options: Sequence[tuple[str, str]],
     *,
     selected: Iterable[int] = (),
-    multi: bool = True,
 ) -> list[int]:
-    """A checkbox / radio list, driven with the arrow keys.
+    """A checkbox list, driven with the arrow keys.
 
-    Returns the indices the user accepted. Falls back to a numbered text
-    prompt when there is no tty, so the wizard still works over a pipe.
+    Returns the indices the user accepted. With no tty there is nothing to
+    drive, so the preselection comes back unchanged and the wizard still works
+    over a pipe.
     """
     chosen = set(selected)
 
@@ -555,7 +568,7 @@ def choose(
     colors = palette()
     cursor = min(chosen, default=0)
 
-    with Term() as term:
+    with Term():
         screen = Screen()
         while True:
             screen.start()
@@ -564,8 +577,6 @@ def choose(
             screen.line()
             for index, (label, hint) in enumerate(options):
                 mark = "◉" if index in chosen else "○"
-                if not multi:
-                    mark = "●" if index in chosen else "○"
                 pointer = f"{colors.cyan}▸{colors.reset}" if index == cursor else " "
                 body = f"{mark} {label}"
                 if index == cursor:
@@ -586,54 +597,46 @@ def choose(
             elif key in ("down", "j"):
                 cursor = (cursor + 1) % len(options)
             elif key == " ":
-                if multi:
-                    chosen.symmetric_difference_update({cursor})
-                else:
-                    chosen = {cursor}
-            elif key == "a" and multi:
+                chosen.symmetric_difference_update({cursor})
+            elif key == "a":
                 chosen = set(range(len(options))) if len(chosen) < len(options) else set()
             elif key == "enter":
-                if not chosen and not multi:
-                    chosen = {cursor}
-                term.close()
                 return sorted(chosen)
             elif key in ("q", "esc", "ctrl-c"):
-                term.close()
                 return []
 
 
-def _path_completer(text: str, state: int) -> str | None:
-    """readline completer offering filesystem paths, with a / on directories."""
-    expanded = Path(os.path.expandvars(text)).expanduser()
-    typed_directory = (
-        str(expanded.parent) if str(expanded.parent) != "." or text.startswith(".") else ""
-    )
-    directory = expanded.parent if str(expanded.parent) else Path()
-    stem = expanded.name if not text.endswith("/") else ""
-    if text.endswith("/"):
-        directory = expanded
+def _completer(match: Callable[[str], list[str]]) -> Callable[[str, int], str | None]:
+    """A readline completer over ``match(text)``, worked out once per Tab.
 
-    try:
-        entries = sorted(entry.name for entry in directory.iterdir())
-    except OSError:
-        return None
+    readline asks for match 0, 1, 2, ... until it gets None. Listing the
+    matches afresh on every call made one Tab in a folder of a few thousand
+    entries on an SMB share quadratic in stats, which reads as a hang.
+    """
+    matches: list[str] = []
 
-    matches = []
-    for entry in entries:
-        if not entry.startswith(stem):
-            continue
-        full = str(directory / entry) if typed_directory or text.endswith("/") else entry
-        matches.append(f"{full}/" if (directory / entry).is_dir() else full)
-
-    return matches[state] if state < len(matches) else None
-
-
-def _choice_completer(choices: Sequence[str]):
     def complete(text: str, state: int) -> str | None:
-        matches = [choice for choice in choices if choice.startswith(text)]
+        nonlocal matches
+        if state == 0:
+            matches = match(text)
         return matches[state] if state < len(matches) else None
 
     return complete
+
+
+def _path_matches(text: str) -> list[str]:
+    """Paths completing ``text`` as typed, ``~`` and all, with a / on directories."""
+    head, sep, stem = text.rpartition("/")
+    directory = Path(os.path.expandvars(head + sep or ".")).expanduser()
+    try:
+        with os.scandir(directory) as entries:
+            found = sorted(
+                (entry for entry in entries if entry.name.startswith(stem)),
+                key=lambda entry: entry.name,
+            )
+            return [f"{head}{sep}{entry.name}{'/' if entry.is_dir() else ''}" for entry in found]
+    except OSError:
+        return []
 
 
 def pause(message: str = "Press any key to continue") -> None:
