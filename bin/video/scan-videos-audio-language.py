@@ -16,20 +16,19 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from media import probe_media
 from utils import (
-    NC,
     build_parser,
-    color_enabled,
-    ffprobe_entries,
     info,
     iter_files,
+    paint,
     require_binary,
     run_cli,
     scan_root,
     warning,
 )
 
-__version__ = "3.0.0"
+__version__ = "3.1.0"
 
 VIDEO_EXTENSIONS = ("mp4", "mkv", "avi", "mov", "flv", "wmv", "webm")
 
@@ -49,22 +48,6 @@ LANG_COLOR = {
 DEFAULT_COLOR = "\033[90m"  # Gray for unknown languages
 
 
-_UNREADABLE = "\x00unreadable"
-
-
-def audio_languages(path: Path) -> list[str] | None:
-    """Sorted, de-duplicated language tags, or None when ffprobe cannot read it.
-
-    Telling "no language tags" apart from "could not be read" matters: the
-    shell version aborted the whole scan on an unreadable file (`set -e` on a
-    failing command substitution), so it never had to render the difference.
-    """
-    raw = ffprobe_entries(path, "stream_tags=language", stream="a", on_error=_UNREADABLE)
-    if raw == _UNREADABLE:
-        return None
-    return sorted({line.strip() for line in raw.splitlines() if line.strip()})
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser(
         prog="scan-videos-audio-language",
@@ -74,28 +57,28 @@ def main(argv: list[str] | None = None) -> int:
     info(f"Running command in {Path.cwd()}")
     args = parser.parse_args(argv)
 
-    if not args.path:
-        info(f"❌ Error: '{args.path}' is not a valid directory")
-        return 1
-
+    # An empty --path reads "--path is required", where the shell version
+    # reported `'' is not a valid directory`.
     root = scan_root(args.path)
 
     require_binary("ffprobe", hint="ffprobe (from ffmpeg) is required but not installed.")
 
-    # The per-language escapes are baked into the string before info() sees
-    # it, so NO_COLOR has to be honoured here as well or it would leak.
-    colors = color_enabled()
-
-    def paint(text: str, color: str) -> str:
-        return f"{color}{text}{NC}" if colors else text
-
     for path in iter_files(root, extensions=VIDEO_EXTENSIONS):
         info(f"File: {path}")
 
-        languages = audio_languages(path)
-        if languages is None:
+        # Telling "no language tags" apart from "could not be read" matters:
+        # the shell version aborted the whole scan on an unreadable file
+        # (`set -e` on a failing command substitution), so it never had to
+        # render the difference.
+        probe = probe_media(path)
+        if probe is None:
             warning(f"Audio language(s): {paint('Unreadable - ffprobe failed', DEFAULT_COLOR)}")
             continue
+
+        # DELIBERATE DIVERGENCE: the shell version's csv output read `und,`
+        # for AC3 or E-AC3 audio in an MP4 on ffprobe 9 (see MediaProbe), and
+        # a bare `,` when such a stream had no tag. Both now read cleanly.
+        languages = probe.languages("audio")
         if not languages:
             info(f"Audio language(s): {paint('Unknown or not tagged', DEFAULT_COLOR)}")
             continue

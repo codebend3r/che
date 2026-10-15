@@ -17,29 +17,27 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from media import CODEC_SCAN_EXTENSIONS, probe_media
 from utils import (
     add_bool_flag,
     build_parser,
-    ffprobe_entries,
     info,
     iter_files,
     log,
-    note,
+    note_settings,
     require_binary,
     run_cli,
     scan_root,
     warning,
 )
 
-__version__ = "3.0.0"
+__version__ = "3.1.0"
 
 # The common safe set for Direct Play. Tuples, not sets, so the banner prints
 # them in the order the shell version's arrays declared them.
 ALLOWED_VIDEO_CODECS = ("h264", "hevc")
 ALLOWED_AUDIO_CODECS = ("aac", "ac3", "eac3")
 ALLOWED_CONTAINERS = ("mov", "mp4", "mkv")
-
-SCAN_EXTENSIONS = ("mp4", "mkv", "mov", "avi")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -52,17 +50,11 @@ def main(argv: list[str] | None = None) -> int:
     info(f"Running command in {Path.cwd()}")
     args = parser.parse_args(argv)
 
-    note(f"Scanning: {args.path}")
-    note(f"Verbose: {str(args.verbose).lower()}")
-    note("----------------------------------------------------")
-
-    if not args.path:
-        warning("❌ --path is required")
-        return 1
-
-    require_binary("ffprobe", hint="Install FFmpeg: brew install ffmpeg")
+    note_settings(("Scanning", args.path), ("Verbose", args.verbose))
 
     root = scan_root(args.path)
+
+    require_binary("ffprobe", hint="Install FFmpeg: brew install ffmpeg")
 
     print(f"Scanning for problematic codecs in: {args.path}")
     print(f"Allowed Video: {' '.join(ALLOWED_VIDEO_CODECS)}")
@@ -72,19 +64,23 @@ def main(argv: list[str] | None = None) -> int:
 
     problems = 0
 
-    for path in iter_files(root, extensions=SCAN_EXTENSIONS):
+    for path in iter_files(root, extensions=CODEC_SCAN_EXTENSIONS):
         container = path.name.lower().rsplit(".", 1)[-1]
 
-        # "unknown" only when ffprobe itself FAILS (a corrupt file), matching
-        # the shell version's `|| echo "unknown"`. A file that probes fine but
-        # has no audio track keeps the empty string the shell version stored,
-        # so the two cases stay distinguishable in the report.
-        video_codec = ffprobe_entries(
-            path, "stream=codec_name", stream="v:0", on_error="unknown"
-        ).lower()
-        audio_codec = ffprobe_entries(
-            path, "stream=codec_name", stream="a:0", on_error="unknown"
-        ).lower()
+        # "unknown" when ffprobe itself FAILS (a corrupt file), matching the
+        # shell version's `|| echo "unknown"`, or when it cannot name a codec.
+        # A file that probes fine but has no audio track keeps the empty
+        # string the shell version stored, so the cases stay distinguishable.
+        #
+        # DELIBERATE DIVERGENCE: the shell version's csv output read `ac3,`
+        # for AC3 or E-AC3 audio in an MP4 on ffprobe 9 (see MediaProbe), so
+        # every such file failed the allowed-codec check. They now pass.
+        probe = probe_media(path)
+        if probe is None:
+            video_codec = audio_codec = "unknown"
+        else:
+            video_codec = probe.codec("video").lower()
+            audio_codec = probe.codec("audio").lower()
 
         ok = (
             video_codec in ALLOWED_VIDEO_CODECS

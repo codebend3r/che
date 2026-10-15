@@ -30,7 +30,6 @@ CLI conventions - shared patterns for bin/<category>/*.py
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 import shutil
@@ -437,7 +436,6 @@ def run(
     check: bool = True,
     capture: bool = False,
     cwd: str | Path | None = None,
-    text: bool = True,
     env: dict[str, str] | None = None,
     stdin: int | None = None,
     timeout: float | None = None,
@@ -460,12 +458,12 @@ def run(
         check=check,
         capture_output=capture,
         cwd=cwd,
-        text=text,
+        text=True,
         # errors="replace" rather than the default "strict": a single
         # non-UTF-8 byte in a child's diagnostic (a legacy-encoded title tag
         # echoed back by ffmpeg, say) would otherwise raise UnicodeDecodeError
         # and abort a whole library scan partway through.
-        errors="replace" if text else None,
+        errors="replace",
         env=merged_env,
         stdin=stdin,
         timeout=timeout,
@@ -486,20 +484,6 @@ def run_output(argv: Sequence[str], *, check: bool = True, cwd: str | Path | Non
             raise
         return ""
     return (completed.stdout or "").rstrip("\n")
-
-
-def run_lines(
-    argv: Sequence[str], *, check: bool = True, cwd: str | Path | None = None
-) -> list[str]:
-    """Run a command and return stdout split into non-empty lines.
-
-    DELIBERATE DIVERGENCE: in the shell scripts these reads sat inside
-    ``< <(...)`` process substitution, whose failure does NOT trip ``set -e`` -
-    a failing ``git for-each-ref`` just looked like "no branches" and the script
-    exited 0. Here a failure raises.
-    """
-    output = run_output(argv, check=check, cwd=cwd)
-    return [line for line in output.split("\n") if line]
 
 
 def run_cli(entry: Callable[[], int]) -> None:
@@ -529,216 +513,6 @@ def run_cli(entry: Callable[[], int]) -> None:
         sys.exit(1)
     except KeyboardInterrupt:
         sys.exit(130)
-
-
-def skip_git_hooks() -> None:
-    """Stop every git this process runs, and every script it spawns, running hooks.
-
-    The branch scripts only check out, rebase and delete branches. A repo's
-    hooks (lefthook, husky) gate the user's own commits and pushes, yet
-    ``git checkout`` fires post-checkout and ``git pull --rebase`` fires
-    pre-rebase, prepare-commit-msg, post-commit and post-rewrite as it replays
-    each commit. A hooks path of /dev/null holds no hooks at all.
-
-    It is set through GIT_CONFIG_COUNT (git 2.31+) rather than ``-c`` on each
-    call so no git invocation can miss it and a delegated script inherits it.
-    Repeat calls are no-ops, so a script and the scripts it delegates to can
-    all call it.
-    """
-    count = int(os.environ.get("GIT_CONFIG_COUNT") or 0)
-    for index in range(count):
-        if (
-            os.environ.get(f"GIT_CONFIG_KEY_{index}") == "core.hooksPath"
-            and os.environ.get(f"GIT_CONFIG_VALUE_{index}") == os.devnull
-        ):
-            return
-    os.environ[f"GIT_CONFIG_KEY_{count}"] = "core.hooksPath"
-    os.environ[f"GIT_CONFIG_VALUE_{count}"] = os.devnull
-    os.environ["GIT_CONFIG_COUNT"] = str(count + 1)
-
-
-# ---------------------------------------------------------------------------
-# Worktrees
-#
-# A branch checked out in a linked worktree cannot be checked out, deleted or
-# reset from the main clone - git refuses with "already used by worktree".
-# That is a mechanical limit, not a conflict, so every script that touches
-# branches needs to know which ones are pinned and where.
-# ---------------------------------------------------------------------------
-
-
-def worktree_branch_map(cwd: str | Path | None = None) -> dict[str, str]:
-    """Map ``branch -> worktree path`` for every worktree with a branch checked out.
-
-    Detached worktrees are skipped (they pin no branch). The main worktree IS
-    included, because its branch is pinned for exactly the same reason.
-
-    DELIBERATE DIVERGENCE: ``utils.sh`` emitted "<branch>\t<path>" lines that
-    every caller re-parsed. A dict is the same data without the round trip, and
-    it cannot be truncated by a path containing a tab.
-    """
-    mapping: dict[str, str] = {}
-    path = ""
-    branch = ""
-
-    def flush() -> None:
-        if path and branch:
-            # First writer wins: a branch can only be pinned by one worktree,
-            # so a duplicate would mean git contradicted itself.
-            mapping.setdefault(branch, path)
-
-    for line in run_output(["git", "worktree", "list", "--porcelain"], cwd=cwd).splitlines():
-        if line.startswith("worktree "):
-            # A new record starts; flush the previous one.
-            flush()
-            path = line.removeprefix("worktree ")
-            branch = ""
-        elif line.startswith("branch refs/heads/"):
-            branch = line.removeprefix("branch refs/heads/")
-
-    flush()
-    return mapping
-
-
-def worktree_for_branch(branch: str, cwd: str | Path | None = None) -> str:
-    """The worktree path holding ``branch``, or "" when no worktree does."""
-    return worktree_branch_map(cwd).get(branch, "")
-
-
-def worktree_is_clean(path: str | Path) -> bool:
-    """True when the worktree at ``path`` has no modified or untracked files.
-
-    Ignored build output (node_modules, .next) does not count as dirty, because
-    ``git status --porcelain`` does not list ignored paths.
-    """
-    completed = run(["git", "-C", str(path), "status", "--porcelain"], check=False, capture=True)
-    # A non-zero exit means the path is not a working tree at all. Treating
-    # that as "clean" would let a caller delete a directory it never inspected.
-    if completed.returncode != 0:
-        return False
-    return not (completed.stdout or "").strip()
-
-
-def branch_is_pushed(branch: str, cwd: str | Path | None = None) -> bool:
-    """True when every commit on ``branch`` is already on its remote.
-
-    Prefers the configured upstream and falls back to ``origin/<branch>``.
-    """
-    upstream = run_output(
-        ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", f"{branch}@{{upstream}}"],
-        check=False,
-        cwd=cwd,
-    ).strip()
-    if not upstream:
-        upstream = f"origin/{branch}"
-
-    exists = run(
-        ["git", "rev-parse", "--verify", "--quiet", upstream], check=False, capture=True, cwd=cwd
-    )
-    if exists.returncode != 0:
-        return False
-
-    ancestor = run(
-        ["git", "merge-base", "--is-ancestor", branch, upstream],
-        check=False,
-        capture=True,
-        cwd=cwd,
-    )
-    return ancestor.returncode == 0
-
-
-def worktree_paths(cwd: str | Path | None = None) -> list[str]:
-    """Every worktree path in ``git worktree list --porcelain`` order.
-
-    The first entry is always the main worktree; callers drop it themselves so
-    the distinction stays explicit at the call site.
-
-    The shell version parsed this with ``awk '{print $2}'``, which splits on
-    whitespace and so truncated any worktree path containing a space. Taking
-    the whole remainder of the line keeps such paths intact.
-    """
-    return [
-        line.removeprefix("worktree ")
-        for line in run_output(["git", "worktree", "list", "--porcelain"], cwd=cwd).splitlines()
-        if line.startswith("worktree ")
-    ]
-
-
-def main_worktree(cwd: str | Path | None = None) -> str:
-    """The main worktree's path - the first record git lists, always."""
-    paths = worktree_paths(cwd)
-    return paths[0] if paths else ""
-
-
-def find_main_branch(cwd: str | Path | None = None) -> str:
-    """The local main branch, preferring ``main`` over ``master``, or "" for neither.
-
-    Takes an explicit ``cwd`` because callers run it after moving to the main
-    worktree; relying on the process working directory would make the answer
-    depend on where the script happened to be invoked from.
-    """
-    for candidate in ("main", "master"):
-        exists = run(
-            ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{candidate}"],
-            check=False,
-            capture=True,
-            cwd=cwd,
-        )
-        if exists.returncode == 0:
-            return candidate
-    return ""
-
-
-# ---------------------------------------------------------------------------
-# ffprobe
-# ---------------------------------------------------------------------------
-
-
-def ffprobe_entries(
-    path: Path,
-    entries: str,
-    *,
-    stream: str | None = None,
-    fmt: str = "csv=p=0",
-    on_error: str = "",
-) -> str:
-    """Read metadata out of a media file with ffprobe.
-
-    ``entries`` is passed straight to ``-show_entries`` (e.g.
-    ``stream=codec_name``). ``stream`` selects a stream when given (e.g.
-    ``v:0``).
-
-    Returns ``on_error`` when ffprobe itself fails, and "" when it succeeds but
-    the field is absent. Those are different situations - a corrupt file versus
-    a file with no audio track - and callers need to tell them apart.
-    """
-    argv = ["ffprobe", "-v", "error"]
-    if stream is not None:
-        argv += ["-select_streams", stream]
-    argv += ["-show_entries", entries, "-of", fmt, str(path)]
-
-    completed = run(argv, check=False, capture=True)
-    if completed.returncode != 0:
-        return on_error
-    return (completed.stdout or "").strip()
-
-
-def ffprobe_json(path: Path, argv_extra: Sequence[str]) -> dict:
-    """Run ffprobe with ``-of json`` and parse the result.
-
-    Returns an empty dict when ffprobe fails or emits unparseable output, so
-    callers can treat an unreadable file as "no streams" rather than crashing
-    partway through a large library scan.
-    """
-    argv = ["ffprobe", "-v", "error", *argv_extra, "-of", "json", str(path)]
-    completed = run(argv, check=False, capture=True)
-    if completed.returncode != 0:
-        return {}
-    try:
-        parsed = json.loads(completed.stdout or "{}")
-    except json.JSONDecodeError:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
 
 
 # ---------------------------------------------------------------------------
