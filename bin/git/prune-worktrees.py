@@ -22,24 +22,22 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from gitutils import park_main_worktree, skip_git_hooks, worktrees
 from utils import (
     add_bool_flag,
     build_parser,
+    dry_run_complete,
     env_bool,
-    find_main_branch,
+    heading,
     info,
-    log,
-    note,
     require_binary,
     run,
     run_cli,
-    run_output,
     success,
     warning,
-    worktree_paths,
 )
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -61,60 +59,23 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     require_binary("git")
+    # Parking the main worktree is a `git checkout`, which fires post-checkout.
+    skip_git_hooks()
 
-    inside = run(["git", "rev-parse", "--is-inside-work-tree"], check=False, capture=True)
-    if inside.returncode != 0:
-        warning("❌ Not inside a git working tree.")
-        return 1
-
-    header_suffix = " 🌵 (dry run)" if args.dry_run else ""
-    note("═══════════════════════════════════════════")
-    note(f"🌿  prune-worktrees{header_suffix}")
-    note("═══════════════════════════════════════════")
+    heading("🌿  prune-worktrees", dry_run=args.dry_run)
 
     # Work from the main worktree: removing a worktree fails while standing
-    # inside it, and starting from a known-good branch keeps this predictable.
-    paths = worktree_paths()
-    if not paths:
-        warning("❌ Could not determine main worktree.")
-        return 1
-
-    main_wt = Path(paths[0])
-    linked = [p for p in paths[1:] if Path(p) != main_wt]
-
-    main_branch = find_main_branch(main_wt)
-    if not main_branch:
-        warning("❌ Neither 'main' nor 'master' exists locally — refusing to prune.")
-        return 1
-
-    current = run_output(
-        ["git", "symbolic-ref", "--quiet", "--short", "HEAD"], check=False, cwd=main_wt
-    ).strip()
-
-    if current != main_branch:
-        # Only block on tracked-file changes: untracked files (including linked
-        # worktrees nested under the main worktree) won't be touched by checkout.
-        dirty = run_output(["git", "status", "--porcelain", "--untracked-files=no"], cwd=main_wt)
-        if dirty:
-            warning("❌ Main worktree has uncommitted changes — commit or stash before pruning. 🧺")
-            return 1
-        if args.dry_run:
-            info(
-                f"🌵 Would switch main worktree to 🌿 {main_branch} (currently on {current or 'detached'})"
-            )
-        else:
-            info(f"🔀 Switching main worktree to 🌿 {main_branch} (from {current or 'detached'})")
-            run(["git", "checkout", "--quiet", main_branch], cwd=main_wt)
-    else:
-        info(f"📍 Main worktree already on 🌿 {main_branch}")
+    # inside it.
+    main_wt = park_main_worktree("prune", dry_run=args.dry_run)
 
     info("🔍 Listing worktrees...")
+    linked = [worktree.path for worktree in worktrees(main_wt)[1:]]
 
     if not linked:
         success("✨ No linked worktrees. Running prune anyway... 🎉")
         if args.dry_run:
             run(["git", "worktree", "prune", "--dry-run", "--verbose"], check=False, cwd=main_wt)
-            log("💡 Dry run complete. Nothing was actually pruned.")
+            dry_run_complete("pruned")
         else:
             run(["git", "worktree", "prune", "--verbose"], cwd=main_wt)
             success("✨ Pruned stale worktree records. 🎉")
@@ -125,7 +86,7 @@ def main(argv: list[str] | None = None) -> int:
         for path in linked:
             warning(f"  • 🪦 {path}")
         info("📜 Would also run: git worktree prune --verbose")
-        log("💡 Dry run complete. Nothing was actually removed.")
+        dry_run_complete("removed")
         return 0
 
     remove_args = ["--force"] if args.force else []

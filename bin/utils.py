@@ -52,11 +52,12 @@ YELLOW = "\033[1;33m"
 CYAN = "\033[1;36m"
 MAGENTA = "\033[1;35m"
 
-_FORCE_COLOR_OFF = {"", "0", "false", "no", "off"}
 
-
-def _color_enabled() -> bool:
+def color_enabled() -> bool:
     """Honor NO_COLOR and non-tty output the way a well-behaved CLI should.
+
+    The log helpers and :func:`paint` ask this, and so must any caller that
+    builds its own escape sequences (per-language colouring, table headers).
 
     DELIBERATE DIVERGENCE from ``utils.sh``, which always emitted escapes.
     Suppressing them when stdout is not a terminal keeps captured output clean
@@ -66,8 +67,8 @@ def _color_enabled() -> bool:
     The tty check happens at call time, not import time, so
     ``contextlib.redirect_stdout`` and pytest's capture are both respected.
     """
-    force = os.environ.get("FORCE_COLOR")
-    if force is not None and force.lower() not in _FORCE_COLOR_OFF:
+    force = os.environ.get("FORCE_COLOR", "").strip().lower()
+    if force and force not in _FALSE_VALUES:
         return True
     if os.environ.get("NO_COLOR"):
         return False
@@ -77,11 +78,14 @@ def _color_enabled() -> bool:
         return False
 
 
-def color_enabled() -> bool:
-    """Public form of :func:`_color_enabled`, for callers that build their own
-    escape sequences (per-language colouring, table headers) and must honour
-    ``NO_COLOR`` the same way the log helpers do."""
-    return _color_enabled()
+def paint(text: str, color: str) -> str:
+    """``text`` wrapped in ``color``, or bare when colour is off.
+
+    For output assembled before it is printed - a table cell, one coloured word
+    in a plain line. An ``f"{RED}...{NC}"`` built by hand ignores ``NO_COLOR``
+    and leaks escapes into piped output.
+    """
+    return f"{color}{text}{NC}" if color_enabled() else text
 
 
 def log_color(color: str, message: str) -> None:
@@ -97,10 +101,7 @@ def log_color(color: str, message: str) -> None:
     error messages appear *before* the banner that introduced them whenever the
     output is piped to a file or a CI log.
     """
-    if _color_enabled():
-        print(f"{color}{message}{NC}", flush=True)
-    else:
-        print(message, flush=True)
+    print(paint(message, color), flush=True)
 
 
 def log(message: str) -> None:
@@ -126,6 +127,49 @@ def note(message: str) -> None:
 def success(message: str) -> None:
     """Magenta. Summaries and completion."""
     log_color(MAGENTA, message)
+
+
+# ---------------------------------------------------------------------------
+# Banners
+#
+# The fixed shapes scripts frame their output with, so the widths and the
+# dry-run marker stay identical from one script to the next.
+# ---------------------------------------------------------------------------
+
+_HEADING_RULE = "═" * 43
+_SETTINGS_RULE = "-" * 52
+_FOOTER_RULE = "─" * 45
+
+
+def heading(title: str, *, dry_run: bool = False) -> None:
+    """The three-line banner a script opens with, marked when it only previews."""
+    note(_HEADING_RULE)
+    note(f"{title}{' 🌵 (dry run)' if dry_run else ''}")
+    note(_HEADING_RULE)
+
+
+def note_settings(*rows: tuple[str, object], rule: bool = True) -> None:
+    """Echo a script's resolved settings as ``Label: value`` lines.
+
+    Booleans print lowercase, ``true``/``false``, as the shell versions echoed
+    them; anything else prints as-is. ``rule`` closes the block with the dashed
+    separator that sets the settings apart from the results.
+    """
+    for label, value in rows:
+        note(f"{label}: {str(value).lower() if isinstance(value, bool) else value}")
+    if rule:
+        note(_SETTINGS_RULE)
+
+
+def footer_rule() -> None:
+    """A blank line and a thin rule, opening a script's closing tally."""
+    print()
+    note(_FOOTER_RULE)
+
+
+def dry_run_complete(verb: str = "changed") -> None:
+    """The closing line of a dry run: ``Nothing was actually <verb>.``"""
+    log(f"💡 Dry run complete. Nothing was actually {verb}.")
 
 
 # ---------------------------------------------------------------------------
@@ -183,7 +227,7 @@ _FALSE_VALUES = {"false", "no", "0", "off"}
 _FALSE_SUFFIX = "-set-false-internal"
 
 
-def parse_bool(value: str | bool) -> bool:
+def parse_bool(value: str) -> bool:
     """Parse a boolean spelling.
 
     Accepts ``true|yes|1|on`` and ``false|no|0|off``, case-insensitive, and
@@ -195,9 +239,6 @@ def parse_bool(value: str | bool) -> bool:
     There ``true``/``false`` worked, ``1``/``0``/``on``/``off``/``no`` were
     "command not found", and ``yes`` invoked ``/usr/bin/yes`` and hung forever.
     """
-    if isinstance(value, bool):
-        return value
-
     lowered = value.strip().lower()
     if lowered in _TRUE_VALUES:
         return True
@@ -250,10 +291,8 @@ class BoolFlagParser(argparse.ArgumentParser):
             rewritten.append(flag if enabled else self._bool_flags[flag])
         return rewritten
 
-    def parse_args(self, args=None, namespace=None):  # type: ignore[override]
-        argv = list(sys.argv[1:] if args is None else args)
-        return super().parse_args(self._rewrite(argv), namespace)
-
+    # parse_args delegates to parse_known_args, so this one override rewrites
+    # argv for both - and only once.
     def parse_known_args(self, args=None, namespace=None):  # type: ignore[override]
         argv = list(sys.argv[1:] if args is None else args)
         return super().parse_known_args(self._rewrite(argv), namespace)
@@ -341,6 +380,28 @@ def env_bool(name: str, default: bool) -> bool:
     except ValueError as exc:
         warning(f"❌ Environment variable {name}: {exc}")
         sys.exit(1)
+
+
+_COUNT_RE = re.compile(r"[0-9]+")
+
+
+def parse_count(raw: str, flag: str, *, minimum: int = 0) -> int:
+    """Validate an integer flag, or report why it is invalid and exit 1.
+
+    Integer flags are declared as plain strings and validated here, not with
+    ``type=int``. argparse's own conversion would own the failure and exit
+    before the shell version's message could print, and ``int()`` accepts
+    ``+5``, ``5_0`` and surrounding whitespace, all of which the shell's
+    ``^[0-9]+$`` test rejected. A leading zero is decimal: ``010`` is 10.
+
+    ``minimum`` of 1 or more reads "positive integer" in the message, 0 reads
+    "non-negative integer".
+    """
+    if not _COUNT_RE.fullmatch(raw) or int(raw) < minimum:
+        kind = "positive" if minimum > 0 else "non-negative"
+        warning(f"❌ {flag} must be a {kind} integer (got: {raw})")
+        sys.exit(1)
+    return int(raw)
 
 
 # ---------------------------------------------------------------------------
@@ -794,6 +855,22 @@ def scan_root(raw: str, *, flag: str = "--path") -> Path:
         sys.exit(1)
 
     return path
+
+
+def remove_or_warn(path: Path, remove: Callable[[Path], None] = Path.unlink) -> bool:
+    """Delete ``path`` (``remove=Path.rmdir`` for a directory), or say why not.
+
+    Returns whether it went. A failure is reported and left to the caller to
+    count: the shell versions aborted the whole run here under ``set -e`` (or,
+    in ``delete-smb-files``, hid it with ``2>/dev/null``), and on a NAS one busy
+    file should not strand the rest of a sweep.
+    """
+    try:
+        remove(path)
+    except OSError as exc:
+        warning(f"  ✗ Failed to delete {path}: {exc}")
+        return False
+    return True
 
 
 def normalize_extensions(raw: str, *, flag: str = "--ext") -> list[str]:
