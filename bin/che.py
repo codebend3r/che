@@ -335,13 +335,13 @@ def collect_arguments(command: Command) -> list[str]:
     for prompt in command.prompts:
         if prompt.kind == "bool":
             default = prompt.default == "true"
-            answer = tui.confirm(prompt.label, default=default)
-            # Only pass the flag when the answer differs from what the script
-            # already does, so the command line stays as short as what a person
-            # would have typed.
-            if answer and not default:
+            # A yes always passes the flag, and a no passes `=false` when the
+            # question defaulted to yes. The prompt's default is the question's,
+            # not necessarily the script's: `--dry-run` defaults to yes here on
+            # scripts that run for real without it.
+            if tui.confirm(prompt.label, default=default):
                 extra.append(prompt.flag)
-            elif not answer and default:
+            elif default:
                 extra.append(f"{prompt.flag}=false")
             continue
 
