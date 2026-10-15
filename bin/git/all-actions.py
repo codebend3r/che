@@ -28,28 +28,32 @@ Options:
 from __future__ import annotations
 
 import json
-import re
 import sys
 import time
-import unicodedata
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+# Cell widths come from tui's unicodedata-based measure, which replaced the
+# shell's count of 4-byte UTF-8 sequences and its hand-kept list of wide emoji.
+from tui import display_width, hyperlink
 from utils import (
     CYAN,
     GREEN,
-    MAGENTA,
     NC,
     RED,
     YELLOW,
     add_bool_flag,
     build_parser,
-    color_enabled,
+    heading,
     info,
+    log_color,
     note,
+    parse_count,
     require_binary,
     run,
     run_cli,
@@ -58,40 +62,56 @@ from utils import (
     warning,
 )
 
-__version__ = "2.1.0"
+__version__ = "2.2.0"
 
-STATUS_COLORS = {
-    "in_progress": CYAN,
-    "queued": YELLOW,
-    "waiting": YELLOW,
-    "pending": YELLOW,
-    "requested": YELLOW,
-    "success": GREEN,
-    "failure": RED,
-    "timed_out": RED,
-    "startup_failure": RED,
-    "action_required": RED,
+# (icon, row colour) per status; see status_style for one not listed here.
+STATUS_STYLE = {
+    "in_progress": ("🔄", CYAN),
+    "queued": ("⏳", YELLOW),
+    "waiting": ("⏳", YELLOW),
+    "pending": ("⏳", YELLOW),
+    "requested": ("⏳", YELLOW),
+    "success": ("✅", GREEN),
+    "failure": ("❌", RED),
+    "timed_out": ("❌", RED),
+    "startup_failure": ("❌", RED),
+    "action_required": ("⚪", RED),
+    "cancelled": ("🚫", NC),
+    "skipped": ("⏩", NC),
+    "none": ("➖", NC),  # noqa: RUF001
 }
 
-STATUS_ICONS = {
-    "in_progress": "🔄",
-    "queued": "⏳",
-    "waiting": "⏳",
-    "pending": "⏳",
-    "requested": "⏳",
-    "success": "✅",
-    "failure": "❌",
-    "timed_out": "❌",
-    "startup_failure": "❌",
-    "cancelled": "🚫",
-    "skipped": "⏩",
-    "none": "➖",  # noqa: RUF001
-}
 
-LIVE_STATUSES = frozenset({"in_progress", "queued", "waiting", "pending", "requested"})
+def status_style(status: str) -> tuple[str, str]:
+    """The (icon, row colour) for ``status``, neutral for one GitHub adds later."""
+    return STATUS_STYLE.get(status, ("⚪", NC))
+
+
 BAD_CONCLUSIONS = frozenset({"FAILURE", "TIMED_OUT", "STARTUP_FAILURE"})
 
-GRAPHQL_QUERY = """
+# The check suites both queries read off a commit, so a PR's head commit and a
+# repo's default-branch tip come back in the same shape (see suite_run).
+RUN_SUITES = """
+fragment RunSuites on Commit {
+  checkSuites(first: 20) {
+    nodes {
+      status
+      conclusion
+      workflowRun {
+        url
+        createdAt
+        updatedAt
+        workflow { name }
+      }
+    }
+  }
+}
+"""
+
+# Every open PR and its head-commit check suites, in a single call: one call
+# keeps a 15-second refresh well inside the rate limit.
+GRAPHQL_QUERY = (
+    """
 query($q: String!, $first: Int!) {
   search(query: $q, type: ISSUE, first: $first) {
     nodes {
@@ -102,20 +122,7 @@ query($q: String!, $first: Int!) {
         repository { nameWithOwner }
         commits(last: 1) {
           nodes {
-            commit {
-              checkSuites(first: 20) {
-                nodes {
-                  status
-                  conclusion
-                  workflowRun {
-                    url
-                    createdAt
-                    updatedAt
-                    workflow { name }
-                  }
-                }
-              }
-            }
+            commit { ...RunSuites }
           }
         }
       }
@@ -123,16 +130,22 @@ query($q: String!, $first: Int!) {
   }
 }
 """
+    + RUN_SUITES
+)
 
 
 # The default-branch sweep. `repositoryOwner` takes one login, unlike the
-# search query's `user:` qualifiers, so this runs once per --owner.
+# search query's `user:` qualifiers, so this runs once per --owner - one call
+# per owner rather than one per repo: sweeping fifty repos through the REST
+# API would be fifty calls a cycle, which a 15-second --watch would spend the
+# whole rate limit on.
 #
 # `isFork: false, isArchived: false` on purpose: a fork's CI belongs to whoever
 # you forked from, and an archived repo cannot have a run you would act on.
 # PUSHED_AT ordering means a --repo-limit below the account's repo count keeps
 # the repos you actually touch.
-BRANCH_GRAPHQL_QUERY = """
+BRANCH_GRAPHQL_QUERY = (
+    """
 query($login: String!, $first: Int!) {
   repositoryOwner(login: $login) {
     repositories(
@@ -146,84 +159,51 @@ query($login: String!, $first: Int!) {
         nameWithOwner
         defaultBranchRef {
           name
-          target {
-            ... on Commit {
-              checkSuites(first: 20) {
-                nodes {
-                  status
-                  conclusion
-                  workflowRun {
-                    url
-                    createdAt
-                    updatedAt
-                    workflow { name }
-                  }
-                }
-              }
-            }
-          }
+          target { ...RunSuites }
         }
       }
     }
   }
 }
 """
+    + RUN_SUITES
+)
 
 
-# U+FE0F, the emoji presentation selector. It renders the PRECEDING character
-# as an emoji, which is two columns wide even when that base character is a
-# narrow symbol - so it promotes rather than taking zero width of its own.
-# Workflow names like "✔️ Lint" and "⚠️ Nightly" are exactly this shape.
-VARIATION_SELECTOR_16 = "\ufe0f"
+class Run(NamedTuple):
+    """The workflow run a row shows."""
+
+    live: bool  # still in flight; decides sort order and how TOOK is measured
+    status: str
+    workflow: str
+    created: str
+    updated: str
+    url: str
 
 
-def display_width(text: str) -> int:
-    """Terminal columns ``text`` occupies.
-
-    The shell version counted 4-byte UTF-8 sequences and kept a hand-maintained
-    list of double-width BMP emoji, which had to grow every time a new icon was
-    added. ``unicodedata`` covers the common cases directly: wide and fullwidth
-    characters take two columns, combining marks take none, everything else
-    takes one.
-
-    Known limitation, unchanged from the shell version: a ZWJ sequence such as
-    "👨‍💻" is counted per component rather than as one glyph, so it over-counts.
-    """
-    width = 0
-    previous = 0
-
-    for char in text:
-        if char == VARIATION_SELECTOR_16:
-            # Promote a narrow base to two columns; a base that is already
-            # wide stays wide.
-            if previous == 1:
-                width += 1
-                previous = 2
-            continue
-        if unicodedata.combining(char):
-            continue
-        previous = 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
-        width += previous
-
-    return width
+# A PR whose head commit has no run yet. It still links to the PR itself.
+NO_RUN = Run(live=False, status="none", workflow="-", created="", updated="", url="")
 
 
-def pad(value: str, width: int) -> str:
-    """Left-align ``value`` in a cell ``width`` terminal columns wide."""
-    return value + " " * max(0, width - display_width(value))
+class Row(NamedTuple):
+    """One table row: a PR's head commit, or a repo's default-branch tip."""
+
+    repo: str
+    branch: str
+    run: Run
+    number: int | None = None  # the PR; None on a default-branch row
 
 
-def pad_link(url: str, value: str, width: int) -> str:
-    """Same as :func:`pad`, but wraps the text in an OSC 8 hyperlink.
+def pad(value: str, width: int, url: str = "") -> str:
+    """Left-align ``value`` in a cell ``width`` terminal columns wide.
 
-    The escape sequences are zero-width, so the padding is computed from the
-    plain text and only the text itself gets wrapped. Suppressed alongside
-    color, so a piped or NO_COLOR run is plain text throughout.
+    With a ``url`` the text is wrapped in an OSC 8 hyperlink. The escapes are
+    zero-width, so the padding is computed from the plain text and only the
+    text itself gets wrapped. ``hyperlink`` drops them alongside colour, so a
+    piped or NO_COLOR run is plain text throughout.
     """
     padding = " " * max(0, width - display_width(value))
-    if not url or not color_enabled():
-        return value + padding
-    return f"\033]8;;{url}\033\\{value}\033]8;;\033\\{padding}"
+    return (hyperlink(value, url) if url else value) + padding
 
 
 def parse_iso(value: str) -> datetime | None:
@@ -261,22 +241,21 @@ def fmt_duration(seconds: int) -> str:
     return f"{seconds // 3600}h{(seconds % 3600) // 60:02d}m"
 
 
-def run_duration(status: str, created: str, updated: str) -> str:
+def run_duration(run: Run) -> str:
     """How long a run took.
 
     Completed runs are createdAt -> updatedAt; anything still in flight is
-    measured against now, so the column ticks up while it runs.
+    measured against now, so the column ticks up while it runs. ``live`` is
+    the run's own flag, so a suite whose status came back null - shown as
+    "unknown", but not COMPLETED - ticks too, rather than reading as finished.
     """
-    start = parse_iso(created)
+    start = parse_iso(run.created)
     if start is None:
         return "-"
 
-    if status in LIVE_STATUSES:
-        end = datetime.now(UTC)
-    else:
-        end = parse_iso(updated)
-        if end is None:
-            return "-"
+    end = datetime.now(UTC) if run.live else parse_iso(run.updated)
+    if end is None:
+        return "-"
 
     return fmt_duration(max(0, int((end - start).total_seconds())))
 
@@ -305,43 +284,29 @@ def pick_suite(suites: list[dict]) -> dict | None:
     return sorted(usable, key=created)[-1]
 
 
-def suite_fields(suite: dict | None, fallback_url: str = "") -> dict:
-    """The display fields for one check suite.
+def suite_run(suite: dict) -> Run:
+    """The :class:`Run` one check suite (from :func:`pick_suite`) describes.
 
     Shared by both queries: a PR's head commit and a repo's default-branch tip
     return the same ``checkSuites`` shape, so they render from the same code.
     """
-    if suite is None:
-        return {
-            "live": False,
-            "status": "none",
-            "workflow": "-",
-            "created": "",
-            "updated": "",
-            "url": fallback_url,
-        }
-
     workflow_run = suite["workflowRun"]
-    if suite.get("status") != "COMPLETED":
-        # `or "unknown"`: jq died outright on a null status, taking the whole
-        # run's output with it. An empty cell would be worse than saying so.
-        status = (suite.get("status") or "unknown").lower()
-        live = True
-    else:
-        status = (suite.get("conclusion") or "unknown").lower()
-        live = False
+    live = suite.get("status") != "COMPLETED"
+    # `or "unknown"`: jq died outright on a null status, taking the whole
+    # run's output with it. An empty cell would be worse than saying so.
+    status = (suite.get("status") if live else suite.get("conclusion")) or "unknown"
 
-    return {
-        "live": live,
-        "status": status,
-        "workflow": ((workflow_run.get("workflow") or {}).get("name")) or "-",
-        "created": workflow_run.get("createdAt") or "",
-        "updated": workflow_run.get("updatedAt") or "",
-        "url": workflow_run.get("url") or "",
-    }
+    return Run(
+        live=live,
+        status=status.lower(),
+        workflow=((workflow_run.get("workflow") or {}).get("name")) or "-",
+        created=workflow_run.get("createdAt") or "",
+        updated=workflow_run.get("updatedAt") or "",
+        url=workflow_run.get("url") or "",
+    )
 
 
-def build_rows(payload: dict) -> list[dict]:
+def build_rows(payload: dict) -> list[Row]:
     """Flatten the GraphQL response into one row per PR.
 
     This replaces the shell version's jq program, which is why jq is no longer
@@ -362,16 +327,20 @@ def build_rows(payload: dict) -> list[dict]:
 
         # A PR with no run still links somewhere useful, so it keeps its row.
         # A repo with no run does not - see build_branch_rows.
-        row = suite_fields(pick_suite(suites), pr.get("url") or "")
-        row["repo"] = (pr.get("repository") or {}).get("nameWithOwner") or ""
-        row["number"] = pr["number"]
-        row["branch"] = pr.get("headRefName") or ""
-        rows.append(row)
+        suite = pick_suite(suites)
+        rows.append(
+            Row(
+                repo=(pr.get("repository") or {}).get("nameWithOwner") or "",
+                branch=pr.get("headRefName") or "",
+                run=suite_run(suite) if suite else NO_RUN._replace(url=pr.get("url") or ""),
+                number=pr["number"],
+            )
+        )
 
     return rows
 
 
-def build_branch_rows(payload: dict) -> list[dict]:
+def build_branch_rows(payload: dict) -> list[Row]:
     """Flatten the repository response into one row per default branch.
 
     Repos whose default-branch tip has no workflow run are dropped rather than
@@ -398,117 +367,52 @@ def build_branch_rows(payload: dict) -> list[dict]:
         if suite is None:
             continue
 
-        row = suite_fields(suite)
-        row["repo"] = repo.get("nameWithOwner") or ""
-        row["branch"] = ref.get("name") or ""
-        rows.append(row)
-
-    return rows
-
-
-def fetch_rows(owners: str, author: str, pr_limit: int) -> list[dict]:
-    """Every open PR and its head-commit check suites, in a single GraphQL call.
-
-    One call keeps a 15-second refresh well inside the rate limit.
-    """
-    # `user:` qualifiers are OR'd by GitHub search, so several owners widen the
-    # sweep rather than narrowing it.
-    query = f"is:pr is:open archived:false author:{author}"
-    for owner in owners.split(","):
-        owner = owner.strip()
-        if owner:
-            query += f" user:{owner}"
-
-    completed = run(
-        [
-            "gh",
-            "api",
-            "graphql",
-            "-f",
-            f"query={GRAPHQL_QUERY}",
-            "-f",
-            f"q={query}",
-            "-F",
-            f"first={pr_limit}",
-        ],
-        check=False,
-        capture=True,
-    )
-    if completed.returncode != 0:
-        return []
-
-    try:
-        payload = json.loads(completed.stdout or "{}")
-    except json.JSONDecodeError:
-        return []
-
-    return build_rows(payload)
-
-
-def fetch_branch_rows(owners: str, repo_limit: int) -> list[dict]:
-    """Default-branch runs for every repo each owner owns outright.
-
-    One call per owner rather than one per repo: sweeping fifty repos through
-    the REST API would be fifty calls a cycle, which a 15-second --watch would
-    spend the whole rate limit on.
-    """
-    rows: list[dict] = []
-
-    for owner in owners.split(","):
-        owner = owner.strip()
-        if not owner:
-            continue
-
-        completed = run(
-            [
-                "gh",
-                "api",
-                "graphql",
-                "-f",
-                f"query={BRANCH_GRAPHQL_QUERY}",
-                "-f",
-                f"login={owner}",
-                "-F",
-                f"first={repo_limit}",
-            ],
-            check=False,
-            capture=True,
+        rows.append(
+            Row(
+                repo=repo.get("nameWithOwner") or "",
+                branch=ref.get("name") or "",
+                run=suite_run(suite),
+            )
         )
-        if completed.returncode != 0:
-            # One bad owner (a typo, an org you lost access to) must not sink
-            # the sweep for the others.
-            continue
-
-        try:
-            payload = json.loads(completed.stdout or "{}")
-        except json.JSONDecodeError:
-            continue
-
-        rows.extend(build_branch_rows(payload))
 
     return rows
 
 
-def sort_rows(rows: list[dict]) -> None:
+def gh_graphql(query: str, first: int, **variables: str) -> dict:
+    """One ``gh api graphql`` call, or ``{}`` when it fails or is not JSON.
+
+    ``{}`` flattens to no rows. One bad owner (a typo, an org you lost access
+    to) or one failed cycle of a --watch must not sink the rest of the sweep.
+    """
+    argv = ["gh", "api", "graphql", "-f", f"query={query}", "-F", f"first={first}"]
+    for name, value in variables.items():
+        argv += ["-f", f"{name}={value}"]
+
+    completed = run(argv, check=False, capture=True)
+    if completed.returncode != 0:
+        return {}
+    try:
+        return json.loads(completed.stdout or "{}")
+    except json.JSONDecodeError:
+        return {}
+
+
+def sort_rows(rows: list[Row]) -> None:
     """In-flight rows first, then grouped by repo, newest run first.
 
     Two passes because Python's sort is stable: the second preserves the
     ordering the first established within each group.
     """
-    rows.sort(key=lambda r: r["created"] or "", reverse=True)
-    rows.sort(key=lambda r: (not r["live"], r["repo"]))
+    rows.sort(key=lambda r: r.run.created, reverse=True)
+    rows.sort(key=lambda r: (not r.run.live, r.repo))
 
 
-def draw_table(
-    rows: list[dict],
-    columns: Sequence[tuple[str, Callable[[dict], str], int]],
-    link: Callable[[dict], str] | None = None,
-) -> None:
+def draw_table(rows: list[Row], columns: Sequence[tuple[str, Callable[[Row], str], int]]) -> None:
     """Print one aligned table of ``rows``.
 
     ``columns`` is (title, cell, minimum width) per column; every column is
-    sized to its widest cell. ``link`` supplies the URL that wraps the first
-    column, which is the repo name in both tables.
+    sized to its widest cell. The first column, the repo name in both tables,
+    links to the row's run.
 
     Factored out when the default-branch table arrived: it shares every column
     but PR with the pull request table, and two copies of the width arithmetic
@@ -518,7 +422,6 @@ def draw_table(
         max([minimum, *(display_width(cell(row)) for row in rows)]) for _, cell, minimum in columns
     ]
     last = len(columns) - 1
-    colors = color_enabled()
 
     # The header's final cell is not padded, so the line has no trailing
     # whitespace; data cells are, matching what the shell version emitted.
@@ -526,102 +429,82 @@ def draw_table(
         title if index == last else pad(title, width)
         for index, ((title, _, _), width) in enumerate(zip(columns, widths, strict=True))
     )
-    print(f"{MAGENTA}{header}{NC}" if colors else header, flush=True)
+    success(header)
 
     for row in rows:
-        cells = []
-        for index, ((_, cell, _), width) in enumerate(zip(columns, widths, strict=True)):
-            value = cell(row)
-            if index == 0 and link is not None:
-                cells.append(pad_link(link(row), value, width))
-            else:
-                cells.append(pad(value, width))
-        line = "  ".join(cells)
-        color = STATUS_COLORS.get(row.get("status", ""), NC)
-        print(f"{color}{line}{NC}" if colors else line, flush=True)
+        line = "  ".join(
+            pad(cell(row), width, row.run.url if index == 0 else "")
+            for index, ((_, cell, _), width) in enumerate(zip(columns, widths, strict=True))
+        )
+        log_color(status_style(row.run.status)[1], line)
 
 
-def render(owners: str, author: str, pr_limit: int, repo_limit: int, include_main: bool) -> None:
+def render(
+    owners: tuple[str, ...], author: str, pr_limit: int, repo_limit: int, include_main: bool
+) -> None:
     """Draw both tables once."""
-    single_owner = "," not in owners
+    owners_text = ",".join(owners)
+    # `user:` qualifiers are OR'd by GitHub search, so several owners widen the
+    # sweep rather than narrowing it.
+    search = " ".join(
+        ["is:pr is:open archived:false", f"author:{author}", *(f"user:{o}" for o in owners)]
+    )
 
-    rows = fetch_rows(owners, author, pr_limit)
-    branch_rows = fetch_branch_rows(owners, repo_limit) if include_main else []
+    # The PR search and each owner's sweep in parallel: run one after another,
+    # every --watch cycle waited on 1 + N round trips back to back.
+    with ThreadPoolExecutor() as pool:
+        pr_payload = pool.submit(gh_graphql, GRAPHQL_QUERY, pr_limit, q=search)
+        branch_payloads = [
+            pool.submit(gh_graphql, BRANCH_GRAPHQL_QUERY, repo_limit, login=owner)
+            for owner in (owners if include_main else ())
+        ]
+        rows = build_rows(pr_payload.result())
+        # Collected in submission order, not as each call finishes, so the
+        # output never depends on which reply happened to land first.
+        branch_rows = [row for f in branch_payloads for row in build_branch_rows(f.result())]
+
     # After the fetch, not before: the shell called date(1) inside the banner,
     # so in --watch mode the timestamp reflects when the data landed.
     clock = datetime.now().strftime("%H:%M:%S")
 
-    def label(row: dict) -> str:
-        return row["repo"].split("/", 1)[-1] if single_owner else row["repo"]
-
-    def status_cell(row: dict) -> str:
-        return f"{STATUS_ICONS.get(row['status'], '⚪')} {row['status']}"
-
-    def age_cell(row: dict) -> str:
-        return iso_to_age(row["created"])
-
-    def took_cell(row: dict) -> str:
-        return run_duration(row["status"], row["created"], row["updated"])
-
-    if not rows and not branch_rows:
-        note("═══════════════════════════════════════════")
-        note(f"🎬  all-actions — {clock}")
-        note("═══════════════════════════════════════════")
-        info(f"🫙 No open pull requests authored by {author} under: {owners}")
-        if include_main:
-            info(f"🫙 No default-branch runs either, under: {owners}")
-        return
-
     sort_rows(rows)
     sort_rows(branch_rows)
 
-    repo_count = len({r["repo"] for r in rows})
+    single_owner = len(owners) == 1
 
-    note("═══════════════════════════════════════════")
-    note(f"🎬  all-actions — {len(rows)} open PR(s) · {repo_count} repo(s) · {clock}")
-    note("═══════════════════════════════════════════")
+    def label(row: Row) -> str:
+        return row.repo.split("/", 1)[-1] if single_owner else row.repo
+
+    # Every column but PR is shared: a push to the default branch has no pull
+    # request behind it, and a column of dashes would just take width from
+    # the workflow names, which are the point of that table.
+    repo_column = ("REPO", label, 4)
+    run_columns = (
+        ("STATUS", lambda r: f"{status_style(r.run.status)[0]} {r.run.status}", 6),
+        ("WORKFLOW", lambda r: r.run.workflow, 8),
+        ("BRANCH", lambda r: r.branch, 6),
+        ("AGE", lambda r: iso_to_age(r.run.created), 4),
+        ("TOOK", lambda r: run_duration(r.run), 5),
+    )
+
+    repo_count = len({r.repo for r in rows})
+    heading(f"🎬  all-actions — {len(rows)} open PR(s) · {repo_count} repo(s) · {clock}")
 
     if rows:
-        draw_table(
-            rows,
-            (
-                ("REPO", label, 4),
-                ("PR", lambda r: f"#{r['number']}", 3),
-                ("STATUS", status_cell, 6),
-                ("WORKFLOW", lambda r: r["workflow"], 8),
-                ("BRANCH", lambda r: r["branch"], 6),
-                ("AGE", age_cell, 4),
-                ("TOOK", took_cell, 5),
-            ),
-            link=lambda r: r["url"],
-        )
+        draw_table(rows, (repo_column, ("PR", lambda r: f"#{r.number}", 3), *run_columns))
     else:
-        info(f"🫙 No open pull requests authored by {author} under: {owners}")
+        info(f"🫙 No open pull requests authored by {author} under: {owners_text}")
 
     if include_main:
         print(flush=True)
-        # No PR column here: a push to the default branch has no pull request
-        # behind it, and a column of dashes would just take width from the
-        # workflow names, which are the point of this table.
         note(f"🌳  default branch — {len(branch_rows)} repo(s)")
         if branch_rows:
-            draw_table(
-                branch_rows,
-                (
-                    ("REPO", label, 4),
-                    ("STATUS", status_cell, 6),
-                    ("WORKFLOW", lambda r: r["workflow"], 8),
-                    ("BRANCH", lambda r: r["branch"], 6),
-                    ("AGE", age_cell, 4),
-                    ("TOOK", took_cell, 5),
-                ),
-                link=lambda r: r["url"],
-            )
+            draw_table(branch_rows, (repo_column, *run_columns))
         else:
-            info(f"🫙 No default-branch runs found under: {owners}")
+            info(f"🫙 No default-branch runs found under: {owners_text}")
 
     total = len(rows) + len(branch_rows)
-    live_count = sum(1 for row in (*rows, *branch_rows) if row["live"])
+    live_count = sum(1 for row in (*rows, *branch_rows) if row.run.live)
     idle_count = total - live_count
 
     print(flush=True)
@@ -663,14 +546,12 @@ def main(argv: list[str] | None = None) -> int:
         "--pr-limit",
         default="100",
         metavar="N",
-        dest="pr_limit",
         help="Open PRs to inspect, max 100 (default: 100)",
     )
     parser.add_argument(
         "--repo-limit",
         default="100",
         metavar="N",
-        dest="repo_limit",
         help="Repos to sweep for default-branch runs, max 100 (default: 100)",
     )
     # allow_value=False, per the convention for inverted flags: `--no-main=false`
@@ -678,7 +559,6 @@ def main(argv: list[str] | None = None) -> int:
     add_bool_flag(
         parser,
         "--no-main",
-        dest="no_main",
         help="Skip the default-branch table, showing pull requests only",
         allow_value=False,
     )
@@ -704,23 +584,12 @@ def main(argv: list[str] | None = None) -> int:
     # After parsing, unlike the shell version, so --help works without gh.
     require_binary("gh", hint="Install it with `brew install gh`.")
 
-    interval_raw = args.interval
-    if args.watch:
-        interval_raw = args.watch
-
-    for name, value in (
-        ("pr-limit", args.pr_limit),
-        ("repo-limit", args.repo_limit),
-        ("interval", interval_raw),
-    ):
-        if not re.fullmatch(r"[0-9]+", value):
-            warning(f"❌ --{name} must be a non-negative integer (got: {value})")
-            return 1
-
     # Both GraphQL connections cap out at 100 nodes per page.
-    pr_limit = min(100, max(1, int(args.pr_limit)))
-    repo_limit = min(100, max(1, int(args.repo_limit)))
-    interval = max(1, int(interval_raw))
+    pr_limit = min(100, max(1, parse_count(args.pr_limit, "--pr-limit")))
+    repo_limit = min(100, max(1, parse_count(args.repo_limit, "--repo-limit")))
+    # A value given to --watch overrides --interval, so an error names it.
+    interval_flag = "--watch" if args.watch else "--interval"
+    interval = max(1, parse_count(args.watch or args.interval, interval_flag))
     watch = args.watch is not None
     include_main = not args.no_main
 
@@ -728,9 +597,9 @@ def main(argv: list[str] | None = None) -> int:
         warning("❌ Not logged in to GitHub. Run: gh auth login")
         return 1
 
-    owners = args.owner
+    owners_text = args.owner
     author = args.author
-    if not owners or not author:
+    if not owners_text or not author:
         login = run_output(["gh", "api", "user", "--jq", ".login"], check=False).strip()
         if not login:
             # Without a login the query loses its `user:` qualifier entirely and
@@ -738,11 +607,16 @@ def main(argv: list[str] | None = None) -> int:
             # and still fail here (missing read:user, unauthorised SSO, a 5xx).
             warning("❌ Could not determine your gh login. Pass --owner= and --author=.")
             return 1
-        owners = owners or login
+        owners_text = owners_text or login
         author = author or login
 
-    if not watch:
+    owners = tuple(owner for part in owners_text.split(",") if (owner := part.strip()))
+
+    def draw() -> None:
         render(owners, author, pr_limit, repo_limit, include_main)
+
+    if not watch:
+        draw()
         return 0
 
     try:
@@ -750,7 +624,7 @@ def main(argv: list[str] | None = None) -> int:
             # ANSI clear + home, rather than shelling out to clear(1).
             print("\033[2J\033[H", end="", flush=True)
             try:
-                render(owners, author, pr_limit, repo_limit, include_main)
+                draw()
             # Broad on purpose: the shell wrapped this as `render || true`.
             except Exception as exc:
                 # One unexpected payload shape must not end a long watch.
