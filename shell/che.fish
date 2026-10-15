@@ -89,7 +89,7 @@ function sync-all-branches-dr --description 'Delete merged branches, rebase the 
 end
 
 function update-from-origin --description 'Alias of sync-all-branches'
-    env DRY_RUN=false "$CHE_PYTHON" "$CHE_BIN/git/sync-all-branches.py" $argv
+    "$CHE_PYTHON" "$CHE_BIN/git/sync-all-branches.py" --dry-run=false $argv
     che_notify 7 $status
 end
 
@@ -232,7 +232,7 @@ function compress-folders --description 'Zip every immediate subfolder of a path
 end
 
 function list-permission --description 'Show ownership and mode of a volume under /Volumes'
-    command ls -ld "/Volumes/$argv[1]"
+    "$CHE_PYTHON" "$CHE_BIN/files/list-permission.py" $argv
     che_notify 7 $status
 end
 

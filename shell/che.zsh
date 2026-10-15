@@ -33,29 +33,6 @@ export CHE_PYTHON
 # ~/.zshrc that still refers to it keeps resolving.
 export SHELL_FUNCTIONS_BIN="${CHE_BIN}"
 
-# Play the completion sound for a wrapper, then return the status it was given.
-#
-# playsound-N is defined outside this repo. Every wrapper used to call it
-# unconditionally, which printed "command not found" on a machine that never
-# had it; here a missing playsound is simply skipped. Set CHE_SOUNDS=0 to
-# silence them all.
-che_notify() {
-  if [ "${CHE_SOUNDS:-1}" = "1" ] && command -v "playsound-$1" >/dev/null 2>&1; then
-    "playsound-$1" >/dev/null 2>&1
-  fi
-  return "${2:-0}"
-}
-
-# The dispatcher. `che` with no arguments opens the interactive menu.
-che() {
-  if [ "$#" -eq 0 ]; then
-    "$CHE_PYTHON" "$CHE_BIN/che.py"
-  else
-    "$CHE_PYTHON" "$CHE_BIN/che.py" "$@"
-    che_notify 7 $?
-  fi
-}
-
 # An alias sharing a name with a wrapper below is fatal, not cosmetic: zsh
 # expands aliases while *parsing*, so `remove-metadata() {` becomes
 # `find ./ -type f …() {` and the parse error aborts the rest of this file -
@@ -86,9 +63,9 @@ _che_restore_aliases() {
   _che_stashed_aliases=()
 }
 
-_che_stash_aliases che all-actions all-actions-watch checkout-my-branches \
-  clean-stale-branches clean-stale-branches-dr prune-worktrees \
-  prune-worktrees-dr sync-all-branches sync-all-branches-dr \
+_che_stash_aliases che_notify che all-actions all-actions-watch \
+  checkout-my-branches clean-stale-branches clean-stale-branches-dr \
+  prune-worktrees prune-worktrees-dr sync-all-branches sync-all-branches-dr \
   update-from-origin update-local-branches show-codecs fix-codecs \
   fix-codecs-dr find-video-mkv-issues validate-video-files \
   scan-videos-audio-language remove-metadata rename-video-file \
@@ -99,6 +76,29 @@ _che_stash_aliases che all-actions all-actions-watch checkout-my-branches \
   files-under-size files-under-size-dr find-largest-files make-alpha-dir \
   compress-folders list-permission mount-all-drives eject-all-drives \
   eject-all-drives-dr ping-nas update-brew update-brew-dr btop
+
+# Play the completion sound for a wrapper, then return the status it was given.
+#
+# playsound-N is defined outside this repo. Every wrapper used to call it
+# unconditionally, which printed "command not found" on a machine that never
+# had it; here a missing playsound is simply skipped. Set CHE_SOUNDS=0 to
+# silence them all.
+che_notify() {
+  if [ "${CHE_SOUNDS:-1}" != "0" ] && command -v "playsound-$1" >/dev/null 2>&1; then
+    "playsound-$1" >/dev/null 2>&1
+  fi
+  return "${2:-0}"
+}
+
+# The dispatcher. `che` with no arguments opens the interactive menu.
+che() {
+  if [ "$#" -eq 0 ]; then
+    "$CHE_PYTHON" "$CHE_BIN/che.py"
+  else
+    "$CHE_PYTHON" "$CHE_BIN/che.py" "$@"
+    che_notify 7 $?
+  fi
+}
 
 # --------------------------------------------------------------------------
 # Git - Branch hygiene, worktrees and GitHub Actions
@@ -158,7 +158,7 @@ sync-all-branches-dr() {
 
 # Alias of sync-all-branches
 update-from-origin() {
-  DRY_RUN=false "$CHE_PYTHON" "$CHE_BIN/git/sync-all-branches.py" "$@"
+  "$CHE_PYTHON" "$CHE_BIN/git/sync-all-branches.py" --dry-run=false "$@"
   che_notify 7 $?
 }
 
@@ -328,7 +328,7 @@ compress-folders() {
 
 # Show ownership and mode of a volume under /Volumes
 list-permission() {
-  command ls -ld "/Volumes/$1"
+  "$CHE_PYTHON" "$CHE_BIN/files/list-permission.py" "$@"
   che_notify 7 $?
 }
 

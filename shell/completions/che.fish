@@ -58,14 +58,14 @@ complete -c che -n __fish_use_subcommand -a completions -d 'Print the completion
 complete -c che -n "__fish_seen_subcommand_from all-actions" -l owner -r
 complete -c che -n "__fish_seen_subcommand_from all-actions" -l author -r
 complete -c che -n "__fish_seen_subcommand_from all-actions" -l pr-limit -r
-complete -c che -n "__fish_seen_subcommand_from all-actions" -l repo-limit
+complete -c che -n "__fish_seen_subcommand_from all-actions" -l repo-limit -r
 complete -c che -n "__fish_seen_subcommand_from all-actions" -l no-main
 complete -c che -n "__fish_seen_subcommand_from all-actions" -l interval -r
 complete -c che -n "__fish_seen_subcommand_from all-actions" -l watch
 complete -c che -n "__fish_seen_subcommand_from all-actions-watch" -l owner -r
 complete -c che -n "__fish_seen_subcommand_from all-actions-watch" -l author -r
 complete -c che -n "__fish_seen_subcommand_from all-actions-watch" -l pr-limit -r
-complete -c che -n "__fish_seen_subcommand_from all-actions-watch" -l repo-limit
+complete -c che -n "__fish_seen_subcommand_from all-actions-watch" -l repo-limit -r
 complete -c che -n "__fish_seen_subcommand_from all-actions-watch" -l no-main
 complete -c che -n "__fish_seen_subcommand_from all-actions-watch" -l interval -r
 complete -c che -n "__fish_seen_subcommand_from checkout-my-branches" -l author -r
@@ -101,12 +101,7 @@ complete -c che -n "__fish_seen_subcommand_from find-video-mkv-issues" -l path -
 complete -c che -n "__fish_seen_subcommand_from find-video-mkv-issues" -l recursive
 complete -c che -n "__fish_seen_subcommand_from validate-video-files" -l path -r -F
 complete -c che -n "__fish_seen_subcommand_from validate-video-files" -l verbose
-complete -c che -n "__fish_seen_subcommand_from scan-videos-audio-language" -l -
-complete -c che -n "__fish_seen_subcommand_from scan-videos-audio-language" -l -
-complete -c che -n "__fish_seen_subcommand_from scan-videos-audio-language" -l p
-complete -c che -n "__fish_seen_subcommand_from scan-videos-audio-language" -l a
-complete -c che -n "__fish_seen_subcommand_from scan-videos-audio-language" -l t
-complete -c che -n "__fish_seen_subcommand_from scan-videos-audio-language" -l h
+complete -c che -n "__fish_seen_subcommand_from scan-videos-audio-language" -l path -r -F
 complete -c che -n "__fish_seen_subcommand_from remove-metadata" -l path -r -F
 complete -c che -n "__fish_seen_subcommand_from remove-metadata" -l exts -r
 complete -c che -n "__fish_seen_subcommand_from rename-video-file" -l path -r -F
@@ -163,12 +158,7 @@ complete -c che -n "__fish_seen_subcommand_from files-under-size-dr" -l dry-run
 complete -c che -n "__fish_seen_subcommand_from find-largest-files" -l path -r -F
 complete -c che -n "__fish_seen_subcommand_from find-largest-files" -l length -r
 complete -c che -n "__fish_seen_subcommand_from find-largest-files" -l full-path
-complete -c che -n "__fish_seen_subcommand_from make-alpha-dir" -l -
-complete -c che -n "__fish_seen_subcommand_from make-alpha-dir" -l -
-complete -c che -n "__fish_seen_subcommand_from make-alpha-dir" -l p
-complete -c che -n "__fish_seen_subcommand_from make-alpha-dir" -l a
-complete -c che -n "__fish_seen_subcommand_from make-alpha-dir" -l t
-complete -c che -n "__fish_seen_subcommand_from make-alpha-dir" -l h
+complete -c che -n "__fish_seen_subcommand_from make-alpha-dir" -l path -r -F
 complete -c che -n "__fish_seen_subcommand_from compress-folders" -l path -r -F
 complete -c che -n "__fish_seen_subcommand_from compress-folders" -l dry-run
 complete -c che -n "__fish_seen_subcommand_from compress-folders" -l verbose
@@ -195,46 +185,46 @@ complete -c che -n "__fish_seen_subcommand_from ping-nas" -l quiet
 complete -c che -n "__fish_seen_subcommand_from update-brew" -l dry-run
 complete -c che -n "__fish_seen_subcommand_from update-brew" -l no-cask
 complete -c che -n "__fish_seen_subcommand_from update-brew" -l no-cleanup
+complete -c che -n "__fish_seen_subcommand_from update-brew" -l no-autoremove
+complete -c che -n "__fish_seen_subcommand_from update-brew" -l greedy
+complete -c che -n "__fish_seen_subcommand_from update-brew" -l doctor
 complete -c che -n "__fish_seen_subcommand_from update-brew-dr" -l dry-run
 complete -c che -n "__fish_seen_subcommand_from update-brew-dr" -l no-cask
 complete -c che -n "__fish_seen_subcommand_from update-brew-dr" -l no-cleanup
+complete -c che -n "__fish_seen_subcommand_from update-brew-dr" -l no-autoremove
+complete -c che -n "__fish_seen_subcommand_from update-brew-dr" -l greedy
+complete -c che -n "__fish_seen_subcommand_from update-brew-dr" -l doctor
 complete -c che -n "__fish_seen_subcommand_from install" -l shells -r
 complete -c che -n "__fish_seen_subcommand_from install" -l all-shells
 complete -c che -n "__fish_seen_subcommand_from install" -l yes
 complete -c che -n "__fish_seen_subcommand_from install" -l dry-run
-complete -c che -n "__fish_seen_subcommand_from install" -l no-completions
 complete -c che -n "__fish_seen_subcommand_from install" -l no-path-shim
+complete -c che -n "__fish_seen_subcommand_from install" -l no-sounds
 complete -c che -n "__fish_seen_subcommand_from install" -l replace-legacy
+complete -c che -n "__fish_seen_subcommand_from install" -l install-deps
 complete -c che -n "__fish_seen_subcommand_from install" -l print
 complete -c che -n "__fish_seen_subcommand_from update" -l check
-complete -c che -n "__fish_seen_subcommand_from update" -l yes
+complete -c che -n "__fish_seen_subcommand_from update" -l dry-run
 complete -c che -n "__fish_seen_subcommand_from doctor" -l json
 complete -c che -n "__fish_seen_subcommand_from doctor" -l verbose
-complete -c che -n "__fish_seen_subcommand_from uninstall" -l yes
 complete -c che -n "__fish_seen_subcommand_from uninstall" -l dry-run
 complete -c che -n "__fish_seen_subcommand_from uninstall" -l purge
 complete -c che -n "__fish_seen_subcommand_from list" -l category -r
 complete -c che -n "__fish_seen_subcommand_from list" -l json
-complete -c che -n "__fish_seen_subcommand_from list" -l dry
-complete -c che -n "__fish_seen_subcommand_from completions" -l -
-complete -c che -n "__fish_seen_subcommand_from completions" -l -
-complete -c che -n "__fish_seen_subcommand_from completions" -l s
-complete -c che -n "__fish_seen_subcommand_from completions" -l h
-complete -c che -n "__fish_seen_subcommand_from completions" -l e
-complete -c che -n "__fish_seen_subcommand_from completions" -l l
-complete -c che -n "__fish_seen_subcommand_from completions" -l l
+complete -c che -n "__fish_seen_subcommand_from list" -l no-dry
+complete -c che -n "__fish_seen_subcommand_from completions" -l shell -r
 
 complete -c all-actions -l owner -r
 complete -c all-actions -l author -r
 complete -c all-actions -l pr-limit -r
-complete -c all-actions -l repo-limit
+complete -c all-actions -l repo-limit -r
 complete -c all-actions -l no-main
 complete -c all-actions -l interval -r
 complete -c all-actions -l watch
 complete -c all-actions-watch -l owner -r
 complete -c all-actions-watch -l author -r
 complete -c all-actions-watch -l pr-limit -r
-complete -c all-actions-watch -l repo-limit
+complete -c all-actions-watch -l repo-limit -r
 complete -c all-actions-watch -l no-main
 complete -c all-actions-watch -l interval -r
 complete -c checkout-my-branches -l author -r
@@ -270,12 +260,7 @@ complete -c find-video-mkv-issues -l path -r -F
 complete -c find-video-mkv-issues -l recursive
 complete -c validate-video-files -l path -r -F
 complete -c validate-video-files -l verbose
-complete -c scan-videos-audio-language -l -
-complete -c scan-videos-audio-language -l -
-complete -c scan-videos-audio-language -l p
-complete -c scan-videos-audio-language -l a
-complete -c scan-videos-audio-language -l t
-complete -c scan-videos-audio-language -l h
+complete -c scan-videos-audio-language -l path -r -F
 complete -c remove-metadata -l path -r -F
 complete -c remove-metadata -l exts -r
 complete -c rename-video-file -l path -r -F
@@ -332,12 +317,7 @@ complete -c files-under-size-dr -l dry-run
 complete -c find-largest-files -l path -r -F
 complete -c find-largest-files -l length -r
 complete -c find-largest-files -l full-path
-complete -c make-alpha-dir -l -
-complete -c make-alpha-dir -l -
-complete -c make-alpha-dir -l p
-complete -c make-alpha-dir -l a
-complete -c make-alpha-dir -l t
-complete -c make-alpha-dir -l h
+complete -c make-alpha-dir -l path -r -F
 complete -c compress-folders -l path -r -F
 complete -c compress-folders -l dry-run
 complete -c compress-folders -l verbose
@@ -364,6 +344,12 @@ complete -c ping-nas -l quiet
 complete -c update-brew -l dry-run
 complete -c update-brew -l no-cask
 complete -c update-brew -l no-cleanup
+complete -c update-brew -l no-autoremove
+complete -c update-brew -l greedy
+complete -c update-brew -l doctor
 complete -c update-brew-dr -l dry-run
 complete -c update-brew-dr -l no-cask
 complete -c update-brew-dr -l no-cleanup
+complete -c update-brew-dr -l no-autoremove
+complete -c update-brew-dr -l greedy
+complete -c update-brew-dr -l doctor

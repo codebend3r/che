@@ -9,11 +9,11 @@ PLAIN = tui.PLAIN
 
 
 def test_face_and_wordmark_have_the_shape_the_screens_assume():
-    face = art.face_lines()
+    face = art.FACE_LINES
     assert len(face) == art.HEIGHT == 18
     assert max(len(line) for line in face) <= 32
     assert all(line == line.rstrip() for line in face), "trailing spaces misalign the column"
-    assert len(art.logo_lines()) == 6
+    assert len(art.LOGO_LINES) == 6
 
 
 def test_compose_centres_the_shorter_block_on_the_taller():

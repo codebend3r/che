@@ -6,8 +6,8 @@
 
 _che_flags_for() {
   case "$1" in
-    all-actions) echo "--owner= --author= --pr-limit= --repo-limit --no-main --interval= --watch --help" ;;
-    all-actions-watch) echo "--owner= --author= --pr-limit= --repo-limit --no-main --interval= --help" ;;
+    all-actions) echo "--owner= --author= --pr-limit= --repo-limit= --no-main --interval= --watch --help" ;;
+    all-actions-watch) echo "--owner= --author= --pr-limit= --repo-limit= --no-main --interval= --help" ;;
     checkout-my-branches) echo "--author= --limit= --help" ;;
     clean-stale-branches) echo "--dry-run --protect= --help" ;;
     clean-stale-branches-dr) echo "--dry-run --protect= --help" ;;
@@ -22,7 +22,7 @@ _che_flags_for() {
     fix-codecs-dr) echo "--path= --delete-original --dry-run --help" ;;
     find-video-mkv-issues) echo "--path= --recursive --help" ;;
     validate-video-files) echo "--path= --verbose --help" ;;
-    scan-videos-audio-language) echo "- - p a t h --help" ;;
+    scan-videos-audio-language) echo "--path= --help" ;;
     remove-metadata) echo "--path= --exts= --help" ;;
     rename-video-file) echo "--path= --recursive --rename-folders --capitalize-preps --dry-run --ignore-words= --help" ;;
     delete-duplicate-videos) echo "--path= --strategy= --dry-run --verbose --help" ;;
@@ -40,22 +40,22 @@ _che_flags_for() {
     files-under-size) echo "--path= --size= --dry-run --help" ;;
     files-under-size-dr) echo "--path= --size= --dry-run --help" ;;
     find-largest-files) echo "--path= --length= --full-path --help" ;;
-    make-alpha-dir) echo "- - p a t h --help" ;;
+    make-alpha-dir) echo "--path= --help" ;;
     compress-folders) echo "--path= --dry-run --verbose --help" ;;
     list-permission) echo "--help" ;;
     mount-all-drives) echo "--only= --use-ip --quiet --help" ;;
     eject-all-drives) echo "--dry-run --only= --no-force --no-clear-favorites --quiet --help" ;;
     eject-all-drives-dr) echo "--dry-run --only= --no-force --no-clear-favorites --quiet --help" ;;
     ping-nas) echo "--interval= --ping-timeout= --only= --no-remount --use-ip --once --quiet --help" ;;
-    update-brew) echo "--dry-run --no-cask --no-cleanup --help" ;;
-    update-brew-dr) echo "--dry-run --no-cask --no-cleanup --help" ;;
+    update-brew) echo "--dry-run --no-cask --no-cleanup --no-autoremove --greedy --doctor --help" ;;
+    update-brew-dr) echo "--dry-run --no-cask --no-cleanup --no-autoremove --greedy --doctor --help" ;;
     btop) echo "--help" ;;
-    install) echo "--shells= --all-shells --yes --dry-run --no-completions --no-path-shim --replace-legacy --print --help" ;;
-    update) echo "--check --yes --help" ;;
+    install) echo "--shells= --all-shells --yes --dry-run --no-path-shim --no-sounds --replace-legacy --install-deps --print --help" ;;
+    update) echo "--check --dry-run --help" ;;
     doctor) echo "--json --verbose --help" ;;
-    uninstall) echo "--yes --dry-run --purge --help" ;;
-    list) echo "--category= --json --dry --help" ;;
-    completions) echo "- - s h e l l --help" ;;
+    uninstall) echo "--dry-run --purge --help" ;;
+    list) echo "--category= --json --no-dry --help" ;;
+    completions) echo "--shell= --help" ;;
     *) echo "--help" ;;
   esac
 }

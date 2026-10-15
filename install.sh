@@ -13,7 +13,7 @@
 set -euo pipefail
 
 REPO_URL="${CHE_REPO_URL:-https://github.com/codebend3r/che.git}"
-DEFAULT_DIR="${CHE_HOME:-$HOME/Developer/git/shell-functions}"
+DEFAULT_DIR="${CHE_HOME:-$HOME/Developer/git/che}"
 MIN_MAJOR=3
 MIN_MINOR=12
 

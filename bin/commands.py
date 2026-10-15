@@ -4,9 +4,9 @@ This module is the single source of truth for the user-facing command surface.
 Four things are generated from it, so they can never drift apart:
 
 * the shell wrappers in ``shell/che.zsh``, ``shell/che.bash`` and
-  ``shell/che.fish`` (written by ``bin/install.py``),
+  ``shell/che.fish`` (rendered by ``bin/shellgen.py``),
 * the tab completions under ``shell/completions/``,
-* the interactive menu in ``bin/che.py``,
+* the interactive menu in ``bin/menu.py``,
 * the dependency report printed by ``che doctor``.
 
 Before this file existed, ``.zshrc`` was the source of truth and every new
@@ -24,9 +24,13 @@ Library module: no shebang, not executable, imported the same way as
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
-from dataclasses import dataclass, field
+from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
+
+# How a command previews: "" (it cannot), "env" (DRY_RUN=) or "flag" (--dry-run).
+DryRunStyle = Literal["", "env", "flag"]
 
 BIN = Path(__file__).resolve().parent
 REPO = BIN.parent
@@ -35,7 +39,8 @@ REPO = BIN.parent
 # generated shell files together. It is read from package.json so that one
 # `npm version` bump moves the npm release, `che --version` and the header of
 # every generated file at once. `che doctor` compares it against the version
-# recorded in the installed rc block to decide whether a re-install is needed.
+# `che install` recorded in ~/.config/che/config.json to decide whether a
+# re-install is needed.
 _PACKAGE = json.loads((REPO / "package.json").read_text(encoding="utf-8"))
 PACKAGE_NAME: str = _PACKAGE["name"]
 VERSION: str = _PACKAGE["version"]
@@ -53,20 +58,17 @@ DRY_SUFFIX = "-dr"
 class Category:
     key: str
     title: str
-    icon: str
     blurb: str
 
 
 CATEGORIES: tuple[Category, ...] = (
-    Category("git", "Git", "", "Branch hygiene, worktrees and GitHub Actions"),
-    Category("video", "Video", "", "Codecs, renaming, dedupe and metadata"),
-    Category("files", "Files", "", "Delete, compress and inspect by size or extension"),
-    Category("drives", "Drives", "", "Mount, eject and keep-alive for the NAS volumes"),
-    Category("system", "System", "", "Homebrew, monitoring and the machine itself"),
-    Category("che", "che", "", "Install, update and inspect che itself"),
+    Category("git", "Git", "Branch hygiene, worktrees and GitHub Actions"),
+    Category("video", "Video", "Codecs, renaming, dedupe and metadata"),
+    Category("files", "Files", "Delete, compress and inspect by size or extension"),
+    Category("drives", "Drives", "Mount, eject and keep-alive for the NAS volumes"),
+    Category("system", "System", "Homebrew, monitoring and the machine itself"),
+    Category("che", "che", "Install, update and inspect che itself"),
 )
-
-CATEGORY_KEYS = tuple(category.key for category in CATEGORIES)
 
 
 # ---------------------------------------------------------------------------
@@ -83,9 +85,12 @@ CATEGORY_KEYS = tuple(category.key for category in CATEGORIES)
 class Prompt:
     """One question the interactive menu asks before running a command."""
 
-    flag: str  # "--path"; empty string means a positional argument
+    flag: str  # "--path", without the "="; empty string means a positional argument
     label: str
-    kind: str = "text"  # text | path | size | int | bool | choice
+    # "path" completes filenames and expands ~; "bool" asks yes/no and passes
+    # the bare flag. Everything else is "text", re-asked until it is one of
+    # `choices` when there are any.
+    kind: Literal["text", "path", "bool"] = "text"
     required: bool = False
     default: str = ""
     choices: tuple[str, ...] = ()
@@ -107,23 +112,24 @@ DRY_PROMPT = Prompt("--dry-run", "Dry run (preview only)", kind="bool", default=
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class Command:
     """One user-facing command: a name, a script and how to invoke it."""
 
     name: str
     category: str
     summary: str
-    script: str = ""  # relative to bin/; empty for a shell-only wrapper
+    script: str = ""  # relative to bin/; empty only for a built-in
     icon: str = "•"
     sound: int | None = None
     dry_sound: int | None = 7
-    env: tuple[tuple[str, str], ...] = ()
     args: tuple[str, ...] = ()  # fixed arguments, always passed first
-    flags: tuple[str, ...] = ()  # every flag the script accepts, for completions
+    # Every flag the script accepts, for completions. One that takes a value is
+    # spelled with its "=" ("--path="), the way it is typed.
+    flags: tuple[str, ...] = ()
     prompts: tuple[Prompt, ...] = ()
     needs: tuple[str, ...] = ()  # external binaries the script shells out to
-    dry_run: str = ""  # "" | "env" (DRY_RUN=) | "flag" (--dry-run)
+    dry_run: DryRunStyle = ""
     destructive: bool = False
     # Set only where a destructive command genuinely cannot preview, with the
     # reason. The menu shows it, and the manifest test demands one rather than
@@ -133,9 +139,20 @@ class Command:
     # not a binary on PATH (a venv, a credential, a mounted volume).
     setup: str = ""
     macos_only: bool = False
-    body: str = ""  # shell-only wrapper body, for commands with no script
     tags: tuple[str, ...] = ()
-    builtin: bool = False  # handled by che.py itself, not a script
+
+    def __post_init__(self) -> None:
+        # `flags=("--path")` is a string, not a tuple, and everything that
+        # iterates it then offers `-`, `-`, `p`, `a`, `t`, `h` as flags.
+        for name in ("args", "flags", "prompts", "needs", "tags"):
+            value = getattr(self, name)
+            if not isinstance(value, tuple):
+                raise TypeError(f"{self.name}: {name} must be a tuple, got {value!r}")
+
+    @property
+    def builtin(self) -> bool:
+        """Handled by che.py itself rather than by a script."""
+        return self.name in BUILTIN_NAMES
 
     @property
     def has_dry_twin(self) -> bool:
@@ -147,45 +164,38 @@ class Command:
         return f"{self.name}{DRY_SUFFIX}"
 
     @property
+    def flag_names(self) -> tuple[str, ...]:
+        """``flags`` without the "=" that marks a flag taking a value."""
+        return tuple(flag.removesuffix("=") for flag in self.flags)
+
+    @property
+    def preview(self) -> str:
+        """How to look before running for real: the ``-dr`` twin, ``--dry-run``, or ""."""
+        if self.has_dry_twin:
+            return self.dry_name
+        return "--dry-run" if "--dry-run" in self.flags else ""
+
+    @property
     def path(self) -> Path:
         return BIN / self.script
 
-    def search_text(self) -> str:
-        return " ".join((self.name, self.summary, self.category, *self.tags)).lower()
-
-    def invocation(self, *, dry: bool = False) -> tuple[dict[str, str], list[str]]:
-        """Environment overrides and fixed arguments for one invocation.
-
-        ``dry`` selects the preview form: either ``DRY_RUN=true`` or an added
-        ``--dry-run``, depending on how the underlying script spells it.
-        """
-        env = dict(self.env)
-        args = list(self.args)
-
-        if self.dry_run == "env":
-            env["DRY_RUN"] = "true" if dry else "false"
-        elif self.dry_run == "flag" and dry:
-            args.append("--dry-run")
-
-        return env, args
-
-
-def _cmd(**kwargs: object) -> Command:
-    """Keyword-only constructor, so a long table stays readable and greppable."""
-    return Command(**kwargs)  # type: ignore[arg-type]
+    def variants(self) -> tuple[Resolved, ...]:
+        """This command, then its ``-dr`` preview twin when it has one."""
+        plain = Resolved(self)
+        return (plain, Resolved(self, dry=True)) if self.has_dry_twin else (plain,)
 
 
 COMMANDS: tuple[Command, ...] = (
     # -- git ----------------------------------------------------------------
-    _cmd(
+    Command(
         name="all-actions",
         flags=(
-            "--owner",
-            "--author",
-            "--pr-limit",
-            "--repo-limit",
+            "--owner=",
+            "--author=",
+            "--pr-limit=",
+            "--repo-limit=",
             "--no-main",
-            "--interval",
+            "--interval=",
             "--watch",
         ),
         category="git",
@@ -196,13 +206,13 @@ COMMANDS: tuple[Command, ...] = (
         tags=("ci", "pr", "github", "workflow", "main"),
         prompts=(
             Prompt("--owner", "Only this owner", help="Defaults to every repo you own"),
-            Prompt("--pr-limit", "PRs per repo", kind="int"),
+            Prompt("--pr-limit", "PRs per repo"),
             Prompt("--no-main", "Skip the default-branch table", kind="bool"),
         ),
     ),
-    _cmd(
+    Command(
         name="all-actions-watch",
-        flags=("--owner", "--author", "--pr-limit", "--repo-limit", "--no-main", "--interval"),
+        flags=("--owner=", "--author=", "--pr-limit=", "--repo-limit=", "--no-main", "--interval="),
         category="git",
         icon="👀",
         summary="Same as all-actions, refreshed on an interval",
@@ -211,9 +221,9 @@ COMMANDS: tuple[Command, ...] = (
         needs=("gh", "git"),
         tags=("ci", "pr", "github", "watch"),
     ),
-    _cmd(
+    Command(
         name="checkout-my-branches",
-        flags=("--author", "--limit"),
+        flags=("--author=", "--limit="),
         category="git",
         icon="🌿",
         summary="Check out recent remote branches you authored that aren't local yet",
@@ -223,12 +233,12 @@ COMMANDS: tuple[Command, ...] = (
         tags=("branch", "remote"),
         prompts=(
             Prompt("--author", "Author email", help="Defaults to git config user.email"),
-            Prompt("--limit", "Remote branches to scan", kind="int"),
+            Prompt("--limit", "Remote branches to scan"),
         ),
     ),
-    _cmd(
+    Command(
         name="clean-stale-branches",
-        flags=("--dry-run", "--protect"),
+        flags=("--dry-run", "--protect="),
         category="git",
         icon="🧹",
         summary="Delete local branches whose upstream is gone",
@@ -240,7 +250,7 @@ COMMANDS: tuple[Command, ...] = (
         tags=("branch", "delete", "prune"),
         prompts=(Prompt("--protect", "Extra branches to protect", help="Comma separated"),),
     ),
-    _cmd(
+    Command(
         name="prune-worktrees",
         flags=("--dry-run", "--force"),
         category="git",
@@ -253,35 +263,36 @@ COMMANDS: tuple[Command, ...] = (
         needs=("git",),
         tags=("worktree", "prune", "delete"),
     ),
-    _cmd(
+    Command(
         name="sync-all-branches",
-        flags=("--dry-run", "--author", "--limit"),
+        flags=("--dry-run", "--author=", "--limit="),
         category="git",
         icon="🔄",
         summary="Delete merged branches, rebase the rest, check out new ones; branches only",
         script="git/sync-all-branches.py",
         sound=7,
-        dry_sound=7,
         dry_run="env",
         destructive=True,
         needs=("git",),
         tags=("branch", "sync", "pull", "prune"),
     ),
-    _cmd(
+    Command(
         name="update-from-origin",
-        flags=("--dry-run", "--author", "--limit"),
+        flags=("--dry-run", "--author=", "--limit="),
         category="git",
         icon="⬇️",
         summary="Alias of sync-all-branches",
         script="git/sync-all-branches.py",
-        env=(("DRY_RUN", "false"),),
+        # A real run, spelled the way sync-all-branches tells its own children;
+        # a `--dry-run` typed after it still wins.
+        args=("--dry-run=false",),
         sound=7,
         needs=("git",),
         tags=("pull", "fetch", "sync"),
     ),
-    _cmd(
+    Command(
         name="update-local-branches",
-        flags=("--limit", "--dry-run"),
+        flags=("--limit=", "--dry-run"),
         category="git",
         icon="⬆️",
         summary="Rebase every local branch that has an upstream onto origin",
@@ -290,14 +301,14 @@ COMMANDS: tuple[Command, ...] = (
         needs=("git",),
         tags=("rebase", "branch"),
         prompts=(
-            Prompt("--limit", "Only the N most recent branches", kind="int"),
+            Prompt("--limit", "Only the N most recent branches"),
             DRY_PROMPT,
         ),
     ),
     # -- video --------------------------------------------------------------
-    _cmd(
+    Command(
         name="show-codecs",
-        flags=("--path", "--verbose"),
+        flags=("--path=", "--verbose"),
         category="video",
         icon="🎥",
         summary="Report media files outside the Direct Play codec/container set",
@@ -307,15 +318,14 @@ COMMANDS: tuple[Command, ...] = (
         tags=("plex", "codec", "audit"),
         prompts=(PATH_PROMPT, Prompt("--verbose", "Also print files that pass", kind="bool")),
     ),
-    _cmd(
+    Command(
         name="fix-codecs",
-        flags=("--path", "--delete-original", "--dry-run"),
+        flags=("--path=", "--delete-original", "--dry-run"),
         category="video",
         icon="🔧",
         summary="Re-encode media to h265/aac mp4 so it Direct Plays",
         script="video/fix-codecs.py",
         sound=7,
-        dry_sound=7,
         dry_run="env",
         destructive=True,
         needs=("ffmpeg",),
@@ -325,9 +335,9 @@ COMMANDS: tuple[Command, ...] = (
             Prompt("--delete-original", "Delete each source after converting", kind="bool"),
         ),
     ),
-    _cmd(
+    Command(
         name="find-video-mkv-issues",
-        flags=("--path", "--recursive"),
+        flags=("--path=", "--recursive"),
         category="video",
         icon="🎬",
         summary="Scan MKV files and estimate Plex direct-play compatibility",
@@ -337,9 +347,9 @@ COMMANDS: tuple[Command, ...] = (
         tags=("plex", "mkv", "audit"),
         prompts=(PATH_PROMPT, Prompt("--recursive", "Recurse into subfolders", kind="bool")),
     ),
-    _cmd(
+    Command(
         name="validate-video-files",
-        flags=("--path", "--verbose"),
+        flags=("--path=", "--verbose"),
         category="video",
         icon="🩺",
         summary="Check .mp4/.mkv files decode by playing one frame with mpv",
@@ -349,9 +359,9 @@ COMMANDS: tuple[Command, ...] = (
         tags=("corrupt", "health", "audit"),
         prompts=(PATH_PROMPT, Prompt("--verbose", "Print each file as it is checked", kind="bool")),
     ),
-    _cmd(
+    Command(
         name="scan-videos-audio-language",
-        flags=("--path"),
+        flags=("--path=",),
         category="video",
         icon="🔊",
         summary="Print the audio language tags of every video under a path",
@@ -361,9 +371,9 @@ COMMANDS: tuple[Command, ...] = (
         tags=("audio", "language", "dub"),
         prompts=(PATH_PROMPT,),
     ),
-    _cmd(
+    Command(
         name="remove-metadata",
-        flags=("--path", "--exts"),
+        flags=("--path=", "--exts="),
         category="video",
         icon="🧼",
         summary="Strip all metadata from video files recursively",
@@ -375,15 +385,15 @@ COMMANDS: tuple[Command, ...] = (
         tags=("metadata", "tags", "plex"),
         prompts=(PATH_PROMPT, Prompt("--exts", "Extensions", help="Comma separated")),
     ),
-    _cmd(
+    Command(
         name="rename-video-file",
         flags=(
-            "--path",
+            "--path=",
             "--recursive",
             "--rename-folders",
             "--capitalize-preps",
             "--dry-run",
-            "--ignore-words",
+            "--ignore-words=",
         ),
         category="video",
         icon="📝",
@@ -404,9 +414,9 @@ COMMANDS: tuple[Command, ...] = (
             Prompt("--ignore-words", "Words to leave as written", help="Comma separated"),
         ),
     ),
-    _cmd(
+    Command(
         name="delete-duplicate-videos",
-        flags=("--path", "--strategy", "--dry-run", "--verbose"),
+        flags=("--path=", "--strategy=", "--dry-run", "--verbose"),
         category="video",
         icon="🗑️",
         summary="Delete duplicate MKV/MP4 files under a root directory",
@@ -421,15 +431,14 @@ COMMANDS: tuple[Command, ...] = (
             Prompt(
                 "--strategy",
                 "Match strategy",
-                kind="choice",
                 choices=("episode", "filename", "size", "hash", "all"),
                 default="episode",
             ),
         ),
     ),
-    _cmd(
+    Command(
         name="video-list",
-        flags=("--path", "--recursive", "--with-folder", "--sort"),
+        flags=("--path=", "--recursive", "--with-folder", "--sort="),
         category="video",
         icon="📋",
         summary="List .mp4/.mkv files under a path with human-readable sizes",
@@ -442,15 +451,14 @@ COMMANDS: tuple[Command, ...] = (
             Prompt(
                 "--sort",
                 "Sort order",
-                kind="choice",
                 choices=("alpha", "fileSizeAsc", "fileSizeDesc"),
                 default="alpha",
             ),
         ),
     ),
-    _cmd(
+    Command(
         name="detect-green-magenta-videos",
-        flags=("--samples", "--threshold", "--verbose"),
+        flags=("--samples=", "--threshold=", "--verbose"),
         category="video",
         icon="🟢",
         summary="Detect videos with the green/magenta chroma artifact",
@@ -463,9 +471,9 @@ COMMANDS: tuple[Command, ...] = (
         tags=("corrupt", "artifact", "opencv"),
         prompts=(Prompt("", "Files or folders to scan", kind="path", required=True),),
     ),
-    _cmd(
+    Command(
         name="find-movie-by-year",
-        flags=("--year", "--path"),
+        flags=("--year=", "--path="),
         category="video",
         icon="🎞️",
         summary='Find movie folders whose name ends with "(YYYY)"',
@@ -474,21 +482,21 @@ COMMANDS: tuple[Command, ...] = (
         tags=("movie", "year", "search"),
         prompts=(Prompt("--year", "Year", required=True), PATH_PROMPT_CWD),
     ),
-    _cmd(
+    Command(
         name="largest-tv-shows",
-        flags=("--path", "--limit", "--full-path", "--debug"),
+        flags=("--path=", "--limit=", "--full-path", "--debug"),
         category="video",
         icon="📺",
         summary="Rank TV show folders in a library by total size on disk",
         script="video/largest-tv-shows.py",
         sound=2,
         tags=("size", "tv", "report"),
-        prompts=(PATH_PROMPT, Prompt("--limit", "How many to list", kind="int", default="20")),
+        prompts=(PATH_PROMPT, Prompt("--limit", "How many to list", default="20")),
     ),
     # -- files --------------------------------------------------------------
-    _cmd(
+    Command(
         name="delete-by-ext",
-        flags=("--path", "--ext", "--dry-run", "--verbose"),
+        flags=("--path=", "--ext=", "--dry-run", "--verbose"),
         category="files",
         icon="🗑️",
         summary="Delete files under a path matching a set of extensions",
@@ -499,9 +507,9 @@ COMMANDS: tuple[Command, ...] = (
         tags=("delete", "extension", "cleanup"),
         prompts=(PATH_PROMPT, Prompt("--ext", "Extensions", help="Comma separated")),
     ),
-    _cmd(
+    Command(
         name="delete-empty-folders",
-        flags=("--path", "--dry-run", "--verbose"),
+        flags=("--path=", "--dry-run", "--verbose"),
         category="files",
         icon="🧹",
         summary="Delete truly-empty directories under a path, cascading upwards",
@@ -512,9 +520,9 @@ COMMANDS: tuple[Command, ...] = (
         tags=("delete", "empty", "cleanup"),
         prompts=(PATH_PROMPT,),
     ),
-    _cmd(
+    Command(
         name="delete-smb-files",
-        flags=("--path", "--dry-run"),
+        flags=("--path=", "--dry-run"),
         category="files",
         icon="🧽",
         summary="Delete .smbdelete* files left behind by an SMB share",
@@ -525,9 +533,9 @@ COMMANDS: tuple[Command, ...] = (
         tags=("delete", "smb", "nas", "cleanup"),
         prompts=(PATH_PROMPT,),
     ),
-    _cmd(
+    Command(
         name="files-under-size",
-        flags=("--path", "--size", "--dry-run"),
+        flags=("--path=", "--size=", "--dry-run"),
         category="files",
         icon="📉",
         summary="Find video files at or under a size threshold",
@@ -536,11 +544,11 @@ COMMANDS: tuple[Command, ...] = (
         dry_run="env",
         destructive=True,
         tags=("size", "delete", "small"),
-        prompts=(PATH_PROMPT, Prompt("--size", "Size threshold", kind="size", required=True)),
+        prompts=(PATH_PROMPT, Prompt("--size", "Size threshold", required=True)),
     ),
-    _cmd(
+    Command(
         name="find-largest-files",
-        flags=("--path", "--length", "--full-path"),
+        flags=("--path=", "--length=", "--full-path"),
         category="files",
         icon="📊",
         summary="List the largest files under a path, biggest first",
@@ -549,13 +557,13 @@ COMMANDS: tuple[Command, ...] = (
         tags=("size", "report", "disk"),
         prompts=(
             PATH_PROMPT_CWD,
-            Prompt("--length", "How many to list", kind="int", default="10"),
+            Prompt("--length", "How many to list", default="10"),
             Prompt("--full-path", "Print the whole path", kind="bool"),
         ),
     ),
-    _cmd(
+    Command(
         name="make-alpha-dir",
-        flags=("--path"),
+        flags=("--path=",),
         category="files",
         icon="🔤",
         summary="Create '#' and A-Z bucket folders under a parent directory",
@@ -564,9 +572,9 @@ COMMANDS: tuple[Command, ...] = (
         tags=("organize", "folders"),
         prompts=(PATH_PROMPT_CWD,),
     ),
-    _cmd(
+    Command(
         name="compress-folders",
-        flags=("--path", "--dry-run", "--verbose"),
+        flags=("--path=", "--dry-run", "--verbose"),
         category="files",
         icon="📦",
         summary="Zip every immediate subfolder of a path at max compression",
@@ -575,26 +583,22 @@ COMMANDS: tuple[Command, ...] = (
         tags=("zip", "archive", "compress"),
         prompts=(PATH_PROMPT, DRY_PROMPT),
     ),
-    _cmd(
+    Command(
         name="list-permission",
         flags=(),
         category="files",
         icon="🔐",
         summary="Show ownership and mode of a volume under /Volumes",
+        script="files/list-permission.py",
         sound=7,
         tags=("permissions", "volume", "nas"),
-        # `command` restores what the hand-written wrapper had: zsh expands
-        # aliases when it *parses* a function body, and che.zsh is sourced after
-        # the user's aliases, so a bare `ls` here bakes in an `alias ls=eza` and
-        # the wrapper silently stops printing an `ls -l` listing.
-        body='command ls -ld "/Volumes/$1"',
         prompts=(Prompt("", "Volume name", required=True),),
         macos_only=True,
     ),
     # -- drives -------------------------------------------------------------
-    _cmd(
+    Command(
         name="mount-all-drives",
-        flags=("--only", "--use-ip", "--quiet"),
+        flags=("--only=", "--use-ip", "--quiet"),
         category="drives",
         icon="💿",
         summary="Mount all NAS drives over SMB via AppleScript",
@@ -605,15 +609,14 @@ COMMANDS: tuple[Command, ...] = (
         tags=("nas", "smb", "mount"),
         prompts=(Prompt("--only", "Only this drive", help="Case-insensitive name"),),
     ),
-    _cmd(
+    Command(
         name="eject-all-drives",
-        flags=("--dry-run", "--only", "--no-force", "--no-clear-favorites", "--quiet"),
+        flags=("--dry-run", "--only=", "--no-force", "--no-clear-favorites", "--quiet"),
         category="drives",
         icon="📤",
         summary="Eject all NAS volumes from /Volumes",
         script="drives/eject-all-drives.py",
         sound=7,
-        dry_sound=7,
         dry_run="flag",
         destructive=True,
         needs=("diskutil",),
@@ -621,12 +624,12 @@ COMMANDS: tuple[Command, ...] = (
         tags=("nas", "smb", "eject", "unmount"),
         prompts=(Prompt("--only", "Only this drive", help="Case-insensitive name"),),
     ),
-    _cmd(
+    Command(
         name="ping-nas",
         flags=(
-            "--interval",
-            "--ping-timeout",
-            "--only",
+            "--interval=",
+            "--ping-timeout=",
+            "--only=",
             "--no-remount",
             "--use-ip",
             "--once",
@@ -640,15 +643,14 @@ COMMANDS: tuple[Command, ...] = (
         tags=("nas", "keepalive", "network"),
     ),
     # -- system -------------------------------------------------------------
-    _cmd(
+    Command(
         name="update-brew",
-        flags=("--dry-run", "--no-cask", "--no-cleanup"),
+        flags=("--dry-run", "--no-cask", "--no-cleanup", "--no-autoremove", "--greedy", "--doctor"),
         category="system",
         icon="🍺",
         summary="Update Homebrew, upgrade formulae and casks, then clean up",
         script="system/update-brew.py",
         sound=7,
-        dry_sound=7,
         dry_run="flag",
         needs=("brew",),
         tags=("homebrew", "update", "packages"),
@@ -657,7 +659,7 @@ COMMANDS: tuple[Command, ...] = (
             Prompt("--no-cleanup", "Skip brew cleanup", kind="bool"),
         ),
     ),
-    _cmd(
+    Command(
         name="btop",
         flags=(),
         category="system",
@@ -672,72 +674,70 @@ COMMANDS: tuple[Command, ...] = (
 
 # ---------------------------------------------------------------------------
 # Built-in subcommands - handled inside che.py, listed here so they show up in
-# `che --help`, the completions and the menu alongside everything else.
+# `che --help`, the completions and the menu alongside everything else. Their
+# flags are checked against each one's parser, like a script's against its
+# --help.
 # ---------------------------------------------------------------------------
 
 BUILTINS: tuple[Command, ...] = (
-    _cmd(
+    Command(
         name="install",
         flags=(
-            "--shells",
+            "--shells=",
             "--all-shells",
             "--yes",
             "--dry-run",
-            "--no-completions",
             "--no-path-shim",
+            "--no-sounds",
             "--replace-legacy",
+            "--install-deps",
             "--print",
         ),
         category="che",
         icon="📥",
         summary="Install the shell wrappers into your shell startup files",
-        builtin=True,
         tags=("setup", "wizard", "zshrc", "bashrc"),
     ),
-    _cmd(
+    Command(
         name="update",
-        flags=("--check", "--yes"),
+        flags=("--check", "--dry-run"),
         category="che",
         icon="⬆️",
         summary="Pull the latest scripts and refresh the installed wrappers",
-        builtin=True,
         needs=("git",),
         tags=("upgrade", "self-update", "pull"),
     ),
-    _cmd(
+    Command(
         name="doctor",
         flags=("--json", "--verbose"),
         category="che",
         icon="🩺",
         summary="Check the install, the interpreter and every external tool",
-        builtin=True,
         tags=("diagnose", "health", "check"),
     ),
-    _cmd(
+    Command(
         name="uninstall",
-        flags=("--yes", "--dry-run", "--purge"),
+        flags=("--dry-run", "--purge"),
         category="che",
         icon="🧽",
         summary="Remove the wrappers, the shim and the completions",
-        builtin=True,
+        destructive=True,
         tags=("remove", "clean"),
     ),
-    _cmd(
+    Command(
         name="list",
-        flags=("--category", "--json", "--dry"),
+        flags=("--category=", "--json", "--no-dry"),
         category="che",
         icon="📋",
         summary="List every command, one per line",
-        builtin=True,
         tags=("ls", "commands"),
     ),
-    _cmd(
+    Command(
         name="completions",
-        flags=("--shell"),
+        flags=("--shell=",),
         category="che",
         icon="⌨️",
         summary="Print the completion script for a shell",
-        builtin=True,
         tags=("tab", "complete"),
     ),
 )
@@ -773,18 +773,57 @@ MENU_KEYS: tuple[tuple[str, str], ...] = (
 
 @dataclass(frozen=True)
 class Resolved:
-    """A command name resolved to the command plus whether it was the ``-dr`` twin."""
+    """One name a user can call: a command, or its ``-dr`` preview twin."""
 
     command: Command
     dry: bool = False
-    matched: str = field(default="")
+
+    @property
+    def name(self) -> str:
+        return self.command.dry_name if self.dry else self.command.name
+
+    @property
+    def sound(self) -> int | None:
+        return self.command.dry_sound if self.dry else self.command.sound
+
+    def summary(self, preview: str) -> str:
+        """The command's summary, with ``(preview)`` appended on the twin."""
+        return f"{self.command.summary} ({preview})" if self.dry else self.command.summary
+
+    @property
+    def env(self) -> dict[str, str]:
+        """Environment overrides under this name: ``DRY_RUN`` for a command
+        that previews through it, nothing for any other."""
+        if self.command.dry_run != "env":
+            return {}
+        return {"DRY_RUN": "true" if self.dry else "false"}
+
+    @property
+    def args(self) -> tuple[str, ...]:
+        """Fixed arguments under this name, before anything the user typed: the
+        command's own, plus ``--dry-run`` on the twin of a command that previews
+        through the flag."""
+        preview = ("--dry-run",) if self.dry and self.command.dry_run == "flag" else ()
+        return (*self.command.args, *preview)
 
 
-_BY_NAME: dict[str, Command] = {command.name: command for command in (*COMMANDS, *BUILTINS)}
+def all_commands() -> tuple[Command, ...]:
+    return (*COMMANDS, *BUILTINS)
 
 
-def all_commands(*, include_builtins: bool = True) -> tuple[Command, ...]:
-    return (*COMMANDS, *BUILTINS) if include_builtins else COMMANDS
+def variants(commands: Iterable[Command]) -> list[Resolved]:
+    """Every callable name ``commands`` define, each twin right after its command."""
+    return [variant for command in commands for variant in command.variants()]
+
+
+def grouped(commands: Iterable[Command]) -> list[tuple[Category, list[Command]]]:
+    """``commands`` by category, in category order, leaving out empty categories."""
+    commands = tuple(commands)
+    groups = [(cat, [c for c in commands if c.category == cat.key]) for cat in CATEGORIES]
+    return [(category, members) for category, members in groups if members]
+
+
+_BY_NAME: dict[str, Resolved] = {variant.name: variant for variant in variants(all_commands())}
 
 
 def resolve(name: str) -> Resolved | None:
@@ -795,37 +834,17 @@ def resolve(name: str) -> Resolved | None:
     a "did you mean" message rather than an exception, because the name usually
     came from a typo at a shell prompt.
     """
-    command = _BY_NAME.get(name)
-    if command is not None:
-        return Resolved(command, dry=False, matched=name)
-
-    if name.endswith(DRY_SUFFIX):
-        base = _BY_NAME.get(name[: -len(DRY_SUFFIX)])
-        if base is not None and base.has_dry_twin:
-            return Resolved(base, dry=True, matched=name)
-
-    return None
+    return _BY_NAME.get(name)
 
 
-def wrapper_names() -> Iterator[str]:
+def wrapper_names() -> list[str]:
     """Every name the generated shell files define, in menu order."""
-    for command in COMMANDS:
-        yield command.name
-        if command.has_dry_twin:
-            yield command.dry_name
+    return [variant.name for variant in variants(COMMANDS)]
 
 
-def command_names(*, include_dry: bool = True, include_builtins: bool = True) -> list[str]:
-    names = []
-    for command in all_commands(include_builtins=include_builtins):
-        names.append(command.name)
-        if include_dry and command.has_dry_twin:
-            names.append(command.dry_name)
-    return names
-
-
-def in_category(key: str) -> tuple[Command, ...]:
-    return tuple(command for command in all_commands() if command.category == key)
+def command_names() -> list[str]:
+    """Every name ``che`` accepts, the built-ins and the ``-dr`` twins included."""
+    return list(_BY_NAME)
 
 
 def required_binaries() -> dict[str, tuple[str, ...]]:
@@ -835,46 +854,3 @@ def required_binaries() -> dict[str, tuple[str, ...]]:
         for binary in command.needs:
             index.setdefault(binary, []).append(command.name)
     return {binary: tuple(names) for binary, names in sorted(index.items())}
-
-
-def suggest(name: str, *, limit: int = 3) -> list[str]:
-    """Closest known command names, for the "did you mean" line."""
-    from difflib import get_close_matches
-
-    pool = command_names()
-    close = get_close_matches(name, pool, n=limit, cutoff=0.6)
-    if close:
-        return close
-    # get_close_matches misses substring typos like "codecs" for "show-codecs".
-    return [candidate for candidate in pool if name and name in candidate][:limit]
-
-
-def fuzzy_match(query: str, command: Command) -> int | None:
-    """Score ``command`` against ``query`` for the menu's type-to-filter.
-
-    Returns ``None`` when it does not match at all, otherwise a score where
-    lower is better: an exact name prefix beats a name substring, which beats a
-    match that only landed in the summary or tags, which beats a subsequence
-    match ("dbe" -> "delete-by-ext").
-    """
-    if not query:
-        return 0
-
-    needle = query.lower().strip()
-    name = command.name.lower()
-
-    if name.startswith(needle):
-        return 1
-    if needle in name:
-        return 2
-    if needle in command.search_text():
-        return 3
-
-    # Subsequence: every character of the query appears in order in the name.
-    position = 0
-    for char in needle:
-        found = name.find(char, position)
-        if found < 0:
-            return None
-        position = found + 1
-    return 4

@@ -1,49 +1,47 @@
 """Render the shell wrappers and completions from :mod:`commands`.
 
-Everything under ``shell/`` is produced here, and ``che install`` writes the
-result to disk. Two rules keep the generated files honest:
+Everything under ``shell/`` is produced here, along with the README's
+generated islands, and :func:`sync_generated` writes them to disk for both
+``che install`` and ``bun run generate`` (which runs this module). Two rules
+keep the generated files honest:
 
 * **No machine-specific data.** These files are committed, so they must work
   from any clone path. The one machine-specific thing - where the repo lives
   and which ``python3`` to use - goes in the small block the installer writes
   into ``~/.zshrc``, not here. As a fallback the wrappers resolve their own
   location, so sourcing ``shell/che.zsh`` directly works with no block at all.
-* **Deterministic.** ``che install --check`` re-renders and diffs against the
-  files on disk, and CI runs that check, so generation may not depend on the
-  environment it runs in.
+* **Deterministic.** A test re-renders and diffs against the files on disk,
+  and ``bun run ci`` runs it, so generation may not depend on the environment
+  it runs in.
 
-Library module: no shebang, not executable.
+Library module: no shebang, not executable. ``python3 bin/shellgen.py``
+rewrites every generated file.
 """
 
 from __future__ import annotations
 
+import re
 import shlex
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 import art
 from commands import (
     BUILTINS,
-    CATEGORIES,
     COMMANDS,
     MENU_KEYS,
+    REPO,
     VERSION,
     Command,
+    Resolved,
+    all_commands,
+    grouped,
     required_binaries,
+    variants,
+    wrapper_names,
 )
-
-SHELLS = ("zsh", "bash", "fish")
-
-# Where each shell's generated file lives, relative to the repo root.
-WRAPPER_FILES = {
-    "zsh": Path("shell/che.zsh"),
-    "bash": Path("shell/che.bash"),
-    "fish": Path("shell/che.fish"),
-}
-COMPLETION_FILES = {
-    "zsh": Path("shell/completions/_che"),
-    "bash": Path("shell/completions/che.bash"),
-    "fish": Path("shell/completions/che.fish"),
-}
+from utils import atomic_write_text
 
 # The rc-file block is delimited by these. Anything between them belongs to
 # `che install` and is rewritten wholesale on every install; anything outside
@@ -51,42 +49,10 @@ COMPLETION_FILES = {
 BEGIN_MARKER = "# >>> che shell functions >>>"
 END_MARKER = "# <<< che shell functions <<<"
 
-# Flags that take a value, so completion can offer `--flag=` without a
-# trailing space and then complete filenames after the `=`.
-VALUE_FLAGS = frozenset(
-    {
-        "--author",
-        "--category",
-        "--exts",
-        "--ext",
-        "--ignore-words",
-        "--interval",
-        "--length",
-        "--limit",
-        "--only",
-        "--owner",
-        "--path",
-        "--ping-timeout",
-        "--pr-limit",
-        "--protect",
-        "--samples",
-        "--shell",
-        "--shells",
-        "--size",
-        "--sort",
-        "--strategy",
-        "--threshold",
-        "--year",
-    }
-)
 
-# Flags whose value is a path, so completion offers files rather than nothing.
-PATH_FLAGS = frozenset({"--path"})
-
-
-def _banner(comment: str = "#") -> str:
+def _banner() -> str:
     return "\n".join(
-        f"{comment} {line}".rstrip()
+        f"# {line}".rstrip()
         for line in (
             f"che {VERSION} - generated file, do not edit.",
             "",
@@ -98,66 +64,215 @@ def _banner(comment: str = "#") -> str:
 
 def _flag_words(command: Command) -> list[str]:
     """Completion words for one command: its flags plus the universal ones."""
-    words = [f"{flag}=" if flag in VALUE_FLAGS else flag for flag in command.flags]
-    words.append("--help")
-    return words
-
-
-def _dry_variants(command: Command) -> list[tuple[str, bool]]:
-    variants = [(command.name, False)]
-    if command.has_dry_twin:
-        variants.append((command.dry_name, True))
-    return variants
+    return [*command.flags, "--help"]
 
 
 # ---------------------------------------------------------------------------
-# POSIX-family wrappers (zsh, bash, and anything else that speaks sh)
+# Dialects: how each family of shells spells the same thing
 # ---------------------------------------------------------------------------
 
 
-def _posix_body(command: Command, *, dry: bool) -> list[str]:
-    """The body of one wrapper.
+class Dialect:
+    """The syntax one family of shells writes the generated code in."""
 
-    DELIBERATE DIVERGENCE from the hand-written wrappers: every wrapper now
-    forwards ``"$@"``. A few of them (clean-stale-branches, prune-worktrees)
-    used to swallow their arguments, so ``clean-stale-branches --protect=x``
-    silently ignored a flag the script documents.
-    """
-    env, args = command.invocation(dry=dry)
-    prefix = "".join(f"{name}={shlex.quote(value)} " for name, value in sorted(env.items()))
+    indent: str
+    all_args: str  # every argument the function was called with
+    status: str  # the last command's exit status
+    env_runner: str  # what has to precede `NAME=value command`
+    end: str  # closes a function
 
-    if command.body:
-        call = command.body
-    else:
-        parts = ['"$CHE_PYTHON"', f'"$CHE_BIN/{command.script}"']
-        parts += [shlex.quote(arg) for arg in args]
-        parts.append('"$@"')
-        call = prefix + " ".join(parts)
+    @staticmethod
+    def quote(text: str) -> str:
+        raise NotImplementedError
 
-    sound = command.dry_sound if dry else command.sound
-    lines = [f"  {call}"]
-    if sound is not None:
-        # `$?` is expanded before che_notify runs, so the wrapper still returns
-        # the script's exit status. The old wrappers returned playsound's.
-        lines.append(f"  che_notify {sound} $?")
-    return lines
+    def header(self, name: str, summary: str) -> list[str]:
+        """The lines that open a function definition."""
+        raise NotImplementedError
+
+    def file_head(self, shell: Shell) -> str:
+        """Everything a wrapper file sets up before its first wrapper."""
+        raise NotImplementedError
+
+    def file_tail(self, shell: Shell) -> str:
+        """Everything a wrapper file does after its last wrapper."""
+        raise NotImplementedError
+
+    def export(self, name: str, word: str) -> str:
+        raise NotImplementedError
+
+    def source_if_readable(self, path: Path) -> str:
+        raise NotImplementedError
+
+    def add_to_path(self, directory: Path) -> str:
+        """Prepend ``directory`` to PATH unless it is already there."""
+        raise NotImplementedError
+
+    def wrapper(self, variant: Resolved) -> list[str]:
+        """One wrapper function.
+
+        DELIBERATE DIVERGENCE from the hand-written wrappers: every wrapper now
+        forwards ``"$@"``. A few of them (clean-stale-branches, prune-worktrees)
+        used to swallow their arguments, so ``clean-stale-branches --protect=x``
+        silently ignored a flag the script documents.
+        """
+        assignments = "".join(
+            f"{key}={self.quote(value)} " for key, value in sorted(variant.env.items())
+        )
+        runner = self.env_runner + assignments if assignments else ""
+        argv = "".join(f" {self.quote(arg)}" for arg in variant.args)
+        call = f'{runner}"$CHE_PYTHON" "$CHE_BIN/{variant.command.script}"{argv} {self.all_args}'
+
+        lines = [*self.header(variant.name, variant.summary("preview only")), self.indent + call]
+        if variant.sound is not None:
+            # `$?` is expanded before che_notify runs, so the wrapper still returns
+            # the script's exit status. The old wrappers returned playsound's.
+            lines.append(f"{self.indent}che_notify {variant.sound} {self.status}")
+        return [*lines, self.end]
 
 
-def _posix_wrappers() -> list[str]:
-    lines: list[str] = []
-    for category in CATEGORIES:
-        members = [command for command in COMMANDS if command.category == category.key]
-        if not members:
-            continue
-        lines += ["", f"# {'-' * 74}", f"# {category.title} - {category.blurb}", f"# {'-' * 74}"]
-        for command in members:
-            for name, dry in _dry_variants(command):
-                summary = command.summary + (" (preview only)" if dry else "")
-                lines += ["", f"# {summary}", f"{name}() {{"]
-                lines += _posix_body(command, dry=dry)
-                lines += ["}"]
-    return lines
+class _Posix(Dialect):
+    indent = "  "
+    all_args = '"$@"'
+    status = "$?"
+    env_runner = ""
+    end = "}"
 
+    @staticmethod
+    def quote(text: str) -> str:
+        return shlex.quote(text)
+
+    def header(self, name: str, summary: str) -> list[str]:
+        return [f"# {summary}", f"{name}() {{"]
+
+    def file_head(self, shell: Shell) -> str:
+        return f"""{_banner()}
+#
+# Source this file (or let the `che install` block in your rc file do it):
+#
+#     . ~/Developer/git/che/{shell.wrapper_file}
+#
+# Every wrapper is a shell function, so `type <name>` shows what it runs and
+# `che doctor` can tell you when something it needs is missing.
+
+# CHE_HOME is normally exported by the installed rc block. Fall back to this
+# file's own location so a bare `source` of it also works.
+if [ -z "${{CHE_HOME:-}}" ]; then
+  {shell.find_home}
+fi
+{POSIX_EXPORTS}{shell.alias_guard}
+{_stash_call()}
+{POSIX_FUNCTIONS.rstrip()}"""
+
+    def file_tail(self, shell: Shell) -> str:
+        return f"_che_restore_aliases\n\n{shell.load_completions}"
+
+    def export(self, name: str, word: str) -> str:
+        return f"export {name}={word}"
+
+    def source_if_readable(self, path: Path) -> str:
+        quoted = self.quote(str(path))
+        return f"[ -r {quoted} ] && . {quoted}"
+
+    def add_to_path(self, directory: Path) -> str:
+        quoted = self.quote(str(directory))
+        return f'case ":$PATH:" in *:{quoted}:*) ;; *) PATH={quoted}:"$PATH" ;; esac'
+
+
+# The characters shlex.quote leaves unquoted.
+_SAFE_WORD = re.compile(r"[\w@%+=:,./-]+", re.ASCII)
+
+
+class _Fish(Dialect):
+    indent = "    "
+    all_args = "$argv"
+    status = "$status"
+    env_runner = "env "
+    end = "end"
+
+    @staticmethod
+    def quote(text: str) -> str:
+        # Bare when shlex would leave it bare too, so `--dry-run` reads the
+        # same in every shell's wrapper.
+        if _SAFE_WORD.fullmatch(text):
+            return text
+        return "'" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+    def header(self, name: str, summary: str) -> list[str]:
+        return [f"function {name} --description {self.quote(summary)}"]
+
+    def file_head(self, shell: Shell) -> str:
+        return f"{_banner()}\n{FISH_PRELUDE}"
+
+    def file_tail(self, shell: Shell) -> str:
+        return shell.load_completions
+
+    def export(self, name: str, word: str) -> str:
+        return f"set -gx {name} {word}"
+
+    def source_if_readable(self, path: Path) -> str:
+        quoted = self.quote(str(path))
+        return f"if test -r {quoted}\n    source {quoted}\nend"
+
+    def add_to_path(self, directory: Path) -> str:
+        quoted = self.quote(str(directory))
+        return f"if not contains {quoted} $PATH\n    set -gx PATH {quoted} $PATH\nend"
+
+
+POSIX = _Posix()
+FISH = _Fish()
+
+
+# ---------------------------------------------------------------------------
+# The wrapper files
+# ---------------------------------------------------------------------------
+
+# What a POSIX wrapper file sets up once it has found CHE_HOME.
+POSIX_EXPORTS = """
+# Exported, not just set: every wrapper expands "$CHE_BIN", and a shell that
+# replays the *functions* without re-reading this file - a `typeset -f` dump, an
+# environment snapshot, any tool that rebuilds a shell from its exported
+# environment - keeps the functions and drops a plain variable, leaving the
+# wrappers to run "/che.py". CHE_HOME comes in exported by the rc block; this
+# keeps everything derived from it exported too.
+export CHE_BIN="${CHE_HOME}/bin"
+
+# Any python3 on PATH by default. `che install` records the interpreter it
+# verified (3.12+) in the rc block, which wins over this.
+: "${CHE_PYTHON:=python3}"
+export CHE_PYTHON
+
+# Legacy name from the hand-maintained wrappers, kept so an older snippet in
+# ~/.zshrc that still refers to it keeps resolving.
+export SHELL_FUNCTIONS_BIN="${CHE_BIN}"
+"""
+
+# The two functions every wrapper relies on. They come after the alias guard:
+# an alias named `che` would otherwise break `che() {` exactly the way the
+# guard describes, and take the rest of the file with it.
+POSIX_FUNCTIONS = """
+# Play the completion sound for a wrapper, then return the status it was given.
+#
+# playsound-N is defined outside this repo. Every wrapper used to call it
+# unconditionally, which printed "command not found" on a machine that never
+# had it; here a missing playsound is simply skipped. Set CHE_SOUNDS=0 to
+# silence them all.
+che_notify() {
+  if [ "${CHE_SOUNDS:-1}" != "0" ] && command -v "playsound-$1" >/dev/null 2>&1; then
+    "playsound-$1" >/dev/null 2>&1
+  fi
+  return "${2:-0}"
+}
+
+# The dispatcher. `che` with no arguments opens the interactive menu.
+che() {
+  if [ "$#" -eq 0 ]; then
+    "$CHE_PYTHON" "$CHE_BIN/che.py"
+  else
+    "$CHE_PYTHON" "$CHE_BIN/che.py" "$@"
+    che_notify 7 $?
+  fi
+}
+"""
 
 ZSH_ALIAS_GUARD = """
 # An alias sharing a name with a wrapper below is fatal, not cosmetic: zsh
@@ -217,19 +332,60 @@ _che_restore_aliases() {
 }
 """
 
+# fish needs no alias guard, so its whole setup is one block. No `cd` in it:
+# fish runs command substitution in the current process, so `(cd ...; and pwd)`
+# would move the user's shell as a side effect.
+FISH_PRELUDE = """
+if not set -q CHE_HOME
+    set -l __che_dir (dirname (status --current-filename))/..
+    if type -q path
+        set -gx CHE_HOME (path resolve $__che_dir)
+    else
+        set -gx CHE_HOME $__che_dir
+    end
+    set -e __che_dir
+end
+set -gx CHE_BIN "$CHE_HOME/bin"
+if not set -q CHE_PYTHON
+    set -gx CHE_PYTHON python3
+end
+set -gx SHELL_FUNCTIONS_BIN "$CHE_BIN"
 
-def _guarded_names() -> list[str]:
-    """Every name the file defines, in the order the guard should clear them."""
-    from commands import wrapper_names
+# Play a wrapper's completion sound, then return the status it was given.
+function che_notify --description 'che: completion sound'
+    set -l code 0
+    if set -q argv[2]
+        set code $argv[2]
+    end
+    if test "$CHE_SOUNDS" != "0"
+        if type -q "playsound-$argv[1]"
+            "playsound-$argv[1]" >/dev/null 2>&1
+        end
+    end
+    return $code
+end
 
-    return ["che", *wrapper_names()]
+function che --description 'che: shell helpers dispatcher'
+    if test (count $argv) -eq 0
+        "$CHE_PYTHON" "$CHE_BIN/che.py"
+    else
+        "$CHE_PYTHON" "$CHE_BIN/che.py" $argv
+        che_notify 7 $status
+    end
+end"""
+
+
+def defined_names() -> list[str]:
+    """Every function name a wrapper file defines: the sound helper, the
+    dispatcher, then every wrapper."""
+    return ["che_notify", "che", *wrapper_names()]
 
 
 def _stash_call() -> str:
-    """`_che_stash_aliases` invocation, wrapped so the line stays readable."""
+    """`_che_stash_aliases` for every name the file defines, wrapped to stay readable."""
     lines: list[str] = []
     current = "_che_stash_aliases"
-    for name in _guarded_names():
+    for name in defined_names():
         candidate = f"{current} {name}"
         if len(candidate) > 76:
             lines.append(f"{current} \\")
@@ -240,197 +396,23 @@ def _stash_call() -> str:
     return "\n".join(lines)
 
 
-def _render_posix(shell: str) -> str:
-    resolve_self = {
-        "zsh": '  CHE_HOME="${${(%):-%x}:A:h:h}"',
-        "bash": '  CHE_HOME="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"',
-    }[shell]
-
-    head = f"""{_banner()}
-#
-# Source this file (or let the `che install` block in your rc file do it):
-#
-#     . {"~/Developer/git/che/shell/che." + shell}
-#
-# Every wrapper is a shell function, so `type <name>` shows what it runs and
-# `che doctor` can tell you when something it needs is missing.
-
-# CHE_HOME is normally exported by the installed rc block. Fall back to this
-# file's own location so a bare `source` of it also works.
-if [ -z "${{CHE_HOME:-}}" ]; then
-{resolve_self}
-fi
-
-# Exported, not just set: every wrapper expands "$CHE_BIN", and a shell that
-# replays the *functions* without re-reading this file - a `typeset -f` dump, an
-# environment snapshot, any tool that rebuilds a shell from its exported
-# environment - keeps the functions and drops a plain variable, leaving the
-# wrappers to run "/che.py". CHE_HOME comes in exported by the rc block; this
-# keeps everything derived from it exported too.
-export CHE_BIN="${{CHE_HOME}}/bin"
-
-# Any python3 on PATH by default. `che install` records the interpreter it
-# verified (3.12+) in the rc block, which wins over this.
-: "${{CHE_PYTHON:=python3}}"
-export CHE_PYTHON
-
-# Legacy name from the hand-maintained wrappers, kept so an older snippet in
-# ~/.zshrc that still refers to it keeps resolving.
-export SHELL_FUNCTIONS_BIN="${{CHE_BIN}}"
-
-# Play the completion sound for a wrapper, then return the status it was given.
-#
-# playsound-N is defined outside this repo. Every wrapper used to call it
-# unconditionally, which printed "command not found" on a machine that never
-# had it; here a missing playsound is simply skipped. Set CHE_SOUNDS=0 to
-# silence them all.
-che_notify() {{
-  if [ "${{CHE_SOUNDS:-1}}" = "1" ] && command -v "playsound-$1" >/dev/null 2>&1; then
-    "playsound-$1" >/dev/null 2>&1
-  fi
-  return "${{2:-0}}"
-}}
-
-# The dispatcher. `che` with no arguments opens the interactive menu.
-che() {{
-  if [ "$#" -eq 0 ]; then
-    "$CHE_PYTHON" "$CHE_BIN/che.py"
-  else
-    "$CHE_PYTHON" "$CHE_BIN/che.py" "$@"
-    che_notify 7 $?
-  fi
-}}"""
-
-    tail_by_shell = {
-        "zsh": """
-# Completions. compdef only exists once compinit has run; when it has not,
-# skip quietly rather than erroring at shell start.
-if whence -w compdef >/dev/null 2>&1 && [ -r "${CHE_HOME}/shell/completions/_che" ]; then
-  . "${CHE_HOME}/shell/completions/_che"
-fi""",
-        "bash": """
-# Completions, when this is bash and the completion builtin is available.
-if [ -n "${BASH_VERSION:-}" ] && [ -r "${CHE_HOME}/shell/completions/che.bash" ]; then
-  . "${CHE_HOME}/shell/completions/che.bash"
-fi""",
-    }
-
-    guard = {"zsh": ZSH_ALIAS_GUARD, "bash": BASH_ALIAS_GUARD}[shell]
-
-    return "\n".join(
-        [
-            head,
-            guard.rstrip("\n"),
-            "",
-            _stash_call(),
-            *_posix_wrappers(),
-            "",
-            "_che_restore_aliases",
-            "",
-            tail_by_shell[shell].strip("\n"),
-            "",
-        ]
-    )
-
-
-# ---------------------------------------------------------------------------
-# fish
-# ---------------------------------------------------------------------------
-
-
-def _fish_quote(text: str) -> str:
-    return "'" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
-
-
-def _render_fish() -> str:
-    lines = [
-        _banner(),
-        "",
-        # No `cd` here: fish runs command substitution in the current process,
-        # so `(cd ...; and pwd)` would move the user's shell as a side effect.
-        "if not set -q CHE_HOME",
-        "    set -l __che_dir (dirname (status --current-filename))/..",
-        "    if type -q path",
-        "        set -gx CHE_HOME (path resolve $__che_dir)",
-        "    else",
-        "        set -gx CHE_HOME $__che_dir",
-        "    end",
-        "    set -e __che_dir",
-        "end",
-        'set -gx CHE_BIN "$CHE_HOME/bin"',
-        "if not set -q CHE_PYTHON",
-        "    set -gx CHE_PYTHON python3",
-        "end",
-        'set -gx SHELL_FUNCTIONS_BIN "$CHE_BIN"',
-        "",
-        "# Play a wrapper's completion sound, then return the status it was given.",
-        "function che_notify --description 'che: completion sound'",
-        "    set -l code 0",
-        "    if set -q argv[2]",
-        "        set code $argv[2]",
-        "    end",
-        '    if test "$CHE_SOUNDS" != "0"',
-        '        if type -q "playsound-$argv[1]"',
-        '            "playsound-$argv[1]" >/dev/null 2>&1',
-        "        end",
-        "    end",
-        "    return $code",
-        "end",
-        "",
-        "function che --description 'che: shell helpers dispatcher'",
-        "    if test (count $argv) -eq 0",
-        '        "$CHE_PYTHON" "$CHE_BIN/che.py"',
-        "    else",
-        '        "$CHE_PYTHON" "$CHE_BIN/che.py" $argv',
-        "        che_notify 7 $status",
-        "    end",
-        "end",
-    ]
-
-    for category in CATEGORIES:
-        members = [command for command in COMMANDS if command.category == category.key]
-        if not members:
-            continue
+def _wrapper_section(dialect: Dialect) -> list[str]:
+    """Every wrapper, grouped under a banner per category."""
+    lines: list[str] = []
+    for category, members in grouped(COMMANDS):
         lines += ["", f"# {'-' * 74}", f"# {category.title} - {category.blurb}", f"# {'-' * 74}"]
-        for command in members:
-            for name, dry in _dry_variants(command):
-                env, args = command.invocation(dry=dry)
-                summary = command.summary + (" (preview only)" if dry else "")
-                lines += ["", f"function {name} --description {_fish_quote(summary)}"]
-
-                if command.body:
-                    # fish has no `$1`; the sh body's positional becomes $argv[1].
-                    lines.append("    " + command.body.replace("$1", "$argv[1]"))
-                else:
-                    prefix = "".join(f"{key}={value} " for key, value in sorted(env.items()))
-                    argv = "".join(f" {shlex.quote(arg)}" for arg in args)
-                    runner = "env " + prefix if prefix else ""
-                    lines.append(
-                        f'    {runner}"$CHE_PYTHON" "$CHE_BIN/{command.script}"{argv} $argv'
-                    )
-
-                sound = command.dry_sound if dry else command.sound
-                if sound is not None:
-                    lines.append(f"    che_notify {sound} $status")
-                lines.append("end")
-
-    lines += [
-        "",
-        'if test -r "$CHE_HOME/shell/completions/che.fish"',
-        '    source "$CHE_HOME/shell/completions/che.fish"',
-        "end",
-        "",
-    ]
-    return "\n".join(lines)
+        for variant in variants(members):
+            lines += ["", *dialect.wrapper(variant)]
+    return lines
 
 
 def wrappers(shell: str) -> str:
     """The generated wrapper file for ``shell``."""
-    if shell == "fish":
-        return _render_fish()
-    if shell in ("zsh", "bash"):
-        return _render_posix(shell)
-    raise ValueError(f"unsupported shell: {shell}")
+    spec = _shell(shell)
+    dialect = spec.dialect
+    return "\n".join(
+        [dialect.file_head(spec), *_wrapper_section(dialect), "", dialect.file_tail(spec), ""]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -438,25 +420,14 @@ def wrappers(shell: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _all_completable() -> list[tuple[str, Command, bool]]:
-    entries: list[tuple[str, Command, bool]] = []
-    for command in (*COMMANDS, *BUILTINS):
-        for name, dry in _dry_variants(command):
-            entries.append((name, command, dry))
-    return entries
-
-
 def _zsh_completions() -> str:
-    describe = []
-    for name, command, dry in _all_completable():
-        summary = command.summary + (" (preview)" if dry else "")
-        describe.append(f"    {shlex.quote(f'{name}:{summary}')}")
-
-    cases = []
-    for name, command, _ in _all_completable():
-        cases.append(f"    {name}) print -r -- {shlex.quote(' '.join(_flag_words(command)))} ;;")
-
-    wrapper_names = " ".join(name for name, command, _ in _all_completable() if not command.builtin)
+    describe = [
+        "    " + shlex.quote(f"{v.name}:{v.summary('preview')}") for v in variants(all_commands())
+    ]
+    cases = [
+        f"    {v.name}) print -r -- {shlex.quote(' '.join(_flag_words(v.command)))} ;;"
+        for v in variants(all_commands())
+    ]
 
     return f"""#compdef che
 {_banner()}
@@ -502,17 +473,16 @@ _che_wrapper() {{
 }}
 
 compdef _che che
-compdef _che_wrapper {wrapper_names}
+compdef _che_wrapper {" ".join(wrapper_names())}
 """
 
 
 def _bash_completions() -> str:
-    cases = []
-    for name, command, _ in _all_completable():
-        cases.append(f'    {name}) echo "{" ".join(_flag_words(command))}" ;;')
-
-    names = " ".join(name for name, _, _ in _all_completable())
-    wrapper_names = " ".join(name for name, command, _ in _all_completable() if not command.builtin)
+    cases = [
+        f'    {v.name}) echo "{" ".join(_flag_words(v.command))}" ;;'
+        for v in variants(all_commands())
+    ]
+    names = " ".join(v.name for v in variants(all_commands()))
 
     return f"""{_banner()}
 # shellcheck shell=bash
@@ -568,52 +538,122 @@ _che_complete_wrapper() {{
 }}
 
 complete -o nospace -F _che_complete che
-complete -o nospace -F _che_complete_wrapper {wrapper_names}
+complete -o nospace -F _che_complete_wrapper {" ".join(wrapper_names())}
 """
 
 
+def _fish_option(flag: str) -> str:
+    """`-l name`, plus `-r` when the flag takes a value and `-F` when that value is a path."""
+    spec = f"-l {flag.removeprefix('--').removesuffix('=')}"
+    if flag.endswith("="):
+        spec += " -r"
+    if flag == "--path=":
+        spec += " -F"
+    return spec
+
+
 def _fish_completions() -> str:
-    lines = [_banner(), ""]
-    lines.append("complete -c che -f")
-    for name, command, dry in _all_completable():
-        summary = command.summary + (" (preview)" if dry else "")
-        lines.append(
-            f"complete -c che -n __fish_use_subcommand -a {name} -d {_fish_quote(summary)}"
-        )
+    lines = [_banner(), "", "complete -c che -f"]
+    for v in variants(all_commands()):
+        description = FISH.quote(v.summary("preview"))
+        lines.append(f"complete -c che -n __fish_use_subcommand -a {v.name} -d {description}")
 
     lines.append("")
-    for name, command, _ in _all_completable():
-        for flag in command.flags:
-            option = flag.removeprefix("--")
-            takes_value = " -r" if flag in VALUE_FLAGS else ""
-            paths = " -F" if flag in PATH_FLAGS else ""
+    for v in variants(all_commands()):
+        for flag in v.command.flags:
             lines.append(
-                f'complete -c che -n "__fish_seen_subcommand_from {name}" '
-                f"-l {option}{takes_value}{paths}"
+                f'complete -c che -n "__fish_seen_subcommand_from {v.name}" {_fish_option(flag)}'
             )
 
     lines.append("")
-    for name, command, _ in _all_completable():
-        if command.builtin:
-            continue
-        for flag in command.flags:
-            option = flag.removeprefix("--")
-            takes_value = " -r" if flag in VALUE_FLAGS else ""
-            paths = " -F" if flag in PATH_FLAGS else ""
-            lines.append(f"complete -c {name} -l {option}{takes_value}{paths}")
+    for v in variants(COMMANDS):
+        for flag in v.command.flags:
+            lines.append(f"complete -c {v.name} {_fish_option(flag)}")
 
     lines.append("")
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# Shells
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Shell:
+    """Everything that differs between the shells che generates files for."""
+
+    name: str
+    dialect: Dialect
+    wrapper_file: Path  # relative to the repo root
+    completion_file: Path
+    completions: Callable[[], str]
+    load_completions: str  # the end of the wrapper file
+    # POSIX only: how a sourced file finds the repo, and the alias guard
+    # around the definitions.
+    find_home: str = ""
+    alias_guard: str = ""
+
+
+_SHELLS: dict[str, Shell] = {
+    shell.name: shell
+    for shell in (
+        Shell(
+            name="zsh",
+            dialect=POSIX,
+            wrapper_file=Path("shell/che.zsh"),
+            completion_file=Path("shell/completions/_che"),
+            completions=_zsh_completions,
+            find_home='CHE_HOME="${${(%):-%x}:A:h:h}"',
+            alias_guard=ZSH_ALIAS_GUARD,
+            load_completions="""\
+# Completions. compdef only exists once compinit has run; when it has not,
+# skip quietly rather than erroring at shell start.
+if whence -w compdef >/dev/null 2>&1 && [ -r "${CHE_HOME}/shell/completions/_che" ]; then
+  . "${CHE_HOME}/shell/completions/_che"
+fi""",
+        ),
+        Shell(
+            name="bash",
+            dialect=POSIX,
+            wrapper_file=Path("shell/che.bash"),
+            completion_file=Path("shell/completions/che.bash"),
+            completions=_bash_completions,
+            find_home='CHE_HOME="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"',
+            alias_guard=BASH_ALIAS_GUARD,
+            load_completions="""\
+# Completions, when this is bash and the completion builtin is available.
+if [ -n "${BASH_VERSION:-}" ] && [ -r "${CHE_HOME}/shell/completions/che.bash" ]; then
+  . "${CHE_HOME}/shell/completions/che.bash"
+fi""",
+        ),
+        Shell(
+            name="fish",
+            dialect=FISH,
+            wrapper_file=Path("shell/che.fish"),
+            completion_file=Path("shell/completions/che.fish"),
+            completions=_fish_completions,
+            load_completions="""\
+if test -r "$CHE_HOME/shell/completions/che.fish"
+    source "$CHE_HOME/shell/completions/che.fish"
+end""",
+        ),
+    )
+}
+
+# The shell flavors there are generated files for: `machine.ShellSpec.flavor`.
+FLAVORS = tuple(_SHELLS)
+
+
+def _shell(name: str) -> Shell:
+    try:
+        return _SHELLS[name]
+    except KeyError:
+        raise ValueError(f"unsupported shell: {name}") from None
+
+
 def completions(shell: str) -> str:
-    if shell == "zsh":
-        return _zsh_completions()
-    if shell == "bash":
-        return _bash_completions()
-    if shell == "fish":
-        return _fish_completions()
-    raise ValueError(f"unsupported shell: {shell}")
+    return _shell(shell).completions()
 
 
 # ---------------------------------------------------------------------------
@@ -621,45 +661,31 @@ def completions(shell: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def rc_block(shell: str, *, home: Path, python: str, sounds: bool = True) -> str:
+def rc_block(
+    shell: str, *, home: Path, python: str, sounds: bool = True, path_dir: Path | None = None
+) -> str:
     """The machine-specific snippet ``che install`` writes into an rc file.
 
-    Deliberately tiny: a path, an interpreter and a source line. Everything
-    that can be generic lives in the committed ``shell/che.*`` file instead, so
-    upgrading che never means rewriting the user's rc file.
+    Deliberately tiny: a path, an interpreter and a source line, plus the line
+    that puts ``path_dir`` (where the ``che`` shim lives) on PATH when given.
+    Everything that can be generic lives in the committed ``shell/che.*`` file
+    instead, so upgrading che never means rewriting the user's rc file.
     """
-    wrapper = home / WRAPPER_FILES[shell]
-
-    if shell == "fish":
-        body = [
-            BEGIN_MARKER,
-            f"# Managed by `che install` (che {VERSION}). Edits here are overwritten.",
-            f"set -gx CHE_HOME {_fish_quote(str(home))}",
-            f"set -gx CHE_PYTHON {_fish_quote(python)}",
-        ]
-        if not sounds:
-            body.append("set -gx CHE_SOUNDS 0")
-        body += [
-            f"if test -r {_fish_quote(str(wrapper))}",
-            f"    source {_fish_quote(str(wrapper))}",
-            "end",
-            END_MARKER,
-        ]
-        return "\n".join(body) + "\n"
-
-    body = [
+    spec = _shell(shell)
+    dialect = spec.dialect
+    lines = [
         BEGIN_MARKER,
         f"# Managed by `che install` (che {VERSION}). Edits here are overwritten.",
-        f"export CHE_HOME={shlex.quote(str(home))}",
-        f"export CHE_PYTHON={shlex.quote(python)}",
+        dialect.export("CHE_HOME", dialect.quote(str(home))),
+        dialect.export("CHE_PYTHON", dialect.quote(python)),
     ]
     if not sounds:
-        body.append("export CHE_SOUNDS=0")
-    body += [
-        f"[ -r {shlex.quote(str(wrapper))} ] && . {shlex.quote(str(wrapper))}",
-        END_MARKER,
-    ]
-    return "\n".join(body) + "\n"
+        lines.append(dialect.export("CHE_SOUNDS", "0"))
+    lines.append(dialect.source_if_readable(home / spec.wrapper_file))
+    if path_dir is not None:
+        lines.append(dialect.add_to_path(path_dir))
+    lines.append(END_MARKER)
+    return "\n".join(lines) + "\n"
 
 
 def legacy_zshrc() -> str:
@@ -670,25 +696,18 @@ def legacy_zshrc() -> str:
     sourcing this file keeps working; the wrappers themselves now come from
     ``shell/che.zsh``.
     """
-    return f"""{_banner()}
+    return (
+        _banner()
+        + """
 #
 # The wrappers moved to shell/che.zsh and are generated from bin/commands.py.
 # `che install` writes a block into ~/.zshrc that sources them; this file
 # stays so that an existing `source .../shell-functions/.zshrc` keeps working.
 
-CHE_HOME="${{CHE_HOME:-${{${{(%):-%x}}:A:h}}}}"
-. "${{CHE_HOME}}/shell/che.zsh"
+CHE_HOME="${CHE_HOME:-${${(%):-%x}:A:h}}"
+. "${CHE_HOME}/shell/che.zsh"
 """
-
-
-def generated_files() -> dict[Path, str]:
-    """Every generated path mapped to its expected contents, relative to the repo."""
-    files: dict[Path, str] = {}
-    for shell in SHELLS:
-        files[WRAPPER_FILES[shell]] = wrappers(shell)
-        files[COMPLETION_FILES[shell]] = completions(shell)
-    files[Path(".zshrc")] = legacy_zshrc()
-    return files
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -707,54 +726,52 @@ def _marker(name: str) -> tuple[str, str]:
     return f"<!-- che:{name} -->", f"<!-- /che:{name} -->"
 
 
+def _md_row(*cells: str) -> str:
+    return f"| {' | '.join(cells)} |"
+
+
+def _md_table(headers: Sequence[str], rows: Iterable[str]) -> str:
+    return "\n".join([_md_row(*headers), _md_row(*["---"] * len(headers)), *rows])
+
+
 def _commands_table() -> str:
-    rows = ["| Command | Does | Preview |", "| --- | --- | --- |"]
-    for category in CATEGORIES:
-        members = [command for command in COMMANDS if command.category == category.key]
-        if not members:
-            continue
+    rows = []
+    for category, members in grouped(COMMANDS):
         rows.append(f"| **{category.title}** | *{category.blurb}* | |")
         for command in members:
-            preview = f"`{command.dry_name}`" if command.has_dry_twin else ""
-            if not preview and command.dry_run == "flag":
-                preview = "`--dry-run`"
-            if not preview and any(p.flag == "--dry-run" for p in command.prompts):
-                preview = "`--dry-run`"
-            if not preview and command.no_preview_reason:
-                preview = "none"
-            rows.append(f"| `{command.name}` | {command.summary} | {preview} |")
-    return "\n".join(rows)
+            preview = command.preview
+            cell = f"`{preview}`" if preview else ("none" if command.no_preview_reason else "")
+            rows.append(_md_row(f"`{command.name}`", command.summary, cell))
+    return _md_table(("Command", "Does", "Preview"), rows)
 
 
 def _builtins_table() -> str:
-    rows = ["| Command | Does |", "| --- | --- |"]
-    for command in BUILTINS:
-        rows.append(f"| `che {command.name}` | {command.summary} |")
-    return "\n".join(rows)
+    rows = (_md_row(f"`che {command.name}`", command.summary) for command in BUILTINS)
+    return _md_table(("Command", "Does"), rows)
 
 
 def _keys_table() -> str:
-    rows = ["| Key | Does |", "| --- | --- |"]
-    for key, description in MENU_KEYS:
-        rows.append(f"| `{key}` | {description} |")
-    return "\n".join(rows)
+    rows = (_md_row(f"`{key}`", description) for key, description in MENU_KEYS)
+    return _md_table(("Key", "Does"), rows)
 
 
 def _tools_table() -> str:
-    rows = ["| Tool | Needed by |", "| --- | --- |"]
-    for binary, users in required_binaries().items():
-        names = ", ".join(f"`{name}`" for name in users)
-        rows.append(f"| `{binary}` | {names} |")
-
-    extra = [command for command in COMMANDS if command.setup]
-    for command in extra:
-        rows.append(f"| (not a binary) | `{command.name}` {command.setup} |")
-    return "\n".join(rows)
+    rows = [
+        _md_row(f"`{binary}`", ", ".join(f"`{name}`" for name in users))
+        for binary, users in required_binaries().items()
+    ]
+    rows += [
+        _md_row("(not a binary)", f"`{command.name}` {command.setup}")
+        for command in COMMANDS
+        if command.setup
+    ]
+    return _md_table(("Tool", "Needed by"), rows)
 
 
 def _banner_island() -> str:
-    """The face beside the wordmark, exactly as ``che`` prints them."""
-    rows = art.compose(art.face_lines(), art.logo_lines())
+    """The face beside the wordmark: the terminal banner without its colour,
+    indent and subtitle."""
+    rows = art.compose(art.FACE_LINES, art.LOGO_LINES)
     return "```text\n" + "\n".join(rows) + "\n```"
 
 
@@ -788,3 +805,58 @@ def render_readme(current: str) -> str:
         _, _, tail = rest.partition(end)
         updated = f"{head}{begin}\n{body}\n{end}{tail}"
     return updated
+
+
+# ---------------------------------------------------------------------------
+# Writing it all out
+# ---------------------------------------------------------------------------
+
+
+def expected_files() -> dict[Path, str]:
+    """Every generated path, relative to the repo, mapped to the contents the
+    manifest implies.
+
+    ``shell/`` is generated whole. The README is generated in place: only the
+    marked islands are replaced, so its prose survives.
+    """
+    expected: dict[Path, str] = {}
+    for spec in _SHELLS.values():
+        expected[spec.wrapper_file] = wrappers(spec.name)
+        expected[spec.completion_file] = spec.completions()
+    expected[Path(".zshrc")] = legacy_zshrc()
+
+    readme = REPO / README
+    if readme.exists():
+        expected[README] = render_readme(readme.read_text(encoding="utf-8"))
+
+    return expected
+
+
+def sync_generated(*, dry_run: bool) -> list[Path]:
+    """Bring the generated files up to date; returns the ones that were stale.
+
+    With ``dry_run`` nothing is written, which makes it the check CI runs.
+    Raises ``ValueError`` when the README has lost one of its markers.
+
+    Each file is replaced atomically: ``che install`` rewrites ``shell/`` in
+    place, and a shell starting at that moment must not source half a file.
+    """
+    changed = []
+    for relative, contents in expected_files().items():
+        target = REPO / relative
+        if target.exists() and target.read_text(encoding="utf-8") == contents:
+            continue
+        changed.append(relative)
+        if not dry_run:
+            atomic_write_text(target, contents)
+    return changed
+
+
+if __name__ == "__main__":
+    try:
+        written = sync_generated(dry_run=False)
+    except ValueError as exc:
+        raise SystemExit(f"❌ {exc}") from None
+    for path in written:
+        print(f"wrote {path}")
+    print(f"{len(written)} generated file(s) updated")
