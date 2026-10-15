@@ -15,13 +15,14 @@ Options:
   --help        Show help
 
 Env:
-  DRY_RUN=false Opt out of the preview-only default (used by the .zshrc wrapper)
+  DRY_RUN=false Opt out of the preview-only default (used by the generated wrapper)
 """
 
 from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Container
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -33,12 +34,14 @@ from utils import (
     info,
     log,
     note,
+    note_settings,
+    remove_or_warn,
+    report_walk_error,
     run_cli,
     scan_root,
-    warning,
 )
 
-__version__ = "3.0.0"
+__version__ = "3.1.0"
 
 
 def directories_deepest_first(root: Path) -> list[Path]:
@@ -47,29 +50,23 @@ def directories_deepest_first(root: Path) -> list[Path]:
     This is ``find -depth -type d``. The ordering is what makes cascading work:
     emptying a leaf lets its parent become empty, and the parent is visited
     afterwards. The whole tree is enumerated up front - exactly like ``find``
-    piping into a loop - and emptiness is re-checked at visit time against the
-    live filesystem, so a directory emptied earlier in the run is seen as
-    empty when its turn comes.
+    piping into a loop - and emptiness is re-checked at visit time, so a
+    directory emptied earlier in the run is seen as empty when its turn comes.
     """
-
-    def _on_error(exc: OSError) -> None:
-        warning(f"find: {exc.filename}: {exc.strerror}")
-
-    found: list[Path] = []
-    for dirpath, _, _ in os.walk(root, topdown=False, followlinks=False, onerror=_on_error):
-        found.append(Path(dirpath))
-    return found
+    walk = os.walk(root, topdown=False, followlinks=False, onerror=report_walk_error)
+    return [Path(dirpath) for dirpath, _, _ in walk]
 
 
-def is_strictly_empty(path: Path) -> bool:
-    """True only when the directory has no entries at all, hidden included."""
+def is_strictly_empty(path: Path, gone: Container[Path]) -> bool:
+    """True only when the directory has no entries at all, hidden included.
+
+    Entries in ``gone`` do not count: they are the directories a dry run has
+    already reported, which a real run would have removed by now.
+    """
     try:
-        next(path.iterdir())
-    except StopIteration:
-        return True
+        return all(entry in gone for entry in path.iterdir())
     except OSError:
         return False
-    return False
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -89,40 +86,39 @@ def main(argv: list[str] | None = None) -> int:
     info(f"Running command in {Path.cwd()}")
     args = parser.parse_args(argv)
 
-    if not args.path:
-        warning("Error: --path is required.")
-        return 1
-
+    # An empty --path reads "--path is required", where the shell version
+    # printed "Error: --path is required.".
     root = scan_root(args.path)
 
-    note(f"Searching in: {args.path}")
-    note(f"Dry run: {str(args.dry_run).lower()}")
-    note(f"Verbose: {str(args.verbose).lower()}")
+    note_settings(
+        ("Searching in", args.path),
+        ("Dry run", args.dry_run),
+        ("Verbose", args.verbose),
+        rule=False,
+    )
 
-    # Compare resolved paths so `--path=foo` and `--path=foo/` protect the same
-    # directory regardless of how it was spelled.
-    root_resolved = root.resolve()
+    # DELIBERATE DIVERGENCE: a dry run counts the directories it reports as
+    # already gone, so `a/b/c` previews all three. The shell version (and
+    # this one, until 3.1.0) re-checked the untouched filesystem and previewed
+    # only the leaf, under-reporting what the real run then deleted.
+    would_delete: set[Path] = set()
     deleted_count = 0
     failures = 0
 
     for directory in directories_deepest_first(root):
-        if directory.resolve() == root_resolved:
+        if directory == root:
             continue  # never touch the root the user pointed at
 
-        if not is_strictly_empty(directory):
+        if not is_strictly_empty(directory, would_delete):
             if args.verbose:
                 note(f"Skipped (not empty): {directory}")
             continue
 
         if args.dry_run:
             log(f"[DRY-RUN] Would delete: {directory}")
+            would_delete.add(directory)
         else:
-            try:
-                directory.rmdir()
-            except OSError as exc:
-                # The shell version aborted here under `set -e`; reporting and
-                # carrying on lets one unwritable directory not strand the rest.
-                warning(f"  ✗ Failed to delete {directory}: {exc}")
+            if not remove_or_warn(directory, Path.rmdir):
                 failures += 1
                 continue
             log(f"Deleted: {directory}")
