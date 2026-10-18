@@ -78,12 +78,12 @@ function prune-worktrees-dr --description 'Remove every linked worktree, then pr
     che_notify 7 $status
 end
 
-function sync-all-branches --description 'Delete merged branches, rebase the rest, check out new ones; branches only'
+function sync-all-branches --description 'Update every branch and worktree, preserving locks and local work'
     env DRY_RUN=false "$CHE_PYTHON" "$CHE_BIN/git/sync-all-branches.py" $argv
     che_notify 7 $status
 end
 
-function sync-all-branches-dr --description 'Delete merged branches, rebase the rest, check out new ones; branches only (preview only)'
+function sync-all-branches-dr --description 'Update every branch and worktree, preserving locks and local work (preview only)'
     env DRY_RUN=true "$CHE_PYTHON" "$CHE_BIN/git/sync-all-branches.py" $argv
     che_notify 7 $status
 end

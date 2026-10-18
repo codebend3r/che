@@ -221,7 +221,7 @@ have used, and `che help <command>` prints that script's own `--help`.
 | `checkout-my-branches` | Check out recent remote branches you authored that aren't local yet |  |
 | `clean-stale-branches` | Delete local branches whose upstream is gone | `clean-stale-branches-dr` |
 | `prune-worktrees` | Remove every linked worktree, then prune stale admin records | `prune-worktrees-dr` |
-| `sync-all-branches` | Delete merged branches, rebase the rest, check out new ones; branches only | `sync-all-branches-dr` |
+| `sync-all-branches` | Update every branch and worktree, preserving locks and local work | `sync-all-branches-dr` |
 | `update-from-origin` | Alias of sync-all-branches | `--dry-run` |
 | `update-local-branches` | Rebase every local branch that has an upstream onto origin | `--dry-run` |
 | **Video** | *Codecs, renaming, dedupe and metadata* | |
@@ -363,24 +363,42 @@ Every script follows the same shape, described in full at the top of
 ## Syncing branches
 
 ```sh
-sync-all-branches       # delete merged branches, rebase the rest, check out new ones
-sync-all-branches-dr    # preview only
-update-from-origin      # alias of sync-all-branches
+sync-all-branches       # update branches and worktrees, keeping locks and local work
+sync-all-branches-dr    # preview cached remote refs; no fetch or changes
+update-from-origin     # alias of sync-all-branches
 ```
 
-Only branches change. The sync deletes local branches whose upstream is gone,
-`pull --rebase`s every branch with an upstream, and creates local tracking
-branches for the remote branches you authored that aren't local yet, without
-switching to them. It ends with the main clone on `main`.
+Fetches once and rebases every local branch onto its upstream, falling back to
+`origin/<branch>` when no upstream is configured. Branches in existing
+worktrees, including locked ones, update **inside their own checkout**. Dirty
+tracked and untracked work is temporarily stashed and restored with its staged
+state; unrelated existing stashes survive. Nested registered worktrees are
+excluded from their parent's stash. Dirty submodules and existing Git operations
+are reported and left alone.
 
-It **never pushes**, **never touches a worktree** and **never runs the repo's
-git hooks**. A branch checked out in a linked worktree is rebased in place
-there when that worktree is clean; a stale one is reported and kept, since git
-won't delete a branch a worktree has checked out. The branch scripts
-(`clean-stale-branches`, `update-local-branches`, `checkout-my-branches`,
-`prune-worktrees`, `sync-all-branches`) point `core.hooksPath` at `/dev/null`
-for every git they run, so a lefthook or husky pre-commit, pre-push or
-post-checkout never fires on a checkout or a rebase.
+It **never pushes, hard resets or deletes local branches**, and preserves every
+existing worktree directory, lock and checkout, including the caller's branch.
+Unoccupied branches use temporary worktrees that are removed after updating.
+New origin branches authored by you become local tracking branches without
+switching HEAD. Missing upstreams are reported, not treated as proof of a merge;
+use `clean-stale-branches` separately when you want branch cleanup.
+
+Rebase conflicts are aborted and reported while other branches continue. If
+restoring WIP conflicts, the exact recovery stash is retained and its ID and
+worktree path are printed. A blocked branch makes the command exit nonzero even
+when other branches updated. Local-only branches are reported without inventing
+a remote target. Ahead counts may remain because local commits are kept; clearing
+them would require pushing or discarding work. Avoid concurrent edits or Git
+operations while the sync temporarily saves WIP.
+
+The `-dr` preview does not fetch and only inspects cached remote refs. It changes
+no branches, working files, locks or stashes. Legacy `--no-push` and
+`--keep-locked` flags are still accepted for compatibility.
+
+Like the other branch scripts (`clean-stale-branches`, `update-local-branches`,
+`checkout-my-branches`, `prune-worktrees`), sync retains che's existing policy of
+pointing `core.hooksPath` at `/dev/null` for its Git commands so bookkeeping does
+not run repository hooks.
 
 ## External tools
 

@@ -84,6 +84,9 @@ The scripts were bash until August 2026. Nothing in `bin/` is shell any more.
     `for_each_ref`, `local_branches`, `has_tracked_changes`,
     `worktrees`/`Worktree`, `worktree_branch_map`, `worktree_is_clean`,
     `find_main_branch`, `park_main_worktree`.
+  - `bin/branchsync.py`: `BranchSync`, sync's non-destructive per-branch update,
+    exact WIP stash/restore, conflict recovery and worktree routing. Temporary
+    worktrees let unoccupied branches update without switching the caller.
   - `bin/media.py` — `probe_media()`, one ffprobe JSON call per file read
     through `MediaProbe`'s accessors, and the shared video extension lists.
   - `bin/nas.py` — the NAS drive table (`NasDrive`) and SMB helpers:
@@ -109,15 +112,25 @@ works around the pin rather than counting it as a failure:
 
 - `clean-stale-branches` reports pinned stale branches and deletes the rest.
 - `update-local-branches` rebases a pinned branch in place with `git -C <wt>`.
-- `sync-all-branches` parks the main clone on main (`park_main_worktree()`),
-  fetches once (`fetch_remotes()`, whose marker the delegated scripts
-  inherit, so none of them fetches again), then delegates to
-  `clean-stale-branches`, `update-local-branches` and
-  `checkout-my-branches`, which creates tracking
-  branches without switching to them, so the run ends on main. It only
-  updates branches: it never pushes and never adds, removes or prunes a
-  worktree. `--no-push` and `--keep-locked` are still accepted, and ignored,
-  because chip passes `--no-push`.
+- `sync-all-branches` fetches once, then uses `BranchSync` to update all local
+  branches against their upstream (or `origin/<branch>` if unconfigured).
+  Occupied branches rebase inside their existing worktree, even when locked.
+  Dirty tracked and untracked files are stashed with an exact object ID and
+  restored with `--index`; drop only that matching stash after a successful
+  restore. Exclude nested registered worktrees from parent stashes, and leave
+  dirty submodules and pre-existing Git operations untouched. A rebase/bisect
+  may detach HEAD while still reserving its original branch; inspect operation
+  metadata before assuming the branch is unoccupied. Use disposable worktrees
+  for unoccupied branches without switching the caller's checkout. Never
+  recursively delete their directory on failure; remove only through Git,
+  without force, after checking no operation is in progress. Existing
+  directories, locks, checkouts and local commits survive. Never push, reset or
+  delete local branches. Gone upstreams are blocked, not proof of a merge.
+  Continue independent branches after recoverable failures and return nonzero
+  for any blockers; failure to abort our own rebase stops the run immediately.
+  Track new origin branches without switching HEAD. Dry-run uses cached refs
+  and does not even fetch. `--no-push` and `--keep-locked` remain accepted and
+  ignored for compatibility, since chip passes `--no-push`.
 - Every script in `bin/git/` that touches branches (these four plus
   `prune-worktrees`) calls `skip_git_hooks()` first, so no repo hook
   (lefthook, husky) runs on their checkouts and rebases. A new script in

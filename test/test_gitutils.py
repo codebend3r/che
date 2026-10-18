@@ -121,6 +121,14 @@ def test_worktree_path_with_a_space_survives(in_repo: Path, tmp_path: Path):
     assert (linked.resolve(), "spaced") in resolved(worktrees())
 
 
+@pytest.mark.parametrize("name", ["tab\tpath", "line\nbreak", 'quote"path', "back\\slash"])
+def test_worktree_unusual_paths_survive(in_repo: Path, tmp_path: Path, name: str):
+    linked = tmp_path / name
+    git(in_repo, "worktree", "add", "--quiet", "-b", "unusual", str(linked))
+
+    assert (linked.resolve(), "unusual") in resolved(worktrees())
+
+
 def test_worktrees_answers_for_another_cwd(in_repo: Path, tmp_path: Path):
     linked = tmp_path / "wt-feature"
     git(in_repo, "worktree", "add", "--quiet", "-b", "feature", str(linked))

@@ -150,12 +150,12 @@ def worktrees(cwd: str | Path | None = None) -> list[Worktree]:
     The first entry is always the main worktree; callers drop it themselves so
     the distinction stays explicit at the call site.
 
-    The shell version parsed this with ``awk '{print $2}'``, which splits on
-    whitespace and so truncated any worktree path containing a space. Taking
-    the whole remainder of the line keeps such paths intact.
+    DELIBERATE DIVERGENCE: the shell version split on whitespace. NUL-delimited
+    porcelain preserves spaces, tabs, backslashes and newlines in paths without
+    Git's quoted-path escaping, so commands can route to the exact checkout.
     """
     found: list[Worktree] = []
-    for line in run_output(["git", "worktree", "list", "--porcelain"], cwd=cwd).splitlines():
+    for line in run_output(["git", "worktree", "list", "--porcelain", "-z"], cwd=cwd).split("\0"):
         if line.startswith("worktree "):
             found.append(Worktree(line.removeprefix("worktree "), ""))
         elif line.startswith("branch refs/heads/"):

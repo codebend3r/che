@@ -144,13 +144,13 @@ prune-worktrees-dr() {
   che_notify 7 $?
 }
 
-# Delete merged branches, rebase the rest, check out new ones; branches only
+# Update every branch and worktree, preserving locks and local work
 sync-all-branches() {
   DRY_RUN=false "$CHE_PYTHON" "$CHE_BIN/git/sync-all-branches.py" "$@"
   che_notify 7 $?
 }
 
-# Delete merged branches, rebase the rest, check out new ones; branches only (preview only)
+# Update every branch and worktree, preserving locks and local work (preview only)
 sync-all-branches-dr() {
   DRY_RUN=true "$CHE_PYTHON" "$CHE_BIN/git/sync-all-branches.py" "$@"
   che_notify 7 $?
