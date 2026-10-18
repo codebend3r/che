@@ -268,13 +268,13 @@ COMMANDS: tuple[Command, ...] = (
         flags=("--dry-run", "--author=", "--limit="),
         category="git",
         icon="🔄",
-        summary="Delete merged branches, rebase the rest, check out new ones; branches only",
+        summary="Update every branch and worktree, preserving locks and local work",
         script="git/sync-all-branches.py",
         sound=7,
         dry_run="env",
         destructive=True,
         needs=("git",),
-        tags=("branch", "sync", "pull", "prune"),
+        tags=("branch", "sync", "pull", "worktree"),
     ),
     Command(
         name="update-from-origin",
@@ -283,8 +283,7 @@ COMMANDS: tuple[Command, ...] = (
         icon="⬇️",
         summary="Alias of sync-all-branches",
         script="git/sync-all-branches.py",
-        # A real run, spelled the way sync-all-branches tells its own children;
-        # a `--dry-run` typed after it still wins.
+        # A real run by default; a `--dry-run` typed after it still wins.
         args=("--dry-run=false",),
         sound=7,
         destructive=True,
