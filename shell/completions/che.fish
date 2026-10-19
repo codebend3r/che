@@ -9,6 +9,8 @@ complete -c che -n __fish_use_subcommand -a all-actions-watch -d 'Same as all-ac
 complete -c che -n __fish_use_subcommand -a checkout-my-branches -d 'Check out recent remote branches you authored that aren\'t local yet'
 complete -c che -n __fish_use_subcommand -a clean-stale-branches -d 'Delete local branches whose upstream is gone'
 complete -c che -n __fish_use_subcommand -a clean-stale-branches-dr -d 'Delete local branches whose upstream is gone (preview)'
+complete -c che -n __fish_use_subcommand -a hard-reset-all-branches -d 'Check out every local branch and hard reset it to origin/<branch>'
+complete -c che -n __fish_use_subcommand -a hard-reset-all-branches-dr -d 'Check out every local branch and hard reset it to origin/<branch> (preview)'
 complete -c che -n __fish_use_subcommand -a prune-worktrees -d 'Remove every linked worktree, then prune stale admin records'
 complete -c che -n __fish_use_subcommand -a prune-worktrees-dr -d 'Remove every linked worktree, then prune stale admin records (preview)'
 complete -c che -n __fish_use_subcommand -a sync-all-branches -d 'Update every branch and worktree, preserving locks and local work'
@@ -74,6 +76,10 @@ complete -c che -n "__fish_seen_subcommand_from clean-stale-branches" -l dry-run
 complete -c che -n "__fish_seen_subcommand_from clean-stale-branches" -l protect -r
 complete -c che -n "__fish_seen_subcommand_from clean-stale-branches-dr" -l dry-run
 complete -c che -n "__fish_seen_subcommand_from clean-stale-branches-dr" -l protect -r
+complete -c che -n "__fish_seen_subcommand_from hard-reset-all-branches" -l dry-run
+complete -c che -n "__fish_seen_subcommand_from hard-reset-all-branches" -l force
+complete -c che -n "__fish_seen_subcommand_from hard-reset-all-branches-dr" -l dry-run
+complete -c che -n "__fish_seen_subcommand_from hard-reset-all-branches-dr" -l force
 complete -c che -n "__fish_seen_subcommand_from prune-worktrees" -l dry-run
 complete -c che -n "__fish_seen_subcommand_from prune-worktrees" -l force
 complete -c che -n "__fish_seen_subcommand_from prune-worktrees-dr" -l dry-run
@@ -233,6 +239,10 @@ complete -c clean-stale-branches -l dry-run
 complete -c clean-stale-branches -l protect -r
 complete -c clean-stale-branches-dr -l dry-run
 complete -c clean-stale-branches-dr -l protect -r
+complete -c hard-reset-all-branches -l dry-run
+complete -c hard-reset-all-branches -l force
+complete -c hard-reset-all-branches-dr -l dry-run
+complete -c hard-reset-all-branches-dr -l force
 complete -c prune-worktrees -l dry-run
 complete -c prune-worktrees -l force
 complete -c prune-worktrees-dr -l dry-run

@@ -49,7 +49,7 @@ as a shell function in zsh, bash and fish, and all of them can be browsed,
 filtered and run from a full-screen terminal menu.
 
 <!-- che:count -->
-33 commands across 5 categories, plus 6 built into `che` itself
+34 commands across 5 categories, plus 6 built into `che` itself
 <!-- /che:count -->
 
 ## Contents
@@ -255,6 +255,7 @@ All scripts share the same CLI conventions:
 | `all-actions-watch` | Same as all-actions, refreshed on an interval |  |
 | `checkout-my-branches` | Check out recent remote branches you authored that aren't local yet |  |
 | `clean-stale-branches` | Delete local branches whose upstream is gone | `clean-stale-branches-dr` |
+| `hard-reset-all-branches` | Check out every local branch and hard reset it to origin/<branch> | `hard-reset-all-branches-dr` |
 | `prune-worktrees` | Remove every linked worktree, then prune stale admin records | `prune-worktrees-dr` |
 | `sync-all-branches` | Update every branch and worktree, preserving locks and local work | `sync-all-branches-dr` |
 | `update-from-origin` | Alias of sync-all-branches | `--dry-run` |
@@ -374,7 +375,7 @@ is missing, and `che doctor` reports which are present.
 | `ffmpeg` | `fix-codecs` |
 | `ffprobe` | `show-codecs`, `find-video-mkv-issues`, `scan-videos-audio-language` |
 | `gh` | `all-actions`, `all-actions-watch` |
-| `git` | `all-actions`, `all-actions-watch`, `checkout-my-branches`, `clean-stale-branches`, `prune-worktrees`, `sync-all-branches`, `update-from-origin`, `update-local-branches`, `update` |
+| `git` | `all-actions`, `all-actions-watch`, `checkout-my-branches`, `clean-stale-branches`, `hard-reset-all-branches`, `prune-worktrees`, `sync-all-branches`, `update-from-origin`, `update-local-branches`, `update` |
 | `mpv` | `validate-video-files` |
 | `osascript` | `mount-all-drives` |
 | (not a binary) | `detect-green-magenta-videos` needs OpenCV in ~/.venvs/green-magenta (override with $DETECT_GM_PYTHON) |

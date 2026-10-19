@@ -65,7 +65,8 @@ _che_restore_aliases() {
 
 _che_stash_aliases che_notify che all-actions all-actions-watch \
   checkout-my-branches clean-stale-branches clean-stale-branches-dr \
-  prune-worktrees prune-worktrees-dr sync-all-branches sync-all-branches-dr \
+  hard-reset-all-branches hard-reset-all-branches-dr prune-worktrees \
+  prune-worktrees-dr sync-all-branches sync-all-branches-dr \
   update-from-origin update-local-branches show-codecs fix-codecs \
   fix-codecs-dr find-video-mkv-issues validate-video-files \
   scan-videos-audio-language remove-metadata rename-video-file \
@@ -129,6 +130,18 @@ clean-stale-branches() {
 # Delete local branches whose upstream is gone (preview only)
 clean-stale-branches-dr() {
   DRY_RUN=true "$CHE_PYTHON" "$CHE_BIN/git/clean-stale-branches.py" "$@"
+  che_notify 7 $?
+}
+
+# Check out every local branch and hard reset it to origin/<branch>
+hard-reset-all-branches() {
+  DRY_RUN=false "$CHE_PYTHON" "$CHE_BIN/git/hard-reset-all-branches.py" "$@"
+  che_notify 4 $?
+}
+
+# Check out every local branch and hard reset it to origin/<branch> (preview only)
+hard-reset-all-branches-dr() {
+  DRY_RUN=true "$CHE_PYTHON" "$CHE_BIN/git/hard-reset-all-branches.py" "$@"
   che_notify 7 $?
 }
 

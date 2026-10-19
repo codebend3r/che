@@ -112,6 +112,10 @@ works around the pin rather than counting it as a failure:
 
 - `clean-stale-branches` reports pinned stale branches and deletes the rest.
 - `update-local-branches` rebases a pinned branch in place with `git -C <wt>`.
+- `hard-reset-all-branches` checks out each branch that has an
+  `origin/<branch>` and `reset --hard`s it there; a pinned branch is reset in
+  its own worktree. Uncommitted tracked changes (here, or in a pinned
+  worktree) are only discarded with `--force`; untracked files never are.
 - `sync-all-branches` fetches once, then uses `BranchSync` to update all local
   branches against their upstream (or `origin/<branch>` if unconfigured).
   Occupied branches rebase inside their existing worktree, even when locked.
@@ -131,7 +135,7 @@ works around the pin rather than counting it as a failure:
   Track new origin branches without switching HEAD. Dry-run uses cached refs
   and does not even fetch. `--no-push` and `--keep-locked` remain accepted and
   ignored for compatibility, since chip passes `--no-push`.
-- Every script in `bin/git/` that touches branches (these four plus
+- Every script in `bin/git/` that touches branches (these five plus
   `prune-worktrees`) calls `skip_git_hooks()` first, so no repo hook
   (lefthook, husky) runs on their checkouts and rebases. A new script in
   `bin/git/` that checks out, rebases or commits should call it too.
