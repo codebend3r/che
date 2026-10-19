@@ -2,14 +2,15 @@
 
 # `che`
 
-**A collection of helper scripts shared amongst computers, called by name from
-your shell, and browsable through one menu.**
+**Personal helper scripts, shared across machines, called by name from your
+shell and browsable through one menu.**
 
 [![CI](https://github.com/codebend3r/che/actions/workflows/sanity-check.yml/badge.svg)](https://github.com/codebend3r/che/actions/workflows/sanity-check.yml)
 [![npm](https://img.shields.io/npm/v/%40codebend3r%2Fche)](https://www.npmjs.com/package/@codebend3r/che)
 ![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)
 ![Dependencies: stdlib only](https://img.shields.io/badge/dependencies-stdlib%20only-brightgreen)
 ![Shells: zsh, bash, fish](https://img.shields.io/badge/shells-zsh%20%7C%20bash%20%7C%20fish-8A2BE2)
+[![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
 </div>
 
@@ -40,72 +41,104 @@ your shell, and browsable through one menu.**
 <img src="menu.png" alt="The che menu: commands grouped by category on the left, details for the selected command on the right" width="850">
 </div>
 
-The scripts are Python, standard library only. The names you type
-(`delete-by-ext`, `sync-all-branches`, `show-codecs`, …) are shell functions
-generated from one manifest, `bin/commands.py`, and installed into whichever
-shells you use.
+<br>
 
-```
-che                     browse everything: type to filter, Enter to run
-che <command> [args…]   run one directly
-delete-by-ext --path=…  or just call it by name
-```
+`che` is a set of standalone Python scripts for git housekeeping, media
+libraries, file cleanup, NAS drives and system upkeep. Each one is installed
+as a shell function in zsh, bash and fish, and all of them can be browsed,
+filtered and run from a full-screen terminal menu.
 
 <!-- che:count -->
 33 commands across 5 categories, plus 6 built into `che` itself
 <!-- /che:count -->
 
-## Highlights
+## Contents
+
+- [Features](#features)
+- [Quick start](#quick-start)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Commands](#commands)
+- [Configuration](#configuration)
+- [External tools](#external-tools)
+- [Development](#development)
+- [Troubleshooting](#troubleshooting)
+- [License](#license)
+
+## Features
 
 - **One manifest, everything generated.** Wrappers, completions, the menu, the
-  doctor report and the tables in this README all come from `bin/commands.py`;
-  `bun run ci` fails if any of them drift.
-- **Destructive commands preview by default.** Every deleter has a `-dr` twin
-  that only prints, and the menu opens on the dry-run.
-- **Standard library only.** A bare `python3` 3.12+ runs everything; no venv,
-  no `pip install`, on any machine the repo is cloned to.
+  doctor report and the tables in this README all come from
+  `bin/commands.py`. CI fails if any of them drift.
+- **Safe by default.** Destructive commands preview unless told otherwise, and
+  each has a `-dr` twin that only prints. The menu opens on the dry run.
+- **Standard library only.** Any Python 3.12+ runs everything. No virtualenv,
+  no `pip install`.
 - **Your dotfiles stay yours.** The installer writes a few lines between
-  markers, backs every rc file up first, and never touches anything outside
-  the markers.
-- **`che doctor` knows the whole story.** Interpreter, generated files, rc
-  blocks, external tools, alias collisions — one command, non-zero on failure.
+  markers, backs up every rc file first, and never touches anything outside
+  them.
+- **Self-diagnosing.** `che doctor` checks the interpreter, generated files, rc
+  blocks, external tools and alias collisions, and exits non-zero on failure.
 
-## Install
+## Quick start
 
-From a clone:
+```sh
+curl -fsSL https://raw.githubusercontent.com/codebend3r/che/main/install.sh | bash
+exec $SHELL
+```
+
+```sh
+che                       # browse everything: type to filter, Enter to run
+che <command> [args…]     # run one command directly
+delete-by-ext --path=…    # or call any command by name
+```
+
+## Installation
+
+### Requirements
+
+- **Python 3.12 or newer.** The installer picks the newest suitable interpreter
+  it can find and records its path, so an old system `python3` is fine as long
+  as a newer one exists (`brew install python@3.13` if not).
+- **zsh, bash or fish.**
+- Some commands need external tools such as `ffmpeg` or `gh`; see
+  [External tools](#external-tools).
+
+### Install methods
+
+**From a clone**
 
 ```sh
 git clone https://github.com/codebend3r/che.git ~/Developer/git/che
 ~/Developer/git/che/install.sh
 ```
 
-Or in one line, which clones for you (into `~/Developer/git/che`, or wherever
-`CHE_HOME` points):
+**One-liner** (clones into `~/Developer/git/che`, or `$CHE_HOME` if set)
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/codebend3r/che/main/install.sh | bash
 ```
 
-Or from npm, if Node is around:
+**From npm**
 
 ```sh
 npm install -g @codebend3r/che
-che                              # offers to install the wrappers on first run
+che                       # offers to install the shell wrappers on first run
 ```
 
-The wrappers point back at wherever the package landed, so install it for real
-rather than through `npx`, whose cache is temporary. Update that kind of install
-with `npm install -g @codebend3r/che@latest`; `che update` only pulls a git
-clone, and says so.
+> [!NOTE]
+> Install the npm package globally rather than running it through `npx`: the
+> wrappers point back at the package's location, and the `npx` cache is
+> temporary. Update with `npm install -g @codebend3r/che@latest`; `che update`
+> only works in a git clone.
 
-`install.sh` finds a suitable python3, then hands over to `bin/install.py`,
-which opens a first-run wizard: it lists the shells it found and the rc files
-it would touch, asks whether to add a `che` on `PATH` and whether to keep the
-completion chimes, offers to remove hand-written wrappers left over from before
-the installer existed, and reports any missing external tool (offering to
-`brew install` them when Homebrew is present). A question already answered on
-the command line (`--no-sounds`, `--no-path-shim`, `--replace-legacy`,
-`--install-deps`) is not asked again.
+### First run
+
+`install.sh` finds a suitable Python and hands over to a short wizard. It
+lists the shells it found and the rc files it would touch, asks whether to put
+`che` on `PATH` and whether to keep the completion chimes, offers to remove
+hand-written wrappers from before the installer existed, and reports missing
+external tools (offering to `brew install` them when Homebrew is present).
 
 <div align="center">
 <img src="first-run.png" alt="The first run screen: che is not installed in this shell yet, offering to install, open the menu, or quit" width="700">
@@ -113,29 +146,31 @@ the command line (`--no-sounds`, `--no-path-shim`, `--replace-legacy`,
 <em>Running <code>che</code> before installing offers to set itself up.</em>
 </div>
 
-Skip the wizard:
+### Unattended install
+
+Any question answered on the command line is not asked again
+(`--no-sounds`, `--no-path-shim`, `--replace-legacy`, `--install-deps`).
 
 ```sh
-./install.sh --yes                    # into the shells it detects
-./install.sh --yes --shells=zsh,fish  # or the ones you name
-./install.sh --dry-run                # report what would change, write nothing
-./install.sh --yes --replace-legacy   # also remove pre-che hand-written wrappers
-./install.sh --print                  # print the exact rc block, install nothing
+./install.sh --yes                     # install into every detected shell
+./install.sh --yes --shells=zsh,fish   # or only the shells you name
+./install.sh --dry-run                 # report what would change, write nothing
+./install.sh --yes --replace-legacy    # also remove pre-che hand-written wrappers
+./install.sh --print                   # print the rc block and exit
 ```
 
-Every rc file is copied to `~/.config/che/backups/` before it is edited.
+### What gets installed
 
-### What lands where
-
-| Thing | Where |
+| What | Where |
 | --- | --- |
-| The rc block, six or seven lines between markers | `~/.zshrc` (or `$ZDOTDIR/.zshrc`), `~/.bashrc` and `~/.bash_profile` (whichever exist), `~/.config/fish/config.fish`, and `~/.profile` only if you ask for `sh` |
-| The wrappers themselves | `shell/che.zsh`, `shell/che.bash`, `shell/che.fish` in this repo |
-| Tab completions | `shell/completions/`, sourced by the same wrapper file |
-| A `che` executable, for cron and scripts that never read an rc file | `~/.local/bin/che` |
-| What you answered | `~/.config/che/config.json` |
+| The rc block | `~/.zshrc` (or `$ZDOTDIR/.zshrc`), `~/.bashrc` and `~/.bash_profile` (whichever exist), `~/.config/fish/config.fish`, and `~/.profile` only when `sh` is requested |
+| Shell wrappers | `shell/che.zsh`, `shell/che.bash`, `shell/che.fish` in the repo |
+| Tab completions | `shell/completions/`, sourced by the wrapper file |
+| A `che` executable for cron and scripts | `~/.local/bin/che` |
+| Your installer answers | `~/.config/che/config.json` |
+| rc file backups | `~/.config/che/backups/` |
 
-The block itself is small on purpose, so upgrading che never rewrites your
+The rc block is deliberately small, so upgrading `che` never rewrites your
 dotfiles:
 
 ```zsh
@@ -148,37 +183,28 @@ case ":$PATH:" in *":/Users/you/.local/bin:"*) ;; *) PATH="/Users/you/.local/bin
 # <<< che shell functions <<<
 ```
 
-Everything between those markers belongs to `che install` and is rewritten on
-every install. Everything outside them is yours and is never touched.
+Everything between the markers is rewritten on every install; everything
+outside them is left alone. Reload your shell afterwards with `exec zsh`
+(or `exec bash`, `exec fish`).
 
-Then reload:
-
-```sh
-exec zsh          # or exec bash / exec fish
-```
-
-**Requires Python 3.12+** and nothing else to run the scripts. The installer
-picks the newest suitable interpreter it can find and records its path in the
-block, so an old `/usr/bin/python3` does not matter as long as some newer
-python3 exists. `brew install python@3.13` if none does.
-
-### Uninstall
+### Updating and uninstalling
 
 ```sh
-che uninstall           # remove the block, the shim and the completions
+che update              # pull the latest scripts and refresh the wrappers
+che uninstall           # remove the rc block, the shim and the completions
 che uninstall --purge   # also delete ~/.config/che and the menu's input history
 ```
 
-The repo itself is left alone; delete the directory to finish.
+Uninstalling leaves the repository in place; delete the directory to finish.
 
-## Using it
+## Usage
 
-`che` on its own opens the menu. Anything that can preview **previews by
-default**, so pressing Enter on `delete-by-ext` shows you what it would delete
-rather than deleting it.
+### The menu
 
-Type to filter — the list narrows as you go, and the right pane always shows
-the selected command's summary, script, required tools and flags:
+Run `che` with no arguments to open the menu. Type to filter; the right pane
+shows the selected command's summary, script, required tools and flags.
+Anything that can preview **previews by default**, so pressing Enter on
+`delete-by-ext` shows what it would delete rather than deleting it.
 
 <div align="center">
 <img src="search.png" alt="The menu filtered by the search term branch, showing the five matching commands" width="850">
@@ -198,19 +224,28 @@ the selected command's summary, script, required tools and flags:
 | `q` | quit |
 <!-- /che:keys -->
 
-Every command is also a plain shell function, so `type delete-by-ext` shows
-exactly what it runs, and the destructive ones have a `-dr` twin that only
-prints:
+### From the shell
+
+Every command is a plain shell function, so `type delete-by-ext` shows exactly
+what it runs. Destructive commands have a `-dr` twin that only prints:
 
 ```sh
 delete-by-ext --path=/Volumes/Media --ext=nfo,txt   # deletes
 delete-by-ext-dr --path=/Volumes/Media --ext=nfo    # shows what it would delete
 ```
 
-`che <command>` runs the same thing with the same environment the wrapper would
-have used, and `che help <command>` prints that script's own `--help`.
+`che <command>` runs the same script with the same environment its wrapper
+uses, and `che help <command>` prints that script's `--help`.
 
-### Commands
+All scripts share the same CLI conventions:
+
+- **Long flags only**, with `=` for values: `--path=/foo`, `--ext=nfo,txt`.
+- **Booleans** accept a bare `--flag` or `--flag=true|false` (also
+  `yes|no`, `1|0`, `on|off`). A bare flag never swallows the next argument.
+- **`--help`** on every script.
+- **A symlinked `--path` is refused.** Pass the real path to act on it.
+
+## Commands
 
 <!-- che:commands -->
 | Command | Does | Preview |
@@ -255,12 +290,11 @@ have used, and `che help <command>` prints that script's own `--help`.
 | `btop` | Launch btop with a gruvbox theme matching the macOS appearance |  |
 <!-- /che:commands -->
 
-Two commands have no `-dr` twin. `remove-metadata` cannot preview at all, since
-exiftool rewrites in place. `rename-video-file` does not need one: it already
-defaults to `--dry-run=true`, so the real rename is the one that needs
-`--dry-run=false`.
+Two commands have no `-dr` twin. `remove-metadata` cannot preview, since
+exiftool rewrites files in place. `rename-video-file` already defaults to
+`--dry-run=true`, so the real rename is the one that needs `--dry-run=false`.
 
-### Managing the install
+### Built-in commands
 
 <!-- che:builtins -->
 | Command | Does |
@@ -273,10 +307,11 @@ defaults to `--dry-run=true`, so the real rename is the one that needs
 | `che completions` | Print the completion script for a shell |
 <!-- /che:builtins -->
 
-`che doctor` checks the interpreter, the repo, whether the generated files are
-current, whether each rc file has the block, whether `che` is on `PATH`, every
-external tool, and anything shadowing a wrapper. It exits non-zero on a real
-failure, so it works in a health check. `che doctor --json` for a machine.
+`che doctor` checks the interpreter, the repository, whether generated files
+are current, whether each rc file has the block, whether `che` is on `PATH`,
+every external tool, and anything shadowing a wrapper. It exits non-zero on a
+real failure, so it can serve as a health check; `che doctor --json` gives
+machine-readable output.
 
 <div align="center">
 <img src="doctor.png" alt="che doctor output: green checks for python, repo and generated files, with problems and warnings each followed by the command that fixes them" width="850">
@@ -284,127 +319,50 @@ failure, so it works in a health check. `che doctor --json` for a machine.
 <em>Every problem <code>che doctor</code> reports comes with the command that fixes it.</em>
 </div>
 
-### Environment
+### Syncing branches
+
+`sync-all-branches` (alias `update-from-origin`) fetches once and rebases
+every local branch onto its upstream, falling back to `origin/<branch>`.
+
+```sh
+sync-all-branches       # update every branch and worktree
+sync-all-branches-dr    # preview against cached remote refs; no fetch, no changes
+```
+
+- **Worktrees update in place.** Branches checked out in other worktrees,
+  including locked ones, rebase inside their own checkout. Unoccupied branches
+  use temporary worktrees, so your current checkout never switches.
+- **Local work is preserved.** Uncommitted tracked and untracked changes are
+  stashed and restored with their staged state; existing stashes are
+  untouched. Dirty submodules and in-progress Git operations are reported and
+  left alone.
+- **Nothing is destroyed.** It never pushes, hard resets or deletes branches.
+  Missing upstreams are reported, not treated as merged; use
+  `clean-stale-branches` for cleanup.
+- **Failures are isolated.** A rebase conflict is aborted and reported while
+  other branches continue, and any blocked branch makes the command exit
+  non-zero. If restoring work conflicts, the recovery stash ID and worktree
+  path are printed.
+- New remote branches you authored become local tracking branches.
+
+Like every branch-touching script in `bin/git/`, it disables repository hooks
+for its own Git commands. The legacy `--no-push` and `--keep-locked` flags are
+still accepted and ignored.
+
+## Configuration
 
 | Variable | Effect |
 | --- | --- |
-| `CHE_HOME` | Where this repo lives. Set by the block; the wrapper file falls back to its own location. |
-| `CHE_PYTHON` | Interpreter the wrappers use. Set by the block to the one the installer verified. |
-| `CHE_SOUNDS` | `0` turns off the `playsound-N` chime after every command. |
-| `DRY_RUN` | What the wrappers set for the destructive commands. Exporting it yourself changes nothing for them, since the wrapper sets it explicitly on every call; it only reaches a script invoked directly. |
-| `NO_COLOR` | Honoured by every script and by the menu. |
-
-## How it fits together
-
-`bin/commands.py` is the single source of truth. The wrappers, the completions,
-the menu, the `doctor` report and the tables in this README are all generated
-from it, and `bun run ci` fails if any of them drift.
-
-### Adding a command
-
-1. Write the script under `bin/<category>/` and `chmod +x` it.
-2. Add a `Command(...)` to `bin/commands.py`: name, summary, script, sound,
-   whether it can preview, which external tools it needs, its flags, and the
-   two or three questions the menu should ask.
-3. `bun run generate` to rewrite `shell/` and this README's tables, and commit
-   the result.
-4. `che install` on each machine, or `che update`, which does both.
-
-There is no step where you hand-edit a wrapper into `~/.zshrc`, and no step
-where you copy one machine's rc file to another.
-
-### Layout
-
-```
-bin/
-  art.py              the wordmark and the face beside it, for every screen
-  che.py              the dispatcher, and the loop that runs what the menu picks
-  commands.py         the command manifest: the source of truth for everything
-  doctor.py           `che doctor`: every check on the install
-  gitutils.py         shared git helpers: worktrees, main branch, hook skipping
-  install.py          installer, first-run wizard, self-update, uninstall
-  machine.py          shells, rc file paths, python, config: facts about the machine
-  media.py            shared ffprobe helpers for the video scripts
-  menu.py             the menu's list, keys and drawing
-  nas.py              the NAS drive table and SMB mounting, for the drive scripts
-  rcfile.py           edits to rc files: the che block and old hand-written wrappers
-  shellgen.py         renders the wrappers, completions and README tables
-  tui.py              terminal primitives: raw input, frame buffer, prompts
-  utils.py            shared library: logging, arg parsing, subprocess, files
-  drives/             mount, eject, and keep-alive for the NAS volumes
-  files/              delete/compress/inspect files by extension or size
-  git/                branch hygiene, worktrees, GitHub Actions status
-  system/             Homebrew updates, btop launcher
-  video/              codec inspection, renaming, dedupe, metadata
-shell/                GENERATED wrappers and completions, do not edit
-test/                 pytest suites
-install.sh            bootstrap for a machine with nothing on it
-.zshrc                a shim that sources shell/che.zsh, kept for old setups
-```
-
-## CLI conventions
-
-Every script follows the same shape, described in full at the top of
-`bin/utils.py`:
-
-- **Long flags only**, `--name=value` for values.
-- **Booleans** accept a bare `--flag` *and* `--flag=true|false` (plus
-  `yes|no`, `1|0`, `on|off`). A bare `--flag` never swallows the next argument.
-- **`--help`** on every script.
-- **Destructive scripts default to dry-run.** `delete-by-ext`,
-  `delete-empty-folders`, `delete-smb-files`, `files-under-size`, `fix-codecs`,
-  `delete-duplicate-videos` and `prune-worktrees` read `DRY_RUN` and preview
-  unless told otherwise; the generated wrapper sets `DRY_RUN=false` for the
-  real thing and the `-dr` twin sets it back to `true`.
-- **A symlinked `--path` is refused.** `find` never followed a symlinked start
-  point, so pointing a delete tool at `~/media -> /Volumes/...` used to be a
-  silent no-op. Pass the real path to act on it.
-
-## Syncing branches
-
-```sh
-sync-all-branches       # update branches and worktrees, keeping locks and local work
-sync-all-branches-dr    # preview cached remote refs; no fetch or changes
-update-from-origin     # alias of sync-all-branches
-```
-
-Fetches once and rebases every local branch onto its upstream, falling back to
-`origin/<branch>` when no upstream is configured. Branches in existing
-worktrees, including locked ones, update **inside their own checkout**. Dirty
-tracked and untracked work is temporarily stashed and restored with its staged
-state; unrelated existing stashes survive. Nested registered worktrees are
-excluded from their parent's stash. Dirty submodules and existing Git operations
-are reported and left alone.
-
-It **never pushes, hard resets or deletes local branches**, and preserves every
-existing worktree directory, lock and checkout, including the caller's branch.
-Unoccupied branches use temporary worktrees that are removed after updating.
-New origin branches authored by you become local tracking branches without
-switching HEAD. Missing upstreams are reported, not treated as proof of a merge;
-use `clean-stale-branches` separately when you want branch cleanup.
-
-Rebase conflicts are aborted and reported while other branches continue. If
-restoring WIP conflicts, the exact recovery stash is retained and its ID and
-worktree path are printed. A blocked branch makes the command exit nonzero even
-when other branches updated. Local-only branches are reported without inventing
-a remote target. Ahead counts may remain because local commits are kept; clearing
-them would require pushing or discarding work. Avoid concurrent edits or Git
-operations while the sync temporarily saves WIP.
-
-The `-dr` preview does not fetch and only inspects cached remote refs. It changes
-no branches, working files, locks or stashes. Legacy `--no-push` and
-`--keep-locked` flags are still accepted for compatibility.
-
-Like the other branch scripts (`clean-stale-branches`, `update-local-branches`,
-`checkout-my-branches`, `prune-worktrees`), sync retains che's existing policy of
-pointing `core.hooksPath` at `/dev/null` for its Git commands so bookkeeping does
-not run repository hooks.
+| `CHE_HOME` | Where the repository lives. Set by the rc block; the wrapper file falls back to its own location. |
+| `CHE_PYTHON` | The interpreter the wrappers use. Set by the rc block to the one the installer verified. |
+| `CHE_SOUNDS` | Set to `0` to turn off the `playsound-N` chime after each command. |
+| `DRY_RUN` | Set explicitly by the wrappers on every call, so exporting it only affects scripts run directly. |
+| `NO_COLOR` | Disables color in every script and in the menu. |
 
 ## External tools
 
-The scripts shell out to these where relevant and fail with an install hint
-when one is missing. `che doctor` reports which are present and what needs
-them.
+Scripts that shell out to an external tool fail with an install hint when it
+is missing, and `che doctor` reports which are present.
 
 <!-- che:tools -->
 | Tool | Needed by |
@@ -422,61 +380,113 @@ them.
 | (not a binary) | `detect-green-magenta-videos` needs OpenCV in ~/.venvs/green-magenta (override with $DETECT_GM_PYTHON) |
 <!-- /che:tools -->
 
-`diskutil` and `osascript` ship with macOS. The rest are one `brew install`
-away, and `che install --install-deps` will do it for you.
+`diskutil` and `osascript` ship with macOS. The rest are a `brew install`
+away, and `che install --install-deps` installs them for you.
 
-`playsound-N`, the chime a wrapper plays when it finishes, is defined outside
-this repo. When it is absent the wrappers skip it silently; `CHE_SOUNDS=0`
-turns the chimes off everywhere.
+`playsound-N`, the chime played when a wrapper finishes, is defined outside
+this repository; the wrappers skip it silently when it is absent.
 
-`zip`, `bc`, `jq`, `perl`, `awk` and `sort` are no longer needed: `zipfile`,
-integer maths, `json`, `re` and `sorted()` cover what they were doing.
+## Development
 
-## Running tests
+`bin/commands.py` is the single source of truth. The wrappers, completions,
+menu, doctor report and this README's tables are all generated from it.
 
-This repo uses [Bun](https://bun.sh) as its task runner and
-[uv](https://docs.astral.sh/uv/) to supply the dev tooling.
+### Adding a command
+
+1. Write the script under `bin/<category>/` and `chmod +x` it.
+2. Add a `Command(...)` to `bin/commands.py`: name, summary, script, sound,
+   preview style, required tools, flags, and the two or three questions the
+   menu should ask.
+3. Run `bun run generate` to rewrite `shell/` and the README tables, and
+   commit the result.
+4. Run `che update` on each machine.
+
+Conventions for new scripts are documented at the top of `bin/utils.py` and in
+[`CLAUDE.md`](CLAUDE.md).
+
+### Project layout
+
+```
+bin/
+  che.py          dispatcher, and the loop that runs what the menu picks
+  commands.py     command manifest: the source of truth for everything
+  menu.py         the menu's model, keys and drawing
+  shellgen.py     renders wrappers, completions and README tables
+  install.py      installer, first-run wizard, self-update, uninstall
+  doctor.py       `che doctor`
+  rcfile.py       rc file edits: the che block and legacy wrappers
+  machine.py      shells, rc paths, python discovery, install record
+  tui.py          terminal primitives: raw input, frame buffer, prompts
+  art.py          the wordmark and banner
+  utils.py        shared library: logging, arg parsing, subprocess, files
+  gitutils.py     git helpers: worktrees, main branch, hook skipping
+  branchsync.py   per-branch sync used by sync-all-branches
+  media.py        ffprobe helpers for the video scripts
+  nas.py          NAS drive table and SMB mounting
+  git/  video/  files/  drives/  system/    the scripts, by category
+shell/            GENERATED wrappers and completions (do not edit)
+test/             pytest suites
+install.sh        bootstrap for a bare machine
+```
+
+### Testing
+
+The repository uses [Bun](https://bun.sh) as its task runner and
+[uv](https://docs.astral.sh/uv/) for dev tooling, so neither `pytest` nor
+`ruff` needs to be installed globally. Versions are pinned in
+`requirements-dev.txt`.
 
 ```sh
 bun run test        # pytest
-bun run generate    # rewrite shell/ and this README's tables from the manifest
-bun run ci          # ruff + exec bits + shebangs + pytest (stale generated files fail it)
+bun run generate    # rewrite shell/ and the README tables from the manifest
+bun run ci          # ruff, exec bits, shebangs, pytest; fails on stale generated files
 ```
 
-Neither `pytest` nor `ruff` needs to be installed globally: the scripts shell
-out to `uv run --with-requirements requirements-dev.txt`, which builds an
-ephemeral environment per invocation. Versions are pinned exactly in
-`requirements-dev.txt`.
-
-(Note: plain `bun test` invokes Bun's built-in JS/TS test runner, which doesn't
-apply here, so always use `bun run test`.)
+> [!TIP]
+> Use `bun run test`, not `bun test`, which runs Bun's built-in JavaScript
+> test runner instead.
 
 ## Troubleshooting
 
-**A command still runs the old thing.** An alias beats a function in both zsh
-and bash. The wrappers stash a colliding alias, define themselves, then put the
-alias back, so your alias keeps winning at the prompt exactly as before; run
-`\name` (backslash) to reach the wrapper, or remove the alias. `che doctor`
-lists every collision it finds.
+<details>
+<summary><strong>A command still runs the old version</strong></summary>
 
-**`che: command not found` in a script or cron job.** Those never read an rc
-file. Use `~/.local/bin/che`, which the installer puts on `PATH`.
+An alias beats a function in zsh and bash. The wrappers preserve any colliding
+alias, so it keeps winning at the prompt. Run `\name` to reach the wrapper, or
+remove the alias. `che doctor` lists every collision.
 
-**A wrapper is missing after an update.** `che update` regenerates and
-reinstalls; `che doctor` says whether `shell/` is stale or the block is out of
-date.
+</details>
 
-**Old hand-written wrappers are still in your rc file.** `che doctor` counts
-them; `che install --replace-legacy` removes them, their helpers and the lines
-that called them, after a backup.
+<details>
+<summary><strong><code>che: command not found</code> in a script or cron job</strong></summary>
+
+Non-interactive shells never read an rc file. Use `~/.local/bin/che`, which
+the installer puts on `PATH`.
+
+</details>
+
+<details>
+<summary><strong>A wrapper is missing after an update</strong></summary>
+
+`che update` regenerates and reinstalls the wrappers. `che doctor` reports
+whether `shell/` is stale or the rc block is out of date.
+
+</details>
+
+<details>
+<summary><strong>Old hand-written wrappers are still in an rc file</strong></summary>
+
+`che doctor` counts them, and `che install --replace-legacy` removes them,
+along with their helpers and the lines that called them, after a backup.
+
+</details>
 
 ## History
 
-These scripts were bash until August 2026. `git log` has the shell versions;
-the migration commit explains each deliberate behavioural change, and anywhere
-the Python intentionally differs from the bash it replaced, there is a comment
-at that line saying so.
+These scripts were written in bash until August 2026, when they were ported to
+Python. Every intentional behavioural difference from the bash originals is
+commented at the line where it occurs, and `git log` holds the shell versions.
 
-The wrappers were hand-maintained in this repo's `.zshrc` until `che` arrived,
-with the documented workflow being to copy them into `~/.zshrc` by hand. That
-is what `che install --replace-legacy` cleans up.
+## License
+
+[MIT](LICENSE) © CJ Rivas
