@@ -215,8 +215,12 @@ an old one and hands the scripts a new enough interpreter itself).
 1. `npm version <major|minor|patch>` on `main`. Its `version` hook runs
    `bun run generate` and stages `shell/`, `.zshrc` and the README islands into
    the version commit, so the generated headers never lag the package.
-2. `git push --follow-tags`.
-3. `npm publish`. `prepublishOnly` runs `bun run ci` first.
+2. `git push --follow-tags`. The `v*` tag triggers
+   `.github/workflows/publish.yml`, which checks the tag matches
+   `package.json` and runs `npm publish` (`prepublishOnly` runs `bun run ci`
+   first). It authenticates through npm trusted publishing (OIDC, the
+   `che release` environment), so there is no token secret and no manual
+   `npm publish`.
 
 The tarball is `bin/` and `shell/` plus the README and LICENSE;
 `npm pack --dry-run` lists it. `che update` refuses to run in a copy without

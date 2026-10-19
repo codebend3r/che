@@ -1,0 +1,49 @@
+name: 📦 Publish to npm
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  id-token: write # OIDC token for npm trusted publishing
+
+jobs:
+  publish:
+    name: 📦 Publish
+    runs-on: ubuntu-latest
+    # Must match the environment on the package's npm trusted publisher.
+    environment: che release
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      # Trusted publishing needs npm >= 11.5.1; the latest Node 24.x bundles it.
+      - name: 🟢 Install node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: 🐰 Install bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: 🐍 Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: 🏷️ Tag matches package.json
+        run: |
+          pkg=$(node -p "require('./package.json').version")
+          [ "${GITHUB_REF_NAME#v}" = "$pkg" ] || { echo "Tag $GITHUB_REF_NAME does not match package.json $pkg"; exit 1; }
+
+      # prepublishOnly runs `bun run ci` first, hence bun and uv above.
+      - name: 🚀 Publish
+        run: npm publish
+
+      - name: 🎉 Published
+        run: echo "✅ Published \`@codebend3r/che@${GITHUB_REF_NAME#v}\` from ${GITHUB_SHA:0:7}." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 🚨 Publish failed
+        if: failure()
+        run: echo "💥 \`$GITHUB_REF_NAME\` did not publish — check the failed step above." >> "$GITHUB_STEP_SUMMARY"
