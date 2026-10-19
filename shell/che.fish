@@ -68,6 +68,16 @@ function clean-stale-branches-dr --description 'Delete local branches whose upst
     che_notify 7 $status
 end
 
+function hard-reset-all-branches --description 'Check out every local branch and hard reset it to origin/<branch>'
+    env DRY_RUN=false "$CHE_PYTHON" "$CHE_BIN/git/hard-reset-all-branches.py" $argv
+    che_notify 4 $status
+end
+
+function hard-reset-all-branches-dr --description 'Check out every local branch and hard reset it to origin/<branch> (preview only)'
+    env DRY_RUN=true "$CHE_PYTHON" "$CHE_BIN/git/hard-reset-all-branches.py" $argv
+    che_notify 7 $status
+end
+
 function prune-worktrees --description 'Remove every linked worktree, then prune stale admin records'
     env DRY_RUN=false "$CHE_PYTHON" "$CHE_BIN/git/prune-worktrees.py" $argv
     che_notify 4 $status
