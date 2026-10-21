@@ -135,7 +135,8 @@ works around the pin rather than counting it as a failure:
   --keep` to it rather than rebased, since replaying stale pre-squash commits
   conflicts for nothing. A gone upstream is not proof of a merge: the branch is
   deleted only when origin's main holds its content and no worktree has it
-  checked out; otherwise it is blocked.
+  checked out. A merged one that is checked out is blocked; an unmerged one is
+  reported as `Upstream gone` and kept, not counted as a failure.
   Continue independent branches after recoverable failures and return nonzero
   for any blockers; failure to abort our own rebase stops the run immediately.
   Track new origin branches without switching HEAD. Dry-run uses cached refs

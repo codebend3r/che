@@ -52,6 +52,7 @@ class BranchSync:
     updated: list[str] = field(default_factory=list)
     current: list[str] = field(default_factory=list)
     local_only: list[str] = field(default_factory=list)
+    gone: list[str] = field(default_factory=list)
     restored: list[str] = field(default_factory=list)
     reset: list[str] = field(default_factory=list)
     deleted: list[str] = field(default_factory=list)
@@ -164,11 +165,13 @@ class BranchSync:
         unmerged), so the gate is content in origin's main, never the gone ref.
         """
         main = f"refs/remotes/origin/{self.main}"
-        if not self.main or branch == self.main or not self.has_ref(main):
-            self.block(branch, f"upstream gone: {upstream}; no origin main to compare; retained")
-            return
-        if not self.adds_nothing(branch, main):
-            self.block(branch, f"upstream gone: {upstream}; not merged into {self.main}; retained")
+        if (
+            not self.main
+            or branch == self.main
+            or not self.has_ref(main)
+            or not self.adds_nothing(branch, main)
+        ):
+            self.keep_gone(branch, upstream)
             return
         if branch in occupied:
             self.block(
@@ -186,6 +189,13 @@ class BranchSync:
             return
         self.deleted.append(branch)
         success(f"  🗑️ Deleted: {branch} (upstream gone, work already in {self.main})")
+
+    def keep_gone(self, branch: str, upstream: str) -> None:
+        # Usually a merged PR whose remote branch was deleted, or one closed
+        # unmerged. Nothing is left to pull, so it is not a failure; keep it
+        # for the user to review.
+        info(f"  🪦 Upstream gone: {branch} ({upstream}); branch and worktree retained")
+        self.gone.append(branch)
 
     def save_wip(self, branch: str, path: Path) -> str:
         if not self.dirty(path):
@@ -408,9 +418,12 @@ class BranchSync:
             ("Deleted (merged)", self.deleted),
             ("Tracked new", tracked),
             ("Local only", self.local_only),
+            ("Upstream gone", self.gone),
             ("WIP restored", self.restored),
         ):
             info(f"{label}: {len(names)} ({', '.join(names)})")
+        if self.gone:
+            info("  Review them; clean-stale-branches removes them once you are sure.")
         info(f"Blocked: {len(self.blocked)}")
         for reason in self.blocked:
             warning(f"  • {reason}")

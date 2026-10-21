@@ -345,7 +345,8 @@ sync-all-branches-dr    # preview against cached remote refs; no fetch, no chang
     commits that would conflict.
   - A branch whose upstream is gone is deleted once origin's main holds its
     content, squash merges included. A missing upstream alone is not treated
-    as merged, and a branch checked out in a worktree is reported, not deleted.
+    as merged: an unmerged one is listed as `Upstream gone` and kept, and a
+    branch checked out in a worktree is reported, not deleted.
 - **Failures are isolated.** A rebase conflict is aborted and reported while
   other branches continue, and any blocked branch makes the command exit
   non-zero. If restoring work conflicts, the recovery stash ID and worktree

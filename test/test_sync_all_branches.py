@@ -220,8 +220,9 @@ def test_gone_upstream_is_reported_and_kept(repo: Repo, run_script):
     git(repo.other, "push", "--quiet", "origin", "--delete", "shipped")
     before = git(repo.shipped, "rev-parse", "HEAD")
     result = run_script(SYNC, cwd=repo.work)
-    assert result.returncode == 1, result.stdout + result.stderr
-    assert "upstream gone" in result.stdout
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Upstream gone: 1 (shipped)" in result.stdout
+    assert "Blocked: 0" in result.stdout
     assert git(repo.shipped, "rev-parse", "HEAD") == before
     assert "shipped" in local_branches(repo.work)
     assert_includes_origin(repo, "behind")
