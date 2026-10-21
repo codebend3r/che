@@ -4,7 +4,10 @@
 Fetch once, rebase branches onto their upstream (or origin/<branch>), and track
 new origin branches authored by you. Dirty tracked/untracked work is saved in
 an exact recovery stash and restored with its index. Conflicts are reported;
-independent branches continue. Nothing is pushed, hard reset or deleted.
+independent branches continue. Nothing is pushed. A branch whose changes are
+all already upstream moves to its upstream instead of replaying them; a branch
+whose upstream is gone is deleted only when origin's main already holds its
+work. No local change is ever discarded.
 
 Usage:
   sync-all-branches.py [--dry-run] [--author=EMAIL] [--limit=N]
@@ -45,7 +48,7 @@ from utils import (
     warning,
 )
 
-__version__ = "3.0.0"
+__version__ = "3.1.0"
 
 
 def track_new(sync: BranchSync, author: str, limit: int) -> list[str]:
@@ -119,8 +122,9 @@ def main(argv: list[str] | None = None) -> int:
     original = current_branch(root) or run_output(["git", "rev-parse", "--short", "HEAD"], cwd=root)
     info(f"📍 Keeping caller checkout: {original}")
     # DELIBERATE DIVERGENCE: the old sync parked on main and delegated cleanup.
-    # Preserve active workspaces instead, and never discard a gone-upstream
-    # branch merely because its remote was deleted. Dry-run must not fetch.
+    # Preserve active workspaces instead, and never delete a gone-upstream
+    # branch merely because its remote was deleted: only once origin's main
+    # holds its content (BranchSync.drop_gone). Dry-run must not fetch.
     if args.dry_run:
         info("🌵 Cached remote refs only; no fetch. Results reflect the last fetch.")
     else:

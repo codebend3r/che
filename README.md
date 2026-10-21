@@ -337,9 +337,16 @@ sync-all-branches-dr    # preview against cached remote refs; no fetch, no chang
   stashed and restored with their staged state; existing stashes are
   untouched. Dirty submodules and in-progress Git operations are reported and
   left alone.
-- **Nothing is destroyed.** It never pushes, hard resets or deletes branches.
-  Missing upstreams are reported, not treated as merged; use
-  `clean-stale-branches` for cleanup.
+- **No local change is discarded.** It never pushes. A branch is only moved
+  or deleted when Git can prove its changes already exist elsewhere:
+  - A diverged branch whose changes are all in its upstream (a stale copy of
+    a branch rebased and force-pushed from another machine, typically after
+    its parent was squash-merged) moves to the upstream instead of replaying
+    commits that would conflict.
+  - A branch whose upstream is gone is deleted once origin's main holds its
+    content, squash merges included. A missing upstream alone is not treated
+    as merged: an unmerged one is listed as `Upstream gone` and kept, and a
+    branch checked out in a worktree is reported, not deleted.
 - **Failures are isolated.** A rebase conflict is aborted and reported while
   other branches continue, and any blocked branch makes the command exit
   non-zero. If restoring work conflicts, the recovery stash ID and worktree

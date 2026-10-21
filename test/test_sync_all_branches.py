@@ -220,8 +220,9 @@ def test_gone_upstream_is_reported_and_kept(repo: Repo, run_script):
     git(repo.other, "push", "--quiet", "origin", "--delete", "shipped")
     before = git(repo.shipped, "rev-parse", "HEAD")
     result = run_script(SYNC, cwd=repo.work)
-    assert result.returncode == 1, result.stdout + result.stderr
-    assert "upstream gone" in result.stdout
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Upstream gone: 1 (shipped)" in result.stdout
+    assert "Blocked: 0" in result.stdout
     assert git(repo.shipped, "rev-parse", "HEAD") == before
     assert "shipped" in local_branches(repo.work)
     assert_includes_origin(repo, "behind")
@@ -386,3 +387,100 @@ def test_invalid_limit_fails_before_fetch(repo: Repo, run_script, value: str):
     result = run_script(SYNC, [f"--limit={value}"], cwd=repo.work)
     assert result.returncode == 1
     assert git(repo.work, "show-ref") == before
+
+
+def squash_parent_and_force_push_child(repo: Repo, child_path: Path | None = None) -> None:
+    """Rebuild a squash-merge seen from a stale clone, as GitHub plus another machine leave it.
+
+    ``parent`` lands on main as one squash commit and its remote branch is
+    deleted; ``child``, cut from ``parent``, is rebased onto the new main and
+    force-pushed elsewhere. The local ``child`` still carries the pre-squash
+    commits, which conflict on replay although main already holds their content.
+    """
+    git(repo.work, "checkout", "--quiet", "-b", "parent", "main")
+    (repo.work / "parent").write_text("one\n")
+    git(repo.work, "add", "parent")
+    git(repo.work, "commit", "--quiet", "-m", "parent one")
+    (repo.work / "parent").write_text("one\ntwo\n")
+    git(repo.work, "commit", "--quiet", "-am", "parent two")
+    git(repo.work, "push", "--quiet", "--set-upstream", "origin", "parent")
+    if child_path is None:
+        git(repo.work, "checkout", "--quiet", "-b", "child")
+        commit(repo.work, "child")
+        git(repo.work, "push", "--quiet", "--set-upstream", "origin", "child")
+        git(repo.work, "checkout", "--quiet", "main")
+    else:
+        git(repo.work, "checkout", "--quiet", "main")
+        git(repo.work, "worktree", "add", "--quiet", "-b", "child", str(child_path), "parent")
+        commit(child_path, "child")
+        git(child_path, "push", "--quiet", "--set-upstream", "origin", "child")
+    git(repo.other, "fetch", "--quiet", "origin")
+    git(repo.other, "checkout", "--quiet", "main")
+    git(repo.other, "pull", "--quiet", "--ff-only")
+    git(repo.other, "merge", "--quiet", "--squash", "origin/parent")
+    git(repo.other, "commit", "--quiet", "-m", "parent (#1)")
+    git(repo.other, "push", "--quiet", "origin", "main", ":parent")
+    git(repo.other, "checkout", "--quiet", "-B", "child", "main")
+    git(repo.other, "cherry-pick", "origin/child")
+    git(repo.other, "push", "--quiet", "--force", "origin", "child")
+
+
+def test_squash_merged_parent_is_deleted_and_stale_child_reset(repo: Repo, run_script):
+    squash_parent_and_force_push_child(repo)
+    result = run_script(SYNC, cwd=repo.work)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "parent" not in local_branches(repo.work)
+    assert git(repo.work, "rev-parse", "child") == git(repo.work, "rev-parse", "origin/child")
+    assert "Reset to upstream: 1 (child)" in result.stdout
+    assert "Deleted (merged): 1 (parent)" in result.stdout
+
+
+def test_stale_child_in_worktree_resets_in_place_and_keeps_wip(
+    repo: Repo, run_script, tmp_path: Path
+):
+    child = tmp_path / "child"
+    squash_parent_and_force_push_child(repo, child)
+    (child / "child").write_text("child\nuncommitted\n")
+    (child / "notes.txt").write_text("untracked\n")
+    result = run_script(SYNC, cwd=repo.work)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert git(child, "symbolic-ref", "--short", "HEAD") == "child"
+    assert git(child, "rev-parse", "HEAD") == git(repo.work, "rev-parse", "origin/child")
+    assert (child / "child").read_text() == "child\nuncommitted\n"
+    assert (child / "notes.txt").read_text() == "untracked\n"
+    assert git(child, "stash", "list") == ""
+
+
+def test_child_with_unique_local_commit_is_never_reset(repo: Repo, run_script):
+    squash_parent_and_force_push_child(repo)
+    git(repo.work, "checkout", "--quiet", "child")
+    commit(repo.work, "child-local")
+    git(repo.work, "checkout", "--quiet", "main")
+    before = git(repo.work, "rev-parse", "child")
+    result = run_script(SYNC, cwd=repo.work)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "child: rebase failed" in result.stdout
+    assert git(repo.work, "rev-parse", "child") == before
+    assert "parent" not in local_branches(repo.work)
+
+
+def test_dry_run_previews_reset_and_delete_without_changing_refs(repo: Repo, run_script):
+    squash_parent_and_force_push_child(repo)
+    git(repo.work, "fetch", "--quiet", "--prune", "origin")
+    before = git(repo.work, "show-ref")
+    result = run_script(SYNC, ["--dry-run"], cwd=repo.work)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert git(repo.work, "show-ref") == before
+    assert "Would reset child to refs/remotes/origin/child" in result.stdout
+    assert "Would delete parent: upstream gone, work already in main" in result.stdout
+
+
+def test_gone_merged_branch_checked_out_in_worktree_is_kept(repo: Repo, run_script, tmp_path: Path):
+    squash_parent_and_force_push_child(repo)
+    parent = tmp_path / "parent"
+    git(repo.work, "worktree", "add", "--quiet", str(parent), "parent")
+    result = run_script(SYNC, cwd=repo.work)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "parent" in local_branches(repo.work)
+    assert f"merged into main, but checked out in {parent}" in result.stdout
+    assert git(parent, "symbolic-ref", "--short", "HEAD") == "parent"

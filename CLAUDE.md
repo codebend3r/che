@@ -128,8 +128,15 @@ works around the pin rather than counting it as a failure:
   for unoccupied branches without switching the caller's checkout. Never
   recursively delete their directory on failure; remove only through Git,
   without force, after checking no operation is in progress. Existing
-  directories, locks, checkouts and local commits survive. Never push, reset or
-  delete local branches. Gone upstreams are blocked, not proof of a merge.
+  directories, locks, checkouts and local changes survive. Never push. Move or
+  delete a branch only on a content check (`adds_nothing`: `git merge-tree
+  --write-tree` leaves the target's tree unchanged), never on ancestry or a
+  missing ref. A diverged branch whose changes are all upstream is `reset
+  --keep` to it rather than rebased, since replaying stale pre-squash commits
+  conflicts for nothing. A gone upstream is not proof of a merge: the branch is
+  deleted only when origin's main holds its content and no worktree has it
+  checked out. A merged one that is checked out is blocked; an unmerged one is
+  reported as `Upstream gone` and kept, not counted as a failure.
   Continue independent branches after recoverable failures and return nonzero
   for any blockers; failure to abort our own rebase stops the run immediately.
   Track new origin branches without switching HEAD. Dry-run uses cached refs

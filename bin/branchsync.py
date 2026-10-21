@@ -1,8 +1,10 @@
 """Non-destructive branch/worktree synchronization for sync-all-branches.
 
-Unlike the old delegated cleanup, sync preserves every checkout and local branch.
-Only disposable worktrees created here may be removed. Git locks need no special
-handling: they prevent removal/pruning, not a rebase inside the locked checkout.
+Unlike the old delegated cleanup, sync preserves every checkout and every local
+change. A branch is only moved past its own commits or deleted when a content
+check proves its changes are already upstream or in main. Only disposable
+worktrees created here may be removed. Git locks need no special handling: they
+prevent removal/pruning, not a rebase inside the locked checkout.
 """
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from gitutils import Worktree, local_branches, worktrees
+from gitutils import Worktree, find_main_branch, local_branches, worktrees
 from utils import info, run, run_output, success, warning
 
 _OPERATION_FILES = (
@@ -50,12 +52,17 @@ class BranchSync:
     updated: list[str] = field(default_factory=list)
     current: list[str] = field(default_factory=list)
     local_only: list[str] = field(default_factory=list)
+    gone: list[str] = field(default_factory=list)
     restored: list[str] = field(default_factory=list)
+    reset: list[str] = field(default_factory=list)
+    deleted: list[str] = field(default_factory=list)
     blocked: list[str] = field(default_factory=list)
     trees: list[Worktree] = field(init=False)
+    main: str = field(init=False)
 
     def __post_init__(self) -> None:
         self.trees = worktrees(self.root)
+        self.main = find_main_branch(self.root)
 
     def block(self, branch: str, reason: str) -> None:
         message = f"{branch}: {reason}"
@@ -116,8 +123,11 @@ class BranchSync:
         )
 
     def includes(self, branch: str, upstream: str) -> bool:
+        return self.is_ancestor(upstream, f"refs/heads/{branch}")
+
+    def is_ancestor(self, older: str, newer: str) -> bool:
         result = run(
-            ["git", "merge-base", "--is-ancestor", upstream, f"refs/heads/{branch}"],
+            ["git", "merge-base", "--is-ancestor", older, newer],
             cwd=self.root,
             check=False,
             capture=True,
@@ -127,6 +137,65 @@ class BranchSync:
                 result.returncode, result.args, stderr=result.stderr
             )
         return result.returncode == 0
+
+    def adds_nothing(self, branch: str, target: str) -> bool:
+        """True when merging ``branch`` into ``target`` would leave its tree unchanged.
+
+        Decided by content, not ancestry: a squash-merged branch, or a stale copy
+        of an upstream that was rebased and force-pushed elsewhere, shares no
+        commits with ``target`` even though every change it carries is already
+        there. A conflict, unrelated histories, or a git older than 2.38 (no
+        ``--write-tree``) all answer False, so doubt never discards anything.
+        """
+        merged = run(
+            ["git", "merge-tree", "--write-tree", target, f"refs/heads/{branch}"],
+            cwd=self.root,
+            check=False,
+            capture=True,
+        )
+        if merged.returncode or not merged.stdout:
+            return False
+        tree = merged.stdout.splitlines()[0]
+        return tree == run_output(["git", "rev-parse", f"{target}^{{tree}}"], cwd=self.root)
+
+    def drop_gone(self, branch: str, upstream: str, occupied: dict[str, Path]) -> None:
+        """Delete a branch whose upstream is gone, but only once main holds its work.
+
+        A deleted remote branch is not proof of a merge (a PR can be closed
+        unmerged), so the gate is content in origin's main, never the gone ref.
+        """
+        main = f"refs/remotes/origin/{self.main}"
+        if (
+            not self.main
+            or branch == self.main
+            or not self.has_ref(main)
+            or not self.adds_nothing(branch, main)
+        ):
+            self.keep_gone(branch, upstream)
+            return
+        if branch in occupied:
+            self.block(
+                branch,
+                f"upstream gone and merged into {self.main}, but checked out in {occupied[branch]}; retained",
+            )
+            return
+        if self.dry_run:
+            info(f"  🌵 Would delete {branch}: upstream gone, work already in {self.main}")
+            return
+        if run(["git", "branch", "--quiet", "-D", branch], cwd=self.root, check=False).returncode:
+            self.block(
+                branch, f"upstream gone and merged into {self.main}, but could not delete it"
+            )
+            return
+        self.deleted.append(branch)
+        success(f"  🗑️ Deleted: {branch} (upstream gone, work already in {self.main})")
+
+    def keep_gone(self, branch: str, upstream: str) -> None:
+        # Usually a merged PR whose remote branch was deleted, or one closed
+        # unmerged. Nothing is left to pull, so it is not a failure; keep it
+        # for the user to review.
+        info(f"  🪦 Upstream gone: {branch} ({upstream}); branch and worktree retained")
+        self.gone.append(branch)
 
     def save_wip(self, branch: str, path: Path) -> str:
         if not self.dirty(path):
@@ -206,10 +275,21 @@ class BranchSync:
             info(f"  = Up to date: {branch} (local commits kept){f' in {path}' if path else ''}")
             self.current.append(branch)
             return
+        # Replaying commits whose content the upstream already holds conflicts
+        # for nothing: the usual cause is a parent branch squash-merged into main
+        # and this branch rebased and force-pushed from another machine. When a
+        # diverged branch adds nothing to its upstream, moving it there discards
+        # no change. A branch merely behind fast-forwards through the rebase.
+        stale = not self.is_ancestor(f"refs/heads/{branch}", upstream) and self.adds_nothing(
+            branch, upstream
+        )
         if self.dry_run:
-            info(
-                f"  🌵 Would update {branch} from {upstream}{f' in {path}' if path else ''}; stash/restore WIP if needed"
+            action = (
+                f"reset {branch} to {upstream} (its changes are already there)"
+                if stale
+                else f"update {branch} from {upstream}"
             )
+            info(f"  🌵 Would {action}{f' in {path}' if path else ''}; stash/restore WIP if needed")
             return
 
         temporary: Path | None = None
@@ -220,6 +300,29 @@ class BranchSync:
                 path = temporary / "checkout"
                 run(["git", "worktree", "add", "--quiet", str(path), branch], cwd=self.root)
             oid = self.save_wip(branch, path)
+            if stale:
+                info(
+                    f"⏩ Resetting {branch} to {upstream} in {path}; its changes are already there"
+                )
+                # --keep, not --hard: WIP is already stashed, and --keep refuses
+                # rather than overwrite anything that slipped past the stash.
+                moved = (
+                    run(
+                        ["git", "reset", "--quiet", "--keep", upstream], cwd=path, check=False
+                    ).returncode
+                    == 0
+                )
+                if not moved:
+                    warning(f"  ❌ Reset failed for {branch} in {path}")
+                    self.block(branch, f"reset failed in {path}; original commits retained")
+                restored = self.restore_wip(branch, path, oid)
+                if moved and restored:
+                    if self.includes(branch, upstream):
+                        self.reset.append(branch)
+                        success(f"  ✅ Reset to upstream: {branch}")
+                    else:
+                        self.block(branch, "verification failed: fetched upstream not included")
+                return
             info(f"⬇️ Rebasing {branch} in {path} (lock preserved)")
             # DELIBERATE DIVERGENCE: one fetched snapshot instead of pull's
             # per-branch fetch. Disable autostash/updateRefs so Git cannot
@@ -298,10 +401,10 @@ class BranchSync:
                 info(f"  ℹ️ Local only: {branch} (no remote counterpart)")  # noqa: RUF001
                 self.local_only.append(branch)
                 continue
-            if not self.has_ref(upstream):
-                self.block(branch, f"upstream gone: {upstream}; branch and worktree retained")
-                continue
             try:
+                if not self.has_ref(upstream):
+                    self.drop_gone(branch, upstream, occupied)
+                    continue
                 self.sync_branch(branch, upstream, occupied)
             except (subprocess.CalledProcessError, OSError) as exc:
                 self.block(branch, f"preflight failed: {exc}")
@@ -310,15 +413,20 @@ class BranchSync:
         success("═══ summary ═══")
         for label, names in (
             ("Updated", self.updated),
+            ("Reset to upstream", self.reset),
             ("Up to date", self.current),
+            ("Deleted (merged)", self.deleted),
             ("Tracked new", tracked),
             ("Local only", self.local_only),
+            ("Upstream gone", self.gone),
             ("WIP restored", self.restored),
         ):
             info(f"{label}: {len(names)} ({', '.join(names)})")
+        if self.gone:
+            info("  Review them; clean-stale-branches removes them once you are sure.")
         info(f"Blocked: {len(self.blocked)}")
         for reason in self.blocked:
             warning(f"  • {reason}")
         info(
-            "Caller checkout, existing worktree paths, locks and local commits preserved. Nothing pushed."
+            "Caller checkout, existing worktree paths, locks and every local change preserved. Nothing pushed."
         )
