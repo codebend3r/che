@@ -36,7 +36,7 @@ jobs:
 
       - name: 🐍 Install uv
         if: matrix.uv
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.3.2
         with:
           enable-cache: true
           cache-dependency-glob: requirements-dev.txt
@@ -78,7 +78,7 @@ jobs:
 
       # python-version exports UV_PYTHON, which `bun run test` (uv run) honours.
       - name: 🐍 Install uv and Python ${{ matrix.python }}
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.3.2
         with:
           python-version: ${{ matrix.python }}
           enable-cache: true
