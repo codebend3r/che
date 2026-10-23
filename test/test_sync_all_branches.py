@@ -229,6 +229,48 @@ def test_gone_upstream_is_reported_and_kept(repo: Repo, run_script):
     assert "mine" in local_branches(repo.work)
 
 
+def squash_merge_shipped_and_delete_remote(repo: Repo) -> None:
+    """What a GitHub squash-merge with delete-branch leaves behind."""
+    git(repo.other, "fetch", "--quiet", "origin")
+    git(repo.other, "checkout", "--quiet", "main")
+    git(repo.other, "merge", "--quiet", "--squash", "origin/shipped")
+    git(repo.other, "commit", "--quiet", "-m", "squash shipped")
+    git(repo.other, "push", "--quiet", "origin", "main")
+    git(repo.other, "push", "--quiet", "origin", "--delete", "shipped")
+
+
+def test_merged_gone_branch_and_its_locked_worktree_are_pruned(repo: Repo, run_script):
+    squash_merge_shipped_and_delete_remote(repo)
+    git(repo.work, "worktree", "lock", "--reason", "supacode", str(repo.shipped))
+    result = run_script(SYNC, cwd=repo.work)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Deleted merged: shipped" in result.stdout
+    assert "shipped" not in local_branches(repo.work)
+    assert not repo.shipped.exists()
+    assert "behind" in local_branches(repo.work)
+    assert repo.wip.is_dir()
+
+
+def test_merged_gone_branch_with_uncommitted_work_is_kept(repo: Repo, run_script):
+    squash_merge_shipped_and_delete_remote(repo)
+    (repo.shipped / "scratch.txt").write_text("unsaved\n")
+    result = run_script(SYNC, cwd=repo.work)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Merged, kept: shipped" in result.stdout
+    assert "shipped" in local_branches(repo.work)
+    assert (repo.shipped / "scratch.txt").is_file()
+
+
+def test_dry_run_reports_the_merged_prune_without_deleting(repo: Repo, run_script):
+    squash_merge_shipped_and_delete_remote(repo)
+    git(repo.work, "fetch", "--quiet", "--prune")
+    result = run_script(SYNC, ["--dry-run"], cwd=repo.work)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Would delete merged: shipped" in result.stdout
+    assert "shipped" in local_branches(repo.work)
+    assert repo.shipped.is_dir()
+
+
 def make_conflict(repo: Repo) -> str:
     (repo.wip / "wip").write_text("local conflicting commit\n")
     git(repo.wip, "add", "wip")
@@ -472,15 +514,17 @@ def test_dry_run_previews_reset_and_delete_without_changing_refs(repo: Repo, run
     assert result.returncode == 0, result.stdout + result.stderr
     assert git(repo.work, "show-ref") == before
     assert "Would reset child to refs/remotes/origin/child" in result.stdout
-    assert "Would delete parent: upstream gone, work already in main" in result.stdout
+    assert "Would delete merged: parent" in result.stdout
 
 
-def test_gone_merged_branch_checked_out_in_worktree_is_kept(repo: Repo, run_script, tmp_path: Path):
+def test_gone_merged_branch_in_a_clean_worktree_is_deleted_with_it(
+    repo: Repo, run_script, tmp_path: Path
+):
     squash_parent_and_force_push_child(repo)
     parent = tmp_path / "parent"
     git(repo.work, "worktree", "add", "--quiet", str(parent), "parent")
     result = run_script(SYNC, cwd=repo.work)
-    assert result.returncode == 1, result.stdout + result.stderr
-    assert "parent" in local_branches(repo.work)
-    assert f"merged into main, but checked out in {parent}" in result.stdout
-    assert git(parent, "symbolic-ref", "--short", "HEAD") == "parent"
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "parent" not in local_branches(repo.work)
+    assert not parent.exists()
+    assert "Deleted (merged): 1 (parent)" in result.stdout

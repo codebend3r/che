@@ -282,7 +282,7 @@ COMMANDS: tuple[Command, ...] = (
         flags=("--dry-run", "--author=", "--limit="),
         category="git",
         icon="🔄",
-        summary="Update every branch and worktree, preserving locks and local work",
+        summary="Update every branch and worktree, pruning what has been merged",
         script="git/sync-all-branches.py",
         sound=7,
         dry_run="env",

@@ -129,14 +129,18 @@ works around the pin rather than counting it as a failure:
   recursively delete their directory on failure; remove only through Git,
   without force, after checking no operation is in progress. Existing
   directories, locks, checkouts and local changes survive. Never push. Move or
-  delete a branch only on a content check (`adds_nothing`: `git merge-tree
-  --write-tree` leaves the target's tree unchanged), never on ancestry or a
-  missing ref. A diverged branch whose changes are all upstream is `reset
-  --keep` to it rather than rebased, since replaying stale pre-squash commits
-  conflicts for nothing. A gone upstream is not proof of a merge: the branch is
-  deleted only when origin's main holds its content and no worktree has it
-  checked out. A merged one that is checked out is blocked; an unmerged one is
-  reported as `Upstream gone` and kept, not counted as a failure.
+  delete a branch only on a content check, never on a missing ref: `adds_nothing`
+  (`git merge-tree --write-tree` leaves the target's tree unchanged) lets a
+  diverged branch whose changes are all upstream be `reset --keep` to it rather
+  than rebased, since replaying stale pre-squash commits conflicts for nothing.
+  A gone upstream is not proof of a merge: the branch is deleted, with its clean
+  worktree (a lock is dropped first), only once `BranchSync.merged_reason`
+  proves it merged into origin's main/master/dev/develop (ancestry,
+  `adds_nothing`, a patch-ID squash probe, or a merged GitHub PR). An unproven
+  one is reported as `Upstream gone` and kept, not counted as a failure. A
+  merged branch whose worktree is dirty, mid-operation or the caller's checkout
+  is kept (`Merged, kept`). A branch whose upstream still exists is never
+  pruned.
   Continue independent branches after recoverable failures and return nonzero
   for any blockers; failure to abort our own rebase stops the run immediately.
   Track new origin branches without switching HEAD. Dry-run uses cached refs

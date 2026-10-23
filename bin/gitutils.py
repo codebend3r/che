@@ -142,6 +142,7 @@ def local_branches(*fields: str, sort: str = "", cwd: str | Path | None = None) 
 class Worktree(NamedTuple):
     path: str
     branch: str  # "" when detached (or bare): it pins no branch
+    locked: bool = False  # `git worktree lock`: git refuses to remove or prune it
 
 
 def worktrees(cwd: str | Path | None = None) -> list[Worktree]:
@@ -162,6 +163,8 @@ def worktrees(cwd: str | Path | None = None) -> list[Worktree]:
             # Every record opens with its `worktree` line, so this belongs to
             # the last one appended.
             found[-1] = found[-1]._replace(branch=line.removeprefix("branch refs/heads/"))
+        elif line == "locked" or line.startswith("locked "):
+            found[-1] = found[-1]._replace(locked=True)
     return found
 
 

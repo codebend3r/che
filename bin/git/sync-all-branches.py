@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""🔄 Update every branch and worktree, keeping checkouts, locks and local work.
+"""🔄 Update every branch and worktree, and prune what has been merged.
 
-Fetch once, rebase branches onto their upstream (or origin/<branch>), and track
-new origin branches authored by you. Dirty tracked/untracked work is saved in
-an exact recovery stash and restored with its index. Conflicts are reported;
-independent branches continue. Nothing is pushed. A branch whose changes are
-all already upstream moves to its upstream instead of replaying them; a branch
-whose upstream is gone is deleted only when origin's main already holds its
-work. No local change is ever discarded.
+Fetch once, delete branches (and their clean worktrees) that were merged into a
+main or dev branch and whose upstream is gone, rebase the rest onto their
+upstream (or origin/<branch>), and track new origin branches authored by you.
+Worktrees stay worktrees and are updated in place. A branch whose changes are
+all already upstream moves to its upstream instead of replaying them. Dirty
+tracked/untracked work is saved in an exact recovery stash and restored with
+its index. Conflicts are reported; independent branches continue. Nothing is
+pushed. No local change is ever discarded.
 
 Usage:
   sync-all-branches.py [--dry-run] [--author=EMAIL] [--limit=N]
@@ -48,7 +49,7 @@ from utils import (
     warning,
 )
 
-__version__ = "3.1.0"
+__version__ = "3.2.0"
 
 
 def track_new(sync: BranchSync, author: str, limit: int) -> list[str]:
@@ -82,7 +83,7 @@ def track_new(sync: BranchSync, author: str, limit: int) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser(
         prog="sync-all-branches",
-        description="🔄 Update every branch and worktree, preserving locks and local work.",
+        description="🔄 Update every branch and worktree, and prune what has been merged.",
     )
     add_bool_flag(
         parser,
@@ -123,8 +124,8 @@ def main(argv: list[str] | None = None) -> int:
     info(f"📍 Keeping caller checkout: {original}")
     # DELIBERATE DIVERGENCE: the old sync parked on main and delegated cleanup.
     # Preserve active workspaces instead, and never delete a gone-upstream
-    # branch merely because its remote was deleted: only once origin's main
-    # holds its content (BranchSync.drop_gone). Dry-run must not fetch.
+    # branch merely because its remote was deleted: only once it is proven
+    # merged (BranchSync.drop_gone). Dry-run must not fetch.
     if args.dry_run:
         info("🌵 Cached remote refs only; no fetch. Results reflect the last fetch.")
     else:
