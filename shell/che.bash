@@ -1,4 +1,4 @@
-# che 1.2.2 - generated file, do not edit.
+# che 1.2.3 - generated file, do not edit.
 #
 # Generated from bin/commands.py by `che install`.
 # To change a wrapper, edit that manifest and run `che install` again.
