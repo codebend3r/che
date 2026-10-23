@@ -257,7 +257,7 @@ All scripts share the same CLI conventions:
 | `clean-stale-branches` | Delete local branches whose upstream is gone | `clean-stale-branches-dr` |
 | `hard-reset-all-branches` | Check out every local branch and hard reset it to origin/<branch> | `hard-reset-all-branches-dr` |
 | `prune-worktrees` | Remove every linked worktree, then prune stale admin records | `prune-worktrees-dr` |
-| `sync-all-branches` | Update every branch and worktree, preserving locks and local work | `sync-all-branches-dr` |
+| `sync-all-branches` | Update every branch and worktree, pruning what has been merged | `sync-all-branches-dr` |
 | `update-from-origin` | Alias of sync-all-branches | `--dry-run` |
 | `update-local-branches` | Rebase every local branch that has an upstream onto origin | `--dry-run` |
 | **Video** | *Codecs, renaming, dedupe and metadata* | |
@@ -343,10 +343,14 @@ sync-all-branches-dr    # preview against cached remote refs; no fetch, no chang
     a branch rebased and force-pushed from another machine, typically after
     its parent was squash-merged) moves to the upstream instead of replaying
     commits that would conflict.
-  - A branch whose upstream is gone is deleted once origin's main holds its
-    content, squash merges included. A missing upstream alone is not treated
-    as merged: an unmerged one is listed as `Upstream gone` and kept, and a
-    branch checked out in a worktree is reported, not deleted.
+  - A branch whose upstream is gone is deleted, with its clean worktree (a
+    lock is dropped first), once it is proven merged into `origin/main`,
+    `master`, `dev` or `develop`: contained in it, its content already there
+    (squash merges included), or a merged GitHub PR. The tip SHA is printed so
+    you can restore it. A missing upstream alone is not treated as merged: an
+    unproven one is listed as `Upstream gone` and kept. A merged branch whose
+    worktree is dirty, mid-operation or your current checkout is kept and
+    reported.
 - **Failures are isolated.** A rebase conflict is aborted and reported while
   other branches continue, and any blocked branch makes the command exit
   non-zero. If restoring work conflicts, the recovery stash ID and worktree

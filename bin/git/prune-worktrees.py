@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """🌿 Remove every linked worktree in the current repository, then prune records.
 
-The main worktree (the one containing .git) is always left untouched.
+The main worktree (the one containing .git) is always left untouched. A locked
+worktree is unlocked first, since a lock only guards against an accidental
+removal and this command is the deliberate one. A worktree with uncommitted
+changes is kept, lock and all, unless --force is given; one failure never stops
+the rest.
 
 Usage:
   prune-worktrees.py [--dry-run] [--force]
 
 Options:
   --dry-run    Show what would be removed, change nothing
-  --force      Pass --force to 'git worktree remove' (drops dirty trees)
+  --force      Remove worktrees with uncommitted changes too
   --help       Show help
 
 Env:
@@ -22,7 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from gitutils import park_main_worktree, skip_git_hooks, worktrees
+from gitutils import park_main_worktree, skip_git_hooks, worktree_is_clean, worktrees
 from utils import (
     add_bool_flag,
     build_parser,
@@ -37,7 +41,7 @@ from utils import (
     warning,
 )
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -54,7 +58,7 @@ def main(argv: list[str] | None = None) -> int:
     add_bool_flag(
         parser,
         "--force",
-        help="Pass --force to 'git worktree remove' (drops dirty trees)",
+        help="Remove worktrees with uncommitted changes too",
     )
     args = parser.parse_args(argv)
 
@@ -69,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
     main_wt = park_main_worktree("prune", dry_run=args.dry_run)
 
     info("🔍 Listing worktrees...")
-    linked = [worktree.path for worktree in worktrees(main_wt)[1:]]
+    linked = worktrees(main_wt)[1:]
 
     if not linked:
         success("✨ No linked worktrees. Running prune anyway... 🎉")
@@ -83,20 +87,54 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.dry_run:
         warning(f"🌵 {len(linked)} worktree(s) would be removed:")
-        for path in linked:
-            warning(f"  • 🪦 {path}")
+        for worktree in linked:
+            note = " (locked; would unlock first)" if worktree.locked else ""
+            warning(f"  • 🪦 {worktree.path}{note}")
         info("📜 Would also run: git worktree prune --verbose")
         dry_run_complete("removed")
         return 0
 
-    remove_args = ["--force"] if args.force else []
-    for path in linked:
-        warning(f"🗑️  Removing: {path}")
-        run(["git", "worktree", "remove", *remove_args, path], cwd=main_wt)
+    removed = 0
+    kept: list[str] = []
+    for worktree in linked:
+        warning(f"🗑️  Removing: {worktree.path}")
+        # DELIBERATE DIVERGENCE: a lock used to abort the whole run with git's
+        # "cannot remove a locked working tree". Unlock, but only once the
+        # removal is certain to be allowed, so a kept worktree keeps its lock.
+        # A checkout whose directory is gone has no work left to lose.
+        gone = not Path(worktree.path).is_dir()
+        if not (args.force or gone) and not worktree_is_clean(worktree.path):
+            warning("  ⏭️  Uncommitted changes; kept (use --force to remove)")
+            kept.append(worktree.path)
+            continue
+        if worktree.locked:
+            info("  🔓 Unlocking")
+            run(["git", "worktree", "unlock", worktree.path], cwd=main_wt, check=False)
+        removal = run(
+            [
+                "git",
+                "worktree",
+                "remove",
+                *(["--force"] if args.force or gone else []),
+                worktree.path,
+            ],
+            cwd=main_wt,
+            check=False,
+        )
+        if removal.returncode:
+            warning(f"  ❌ Could not remove: {worktree.path}")
+            kept.append(worktree.path)
+        else:
+            removed += 1
 
     info("🧹 Pruning stale worktree records...")
     run(["git", "worktree", "prune", "--verbose"], cwd=main_wt)
-    success(f"✨ Removed {len(linked)} worktree(s). 🎉")
+    success(f"✨ Removed {removed} worktree(s). 🎉")
+    if kept:
+        warning(f"⚠️  {len(kept)} worktree(s) kept:")
+        for path in kept:
+            warning(f"  • {path}")
+        return 1
     return 0
 
 

@@ -75,3 +75,38 @@ def test_refuses_over_uncommitted_changes_in_the_main_worktree(repo: Repo, run_s
     assert result.returncode == 1
     assert "commit or stash before you prune" in result.stdout
     assert repo.linked.is_dir()
+
+
+def test_a_locked_worktree_is_unlocked_and_removed(repo: Repo, run_script):
+    git(repo.work, "worktree", "lock", "--reason", "supacode", str(repo.linked))
+
+    result = run_script(PRUNE, ["--dry-run=false"], cwd=repo.work)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not repo.linked.exists()
+
+
+def test_a_dirty_locked_worktree_stays_locked_and_the_rest_still_go(
+    repo: Repo, run_script, tmp_path: Path
+):
+    other = tmp_path / "wt-other"
+    git(repo.work, "worktree", "add", "--quiet", "-b", "other", str(other), "main")
+    git(repo.work, "worktree", "lock", str(repo.linked))
+    (repo.linked / "scratch.txt").write_text("unsaved\n")
+
+    result = run_script(PRUNE, ["--dry-run=false"], cwd=repo.work)
+
+    assert result.returncode == 1
+    assert not other.exists()
+    assert (repo.linked / "scratch.txt").is_file()
+    assert "locked" in git(repo.work, "worktree", "list", "--porcelain")
+
+
+def test_force_removes_a_dirty_locked_worktree(repo: Repo, run_script):
+    git(repo.work, "worktree", "lock", str(repo.linked))
+    (repo.linked / "scratch.txt").write_text("unsaved\n")
+
+    result = run_script(PRUNE, ["--dry-run=false", "--force"], cwd=repo.work)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not repo.linked.exists()
