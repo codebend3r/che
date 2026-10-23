@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
@@ -251,14 +252,113 @@ def test_merged_gone_branch_and_its_locked_worktree_are_pruned(repo: Repo, run_s
     assert repo.wip.is_dir()
 
 
-def test_merged_gone_branch_with_uncommitted_work_is_kept(repo: Repo, run_script):
+def test_merged_branch_with_uncommitted_work_is_pruned_and_its_work_stashed(repo: Repo, run_script):
     squash_merge_shipped_and_delete_remote(repo)
     (repo.shipped / "scratch.txt").write_text("unsaved\n")
     result = run_script(SYNC, cwd=repo.work)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "Merged, kept: shipped" in result.stdout
+    assert "shipped" not in local_branches(repo.work)
+    assert not repo.shipped.exists()
+    assert "che sync-all-branches: shipped (merged)" in git(repo.work, "stash", "list")
+    assert git(repo.work, "show", "stash@{0}^3:scratch.txt") == "unsaved"
+
+
+def test_merged_branch_whose_upstream_still_exists_is_pruned_and_not_retracked(
+    repo: Repo, run_script
+):
+    git(repo.other, "fetch", "--quiet", "origin")
+    git(repo.other, "checkout", "--quiet", "main")
+    git(repo.other, "merge", "--quiet", "--no-ff", "-m", "merge shipped", "origin/shipped")
+    git(repo.other, "push", "--quiet", "origin", "main")
+    result = run_script(SYNC, cwd=repo.work)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Deleted merged: shipped" in result.stdout
+    assert "shipped" not in local_branches(repo.work)
+    assert not repo.shipped.exists()
+    assert "refs/remotes/origin/shipped" in git(repo.work, "show-ref")
+
+
+def test_merged_branch_with_newer_commits_upstream_is_kept(repo: Repo, run_script):
+    git(repo.other, "fetch", "--quiet", "origin")
+    git(repo.other, "checkout", "--quiet", "main")
+    git(repo.other, "merge", "--quiet", "--no-ff", "-m", "merge shipped", "origin/shipped")
+    git(repo.other, "push", "--quiet", "origin", "main")
+    git(repo.other, "checkout", "--quiet", "-B", "shipped", "origin/shipped")
+    commit(repo.other, "shipped-follow-up")
+    git(repo.other, "push", "--quiet", "origin", "shipped")
+    result = run_script(SYNC, cwd=repo.work)
+    assert result.returncode == 0, result.stdout + result.stderr
     assert "shipped" in local_branches(repo.work)
-    assert (repo.shipped / "scratch.txt").is_file()
+    assert (repo.shipped / "shipped-follow-up").is_file()
+
+
+def test_a_new_branch_on_main_is_not_pruned_as_merged(repo: Repo, run_script):
+    git(repo.work, "push", "--quiet", "origin", "main:fresh")
+    git(repo.work, "fetch", "--quiet")
+    git(repo.work, "branch", "--quiet", "--track", "fresh", "origin/fresh")
+    result = run_script(SYNC, cwd=repo.work)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "fresh" in local_branches(repo.work)
+
+
+def test_force_pushed_branch_replays_only_its_local_commits(repo: Repo, run_script):
+    """Another machine rewrote ``wip`` (rebased and force-pushed); `git pull
+    --rebase` replays only the commit made here, and so must the sync."""
+    git(repo.wip, "push", "--quiet")
+    commit(repo.wip, "made-here")
+    git(repo.other, "fetch", "--quiet", "origin")
+    git(repo.other, "checkout", "--quiet", "-B", "wip", "origin/main")
+    (repo.other / "wip").write_text("rewritten elsewhere\n")
+    git(repo.other, "add", "wip")
+    git(repo.other, "commit", "--quiet", "-m", "wip rewritten")
+    git(repo.other, "push", "--quiet", "--force", "origin", "wip")
+    result = run_script(SYNC, cwd=repo.work)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert_includes_origin(repo, "wip")
+    assert git(repo.work, "rev-list", "--count", "origin/wip..wip") == "1"
+    assert (repo.wip / "made-here").read_text() == "made-here\n"
+    assert (repo.wip / "wip").read_text() == "rewritten elsewhere\n"
+
+
+def test_a_leftover_sync_checkout_mid_rebase_is_cleared(repo: Repo, run_script, tmp_path: Path):
+    before = make_conflict(repo)
+    git(repo.work, "fetch", "--quiet")
+    leftover = tmp_path / "che-sync-interrupted" / "checkout"
+    git(repo.work, "worktree", "remove", "--force", str(repo.wip))
+    git(repo.work, "worktree", "add", "--quiet", str(leftover), "wip")
+    subprocess.run(
+        ["git", "rebase", "--no-fork-point", "origin/wip"], cwd=leftover, capture_output=True
+    )
+    assert Path(git(leftover, "rev-parse", "--git-path", "rebase-merge")).exists()
+    result = run_script(SYNC, cwd=repo.work)
+    assert "Clearing a leftover sync checkout" in result.stdout
+    assert not leftover.exists()
+    assert "operation in progress" not in result.stdout
+    git(repo.work, "merge-base", "--is-ancestor", before, "wip")
+
+
+def test_other_authors_branches_are_tracked_unless_merged(repo: Repo, run_script):
+    git(repo.other, "checkout", "--quiet", "-b", "theirs", "origin/main")
+    commit(repo.other, "theirs")
+    git(
+        repo.other,
+        "-c",
+        "user.email=someone@example.com",
+        "commit",
+        "--quiet",
+        "--amend",
+        "--reset-author",
+        "--no-edit",
+    )
+    git(repo.other, "push", "--quiet", "origin", "theirs")
+    git(repo.other, "push", "--quiet", "origin", "origin/main:refs/heads/main-copy")
+    git(repo.other, "checkout", "--quiet", "-b", "landed", "origin/main")
+    commit(repo.other, "landed")
+    git(repo.other, "push", "--quiet", "origin", "landed", "landed:main")
+    result = run_script(SYNC, cwd=repo.work)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "theirs" in local_branches(repo.work)
+    assert "landed" not in local_branches(repo.work)
 
 
 def test_dry_run_reports_the_merged_prune_without_deleting(repo: Repo, run_script):
@@ -493,16 +593,16 @@ def test_stale_child_in_worktree_resets_in_place_and_keeps_wip(
     assert git(child, "stash", "list") == ""
 
 
-def test_child_with_unique_local_commit_is_never_reset(repo: Repo, run_script):
+def test_child_with_unique_local_commit_keeps_it_on_the_new_upstream(repo: Repo, run_script):
     squash_parent_and_force_push_child(repo)
     git(repo.work, "checkout", "--quiet", "child")
     commit(repo.work, "child-local")
     git(repo.work, "checkout", "--quiet", "main")
-    before = git(repo.work, "rev-parse", "child")
     result = run_script(SYNC, cwd=repo.work)
-    assert result.returncode == 1, result.stdout + result.stderr
-    assert "child: rebase failed" in result.stdout
-    assert git(repo.work, "rev-parse", "child") == before
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert_includes_origin(repo, "child")
+    assert git(repo.work, "show", "child:child-local") == "child-local"
+    assert git(repo.work, "rev-list", "--count", "origin/child..child") == "1"
     assert "parent" not in local_branches(repo.work)
 
 

@@ -18,11 +18,9 @@ from gitutils import (
     Worktree,
     current_branch,
     fetch_remotes,
-    find_main_branch,
     for_each_ref,
     has_tracked_changes,
     local_branches,
-    park_main_worktree,
     skip_git_hooks,
     worktree_branch_map,
     worktree_is_clean,
@@ -211,32 +209,6 @@ def test_non_worktree_path_is_not_clean(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# find_main_branch
-# ---------------------------------------------------------------------------
-
-
-def test_find_main_branch_prefers_main(in_repo: Path):
-    git(in_repo, "branch", "master")
-
-    assert find_main_branch(in_repo) == "main"
-
-
-def test_find_main_branch_falls_back_to_master(in_repo: Path):
-    git(in_repo, "branch", "master")
-    git(in_repo, "checkout", "--quiet", "master")
-    git(in_repo, "branch", "-D", "main")
-
-    assert find_main_branch(in_repo) == "master"
-
-
-def test_find_main_branch_returns_empty_when_neither_exists(in_repo: Path):
-    git(in_repo, "checkout", "--quiet", "-b", "trunk")
-    git(in_repo, "branch", "-D", "main")
-
-    assert find_main_branch(in_repo) == ""
-
-
-# ---------------------------------------------------------------------------
 # current_branch
 # ---------------------------------------------------------------------------
 
@@ -351,95 +323,3 @@ def test_fetch_remotes_prunes_a_deleted_remote_branch(in_repo: Path):
     fetch_remotes()
 
     assert for_each_ref("refs/remotes/origin/gone", "refname") == []
-
-
-# ---------------------------------------------------------------------------
-# park_main_worktree
-# ---------------------------------------------------------------------------
-
-
-def test_park_on_main_already_changes_nothing(in_repo: Path, capsys):
-    assert park_main_worktree("sync", dry_run=False).resolve() == in_repo.resolve()
-
-    assert "already on 🌿 main" in capsys.readouterr().out
-    assert current_branch(in_repo) == "main"
-
-
-def test_park_switches_the_main_worktree_to_main(in_repo: Path):
-    git(in_repo, "checkout", "--quiet", "-b", "feature")
-
-    park_main_worktree("sync", dry_run=False)
-
-    assert current_branch(in_repo) == "main"
-
-
-def test_park_dry_run_only_reports_the_switch(in_repo: Path, capsys):
-    git(in_repo, "checkout", "--quiet", "-b", "feature")
-
-    park_main_worktree("sync", dry_run=True)
-
-    assert "Would switch main worktree to 🌿 main" in capsys.readouterr().out
-    assert current_branch(in_repo) == "feature"
-
-
-def test_park_from_a_linked_worktree_parks_the_main_one(
-    in_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    git(in_repo, "checkout", "--quiet", "-b", "feature")
-    linked = tmp_path / "wt-other"
-    git(in_repo, "worktree", "add", "--quiet", "-b", "other", str(linked))
-    monkeypatch.chdir(linked)
-
-    assert park_main_worktree("prune", dry_run=False).resolve() == in_repo.resolve()
-
-    assert current_branch(in_repo) == "main"
-    assert current_branch(linked) == "other"
-
-
-def test_park_refuses_over_tracked_changes(in_repo: Path, capsys):
-    git(in_repo, "checkout", "--quiet", "-b", "feature")
-    (in_repo / "README.md").write_text("changed\n")
-
-    with pytest.raises(SystemExit) as exited:
-        park_main_worktree("prune", dry_run=False)
-
-    assert exited.value.code == 1
-    assert "commit or stash before you prune" in capsys.readouterr().out
-    assert current_branch(in_repo) == "feature"
-
-
-def test_park_ignores_untracked_files(in_repo: Path):
-    """Linked worktrees nested in the main one show up as untracked."""
-    git(in_repo, "checkout", "--quiet", "-b", "feature")
-    (in_repo / "scratch.txt").write_text("x\n")
-
-    park_main_worktree("sync", dry_run=False)
-
-    assert current_branch(in_repo) == "main"
-
-
-def test_park_refuses_without_main_or_master(in_repo: Path, capsys):
-    git(in_repo, "checkout", "--quiet", "-b", "trunk")
-    git(in_repo, "branch", "-D", "main")
-
-    with pytest.raises(SystemExit) as exited:
-        park_main_worktree("sync", dry_run=False)
-
-    assert exited.value.code == 1
-    assert "refusing to sync" in capsys.readouterr().out
-
-
-@pytest.mark.parametrize("where", ["outside", "git-dir"])
-def test_park_refuses_outside_a_working_tree(
-    git_repo: Callable[[str], Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, where
-):
-    """Inside .git, rev-parse exits 0 but answers "false"."""
-    plain = tmp_path / "plain"
-    plain.mkdir()
-    monkeypatch.chdir(plain if where == "outside" else git_repo("work") / ".git")
-
-    with pytest.raises(SystemExit) as exited:
-        park_main_worktree("sync", dry_run=False)
-
-    assert exited.value.code == 1
-    assert "Not inside a git working tree" in capsys.readouterr().out

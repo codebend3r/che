@@ -1,11 +1,11 @@
 """Branch/worktree synchronization for sync-all-branches.
 
 Sync rebases every branch onto its upstream inside its own checkout, locked or
-not, and keeps every local change. A branch is only moved past its own commits
-(reset to an upstream that already holds them) or deleted when a content check
-proves its changes are already upstream or in a main or dev branch. The only
-things it deletes are disposable worktrees it created itself and, with a merged
-branch whose upstream is gone, that branch's clean worktree.
+not, the way `git pull --rebase` does, and keeps every local change. A branch
+proven merged into a main or dev branch (by content, or by GitHub's merged PR)
+is deleted with its worktree; any uncommitted work there is stashed first. A
+branch is only moved past its own commits (reset to an upstream that already
+holds them) when a content check proves its changes are already upstream.
 """
 
 from __future__ import annotations
@@ -18,7 +18,15 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from gitutils import Worktree, local_branches, worktrees
+from gitutils import (
+    Worktree,
+    abort_operation,
+    git_path,
+    in_progress,
+    local_branches,
+    stash_everything,
+    worktrees,
+)
 from utils import info, run, run_output, success, warning
 
 # A branch is "merged" when it reached one of these on origin. They are also
@@ -33,19 +41,7 @@ _PROBE_IDENTITY = {
     "GIT_COMMITTER_EMAIL": "che@localhost",
 }
 
-_OPERATION_FILES = (
-    "rebase-merge",
-    "rebase-apply",
-    "MERGE_HEAD",
-    "CHERRY_PICK_HEAD",
-    "REVERT_HEAD",
-    "BISECT_START",
-)
-
-
-def git_path(path: Path, name: str) -> Path:
-    result = Path(run_output(["git", "rev-parse", "--git-path", name], cwd=path))
-    return result if result.is_absolute() else path / result
+TEMPORARY_PREFIX = "che-sync-"
 
 
 def operation_branch(path: Path) -> str:
@@ -55,10 +51,6 @@ def operation_branch(path: Path) -> str:
         if file.is_file():
             return file.read_text().splitlines()[0].removeprefix("refs/heads/")
     return ""
-
-
-def in_progress(path: Path) -> bool:
-    return any(git_path(path, name).exists() for name in _OPERATION_FILES)
 
 
 @dataclass
@@ -73,6 +65,7 @@ class BranchSync:
     reset: list[str] = field(default_factory=list)
     deleted: list[str] = field(default_factory=list)
     merged_kept: list[str] = field(default_factory=list)
+    stashed: list[str] = field(default_factory=list)
     blocked: list[str] = field(default_factory=list)
     trees: list[Worktree] = field(init=False)
 
@@ -153,8 +146,8 @@ class BranchSync:
             )
         return result.returncode == 0
 
-    def adds_nothing(self, branch: str, target: str) -> bool:
-        """True when merging ``branch`` into ``target`` would leave its tree unchanged.
+    def adds_nothing(self, ref: str, target: str) -> bool:
+        """True when merging ``ref`` into ``target`` would leave its tree unchanged.
 
         Decided by content, not ancestry: a squash-merged branch, or a stale copy
         of an upstream that was rebased and force-pushed elsewhere, shares no
@@ -163,7 +156,7 @@ class BranchSync:
         ``--write-tree``) all answer False, so doubt never discards anything.
         """
         merged = run(
-            ["git", "merge-tree", "--write-tree", target, f"refs/heads/{branch}"],
+            ["git", "merge-tree", "--write-tree", target, ref],
             cwd=self.root,
             check=False,
             capture=True,
@@ -263,9 +256,8 @@ class BranchSync:
         # and this branch rebased and force-pushed from another machine. When a
         # diverged branch adds nothing to its upstream, moving it there discards
         # no change. A branch merely behind fast-forwards through the rebase.
-        stale = not self.is_ancestor(f"refs/heads/{branch}", upstream) and self.adds_nothing(
-            branch, upstream
-        )
+        local = f"refs/heads/{branch}"
+        stale = not self.is_ancestor(local, upstream) and self.adds_nothing(local, upstream)
         if self.dry_run:
             action = (
                 f"reset {branch} to {upstream} (its changes are already there)"
@@ -279,7 +271,7 @@ class BranchSync:
         oid = ""
         try:
             if path is None:
-                temporary = Path(tempfile.mkdtemp(prefix="che-sync-"))
+                temporary = Path(tempfile.mkdtemp(prefix=TEMPORARY_PREFIX))
                 path = temporary / "checkout"
                 run(["git", "worktree", "add", "--quiet", str(path), branch], cwd=self.root)
             oid = self.save_wip(branch, path)
@@ -310,6 +302,11 @@ class BranchSync:
             # DELIBERATE DIVERGENCE: one fetched snapshot instead of pull's
             # per-branch fetch. Disable autostash/updateRefs so Git cannot
             # compete with our exact WIP recovery or move unrelated branches.
+            # --fork-point is what `git pull --rebase` does and what a bare
+            # `git rebase <upstream>` does not: it reads the upstream's reflog
+            # to find where this branch left it, so after a force-push from
+            # another machine only the commits made here are replayed, not the
+            # dozens the upstream rewrote (which conflict for nothing).
             rebased = (
                 run(
                     [
@@ -320,6 +317,7 @@ class BranchSync:
                         "rebase.updateRefs=false",
                         "rebase",
                         "--no-autostash",
+                        "--fork-point",
                         upstream,
                     ],
                     cwd=path,
@@ -378,8 +376,10 @@ class BranchSync:
     def bases(self) -> list[str]:
         return [ref for name in BASE_BRANCHES if self.has_ref(ref := f"refs/remotes/origin/{name}")]
 
-    def merged_reason(self, branch: str) -> str:
-        """How ``branch`` reached a main or dev branch on origin, or "" if unproven.
+    def merged_reason(self, branch: str, ref: str = "", *, github: bool = True) -> str:
+        """How ``branch`` (or ``ref``, its tip) reached a main or dev branch on origin.
+
+        "" when unproven.
 
         Four proofs, cheapest first: the tip is contained in the base; merging it
         would leave the base's tree unchanged (``adds_nothing``, a squash merge
@@ -390,7 +390,8 @@ class BranchSync:
         local commit newer than the merge (covers stacked PRs rebased and
         force-pushed before a squash).
         """
-        tip = run_output(["git", "rev-parse", "--verify", f"refs/heads/{branch}"], cwd=self.root)
+        ref = ref or f"refs/heads/{branch}"
+        tip = run_output(["git", "rev-parse", "--verify", ref], cwd=self.root)
         for base in self.bases():
             label = base.removeprefix("refs/remotes/")
             if (
@@ -403,7 +404,7 @@ class BranchSync:
                 == 0
             ):
                 return f"contained in {label}"
-            if self.adds_nothing(branch, base):
+            if self.adds_nothing(tip, base):
                 return f"its content is already in {label}"
             fork = run_output(["git", "merge-base", base, tip], cwd=self.root, check=False)
             if not fork:
@@ -417,7 +418,7 @@ class BranchSync:
                 cherry = run_output(["git", "cherry", base, probe], cwd=self.root, check=False)
                 if cherry.startswith("-"):
                     return f"squash-merged into {label}"
-        return self.merged_pull_request(branch, tip)
+        return self.merged_pull_request(branch, tip) if github else ""
 
     def merged_pull_request(self, branch: str, tip: str) -> str:
         origin = run_output(["git", "remote", "get-url", "origin"], cwd=self.root, check=False)
@@ -462,58 +463,74 @@ class BranchSync:
                 return f"PR #{pull['number']} merged"
         return ""
 
-    def keep_worktree(self, tree: Worktree) -> str:
-        """Why a merged branch's worktree must stay, or "" when it can go."""
-        path = Path(tree.path)
-        if path.resolve() in (self.root.resolve(), Path(self.trees[0].path).resolve()):
-            return "checked out here"
-        if not path.is_dir():
-            return ""
-        if in_progress(path):
-            return f"operation in progress in {path}"
-        if self.dirty(path):
-            return f"uncommitted work in {path}"
-        return ""
+    def checked_out_here(self, tree: Worktree) -> bool:
+        path = Path(tree.path).resolve()
+        return path in (self.root.resolve(), Path(self.trees[0].path).resolve())
 
-    def drop_gone(self, branch: str, upstream: str, occupied: dict[str, Path]) -> None:
-        """Delete ``branch`` and its clean worktree when merged; otherwise keep it.
+    def proven_merged(self, branch: str, upstream: str, *, gone: bool) -> str:
+        """Why ``branch`` counts as merged into a main or dev branch, or "".
 
-        DELIBERATE DIVERGENCE: a gone upstream used to be "not proof of a
-        merge" and was only reported. It is still not proof (a PR can be closed
-        unmerged), but it is the trigger, and the merge is proven separately by
-        :meth:`merged_reason`; an unproven branch is kept and reported as
-        `Upstream gone`, not as a failure. A merged branch's worktree is removed
-        with it when clean, and a lock is dropped first, since the branch is
-        finished; a dirty, in-progress or caller checkout is kept.
+        With its upstream still on origin, the upstream must be merged too, so
+        commits pushed from elsewhere are never dropped. A branch sitting on a
+        base's tip has nothing to merge yet; that is a new branch, not a merged one.
         """
         if branch in PROTECTED_BRANCHES:
-            info(f"  🛡️ Protected: {branch} (upstream gone)")
-            return
+            return ""
+        if gone:
+            return self.merged_reason(branch)
+        tip = run_output(["git", "rev-parse", "--verify", f"refs/heads/{branch}"], cwd=self.root)
+        if any(
+            tip == run_output(["git", "rev-parse", "--verify", base], cwd=self.root)
+            for base in self.bases()
+        ):
+            return ""
         reason = self.merged_reason(branch)
-        if not reason:
-            self.keep_gone(branch, upstream)
-            return
+        if not reason or self.is_ancestor(upstream, f"refs/heads/{branch}"):
+            return reason
+        return reason if self.merged_reason(branch, upstream) else ""
+
+    def drop_merged(self, branch: str, reason: str, occupied: dict[str, Path]) -> None:
+        """Delete merged ``branch`` and its worktree, keeping any uncommitted work.
+
+        DELIBERATE DIVERGENCE: only a merged branch whose upstream was gone used
+        to be deleted, and its worktree was kept when dirty or mid-operation.
+        Now any branch proven merged into a main or dev branch goes, upstream or
+        not. Its worktree goes with it: a lock is dropped, an operation in
+        progress is aborted (which leaves the branch where it was) and
+        uncommitted work is stashed, so `git stash list` keeps it. Only the
+        caller's own checkout, which cannot be removed from under it, stays.
+        """
         tip = run_output(["git", "rev-parse", "--short", f"refs/heads/{branch}"], cwd=self.root)
         path = occupied.get(branch)
         tree = next((t for t in self.trees if path and Path(t.path) == path), None)
-        if tree is not None and (why := self.keep_worktree(tree)):
-            info(f"  ⏭️ Merged, kept: {branch} ({reason}; {why})")
-            self.merged_kept.append(f"{branch}: {why}")
+        if tree is not None and self.checked_out_here(tree):
+            info(f"  ⏭️ Merged, kept: {branch} ({reason}; checked out here)")
+            self.merged_kept.append(f"{branch}: checked out here")
             return
         if self.dry_run:
-            info(f"  🌵 Would delete merged: {branch} at {tip} ({reason})")
+            where = f" and its worktree {tree.path}" if tree is not None else ""
+            info(f"  🌵 Would delete merged: {branch} at {tip}{where} ({reason})")
             return
         if tree is not None:
+            worktree = Path(tree.path)
             if tree.locked:
                 run(["git", "worktree", "unlock", tree.path], cwd=self.root, check=False)
+            if worktree.is_dir():
+                if in_progress(worktree) and not abort_operation(worktree):
+                    self.block(
+                        branch, f"merged ({reason}) but cannot abort the operation in {worktree}"
+                    )
+                    return
+                try:
+                    stash = stash_everything(worktree, f"che sync-all-branches: {branch} (merged)")
+                except (subprocess.CalledProcessError, OSError) as exc:
+                    self.block(branch, f"merged ({reason}) but {exc}")
+                    return
+                if stash:
+                    info(f"  🧺 Stashed uncommitted work of {branch}: {stash}")
+                    self.stashed.append(f"{branch}: {stash}")
             removed = run(
-                [
-                    "git",
-                    "worktree",
-                    "remove",
-                    *(["--force"] if not Path(tree.path).is_dir() else []),
-                    tree.path,
-                ],
+                ["git", "worktree", "remove", "--force", tree.path],
                 cwd=self.root,
                 check=False,
             )
@@ -528,7 +545,41 @@ class BranchSync:
             f"  🗑️ Deleted merged: {branch} at {tip} ({reason}) - restore with: git branch {branch} {tip}"
         )
 
+    def clear_leftovers(self) -> None:
+        """Remove disposable worktrees an interrupted earlier sync left behind.
+
+        A sync killed mid-rebase leaves its temporary checkout holding the
+        branch, so every later run reports that branch blocked. Aborting the
+        rebase puts the branch back where it was; the checkout itself was never
+        the user's workspace.
+        """
+        leftovers = [
+            tree
+            for tree in self.trees[1:]
+            if Path(tree.path).name == "checkout"
+            and Path(tree.path).parent.name.startswith(TEMPORARY_PREFIX)
+        ]
+        for tree in leftovers:
+            path = Path(tree.path)
+            if self.dry_run:
+                info(f"  🌵 Would clear a leftover sync checkout: {path}")
+                continue
+            info(f"  🧹 Clearing a leftover sync checkout: {path}")
+            if path.is_dir() and in_progress(path) and not abort_operation(path):
+                self.block(path.name, f"cannot abort the operation in leftover {path}")
+                continue
+            if run(
+                ["git", "worktree", "remove", "--force", str(path)], cwd=self.root, check=False
+            ).returncode:
+                self.block(str(path), "leftover sync checkout could not be removed")
+                continue
+            if path.parent.is_dir() and not any(path.parent.iterdir()):
+                path.parent.rmdir()
+        if leftovers and not self.dry_run:
+            self.trees = worktrees(self.root)
+
     def update(self) -> None:
+        self.clear_leftovers()
         occupied = self.occupied()
         for branch, upstream in local_branches("upstream", cwd=self.root):
             if not upstream and self.has_ref(f"refs/remotes/origin/{branch}"):
@@ -538,10 +589,16 @@ class BranchSync:
                 self.local_only.append(branch)
                 continue
             try:
-                if not self.has_ref(upstream):
-                    self.drop_gone(branch, upstream, occupied)
-                    continue
-                self.sync_branch(branch, upstream, occupied)
+                gone = not self.has_ref(upstream)
+                if reason := self.proven_merged(branch, upstream, gone=gone):
+                    self.drop_merged(branch, reason, occupied)
+                elif gone:
+                    if branch in PROTECTED_BRANCHES:
+                        info(f"  🛡️ Protected: {branch} (upstream gone)")
+                    else:
+                        self.keep_gone(branch, upstream)
+                else:
+                    self.sync_branch(branch, upstream, occupied)
             except (subprocess.CalledProcessError, OSError) as exc:
                 self.block(branch, f"preflight failed: {exc}")
 
@@ -560,12 +617,13 @@ class BranchSync:
             info(f"{label}: {len(names)} ({', '.join(names)})")
         if self.gone:
             info("  Review them; clean-stale-branches removes them once you are sure.")
+        info(f"Stashed from merged worktrees: {len(self.stashed)}")
+        for entry in self.stashed:
+            info(f"  • {entry}")
         info(f"Merged, kept: {len(self.merged_kept)}")
         for reason in self.merged_kept:
             info(f"  • {reason}")
         info(f"Blocked: {len(self.blocked)}")
         for reason in self.blocked:
             warning(f"  • {reason}")
-        info(
-            "Caller checkout, unmerged branches, dirty worktrees and every local change preserved. Nothing pushed."
-        )
+        info("Caller checkout, unmerged branches and every local change preserved. Nothing pushed.")

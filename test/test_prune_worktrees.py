@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
@@ -34,28 +35,27 @@ def repo(git_repo: Callable[[str], Path], tmp_path: Path) -> Repo:
     return Repo(work=work, linked=linked, hook_log=hook_log)
 
 
-def test_removes_linked_worktrees_and_parks_main(repo: Repo, run_script):
+def test_removes_linked_worktrees_and_leaves_the_main_one_on_its_branch(repo: Repo, run_script):
     result = run_script(PRUNE, ["--dry-run=false"], cwd=repo.work)
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert not repo.linked.exists()
-    assert git(repo.work, "symbolic-ref", "--short", "HEAD") == "main"
-    assert "Switching main worktree to 🌿 main (from feature)" in result.stdout
+    assert git(repo.work, "symbolic-ref", "--short", "HEAD") == "feature"
 
 
-def test_parking_runs_no_hooks(repo: Repo, run_script):
+def test_pruning_runs_no_hooks(repo: Repo, run_script):
     result = run_script(PRUNE, ["--dry-run=false"], cwd=repo.work)
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert not repo.hook_log.exists()
 
 
-def test_run_from_the_linked_worktree_parks_the_main_one(repo: Repo, run_script):
+def test_run_from_the_linked_worktree_removes_it(repo: Repo, run_script):
     result = run_script(PRUNE, ["--dry-run=false"], cwd=repo.linked)
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert not repo.linked.exists()
-    assert git(repo.work, "symbolic-ref", "--short", "HEAD") == "main"
+    assert git(repo.work, "symbolic-ref", "--short", "HEAD") == "feature"
 
 
 def test_dry_run_is_the_default_and_changes_nothing(repo: Repo, run_script):
@@ -67,14 +67,14 @@ def test_dry_run_is_the_default_and_changes_nothing(repo: Repo, run_script):
     assert git(repo.work, "symbolic-ref", "--short", "HEAD") == "feature"
 
 
-def test_refuses_over_uncommitted_changes_in_the_main_worktree(repo: Repo, run_script):
+def test_uncommitted_changes_in_the_main_worktree_do_not_stop_it(repo: Repo, run_script):
     (repo.work / "README.md").write_text("in progress\n")
 
     result = run_script(PRUNE, ["--dry-run=false"], cwd=repo.work)
 
-    assert result.returncode == 1
-    assert "commit or stash before you prune" in result.stdout
-    assert repo.linked.is_dir()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not repo.linked.exists()
+    assert (repo.work / "README.md").read_text() == "in progress\n"
 
 
 def test_a_locked_worktree_is_unlocked_and_removed(repo: Repo, run_script):
@@ -86,23 +86,43 @@ def test_a_locked_worktree_is_unlocked_and_removed(repo: Repo, run_script):
     assert not repo.linked.exists()
 
 
-def test_a_dirty_locked_worktree_stays_locked_and_the_rest_still_go(
+def test_a_dirty_locked_worktree_is_removed_and_its_work_stashed(
     repo: Repo, run_script, tmp_path: Path
 ):
     other = tmp_path / "wt-other"
     git(repo.work, "worktree", "add", "--quiet", "-b", "other", str(other), "main")
     git(repo.work, "worktree", "lock", str(repo.linked))
     (repo.linked / "scratch.txt").write_text("unsaved\n")
+    (repo.linked / "README.md").write_text("edited\n")
 
     result = run_script(PRUNE, ["--dry-run=false"], cwd=repo.work)
 
-    assert result.returncode == 1
+    assert result.returncode == 0, result.stdout + result.stderr
     assert not other.exists()
-    assert (repo.linked / "scratch.txt").is_file()
-    assert "locked" in git(repo.work, "worktree", "list", "--porcelain")
+    assert not repo.linked.exists()
+    assert "che prune-worktrees: linked" in git(repo.work, "stash", "list")
+    assert git(repo.work, "show", "stash@{0}:README.md") == "edited"
+    assert git(repo.work, "show", "stash@{0}^3:scratch.txt") == "unsaved"
 
 
-def test_force_removes_a_dirty_locked_worktree(repo: Repo, run_script):
+def test_a_worktree_mid_rebase_is_aborted_and_removed(repo: Repo, run_script):
+    (repo.linked / "README.md").write_text("linked side\n")
+    git(repo.linked, "commit", "--quiet", "-am", "linked side")
+    before = git(repo.linked, "rev-parse", "HEAD")
+    git(repo.work, "checkout", "--quiet", "-b", "clash", "main")
+    (repo.work / "README.md").write_text("clash side\n")
+    git(repo.work, "commit", "--quiet", "-am", "clash side")
+    rebase = subprocess.run(["git", "rebase", "clash"], cwd=repo.linked, capture_output=True)
+    assert rebase.returncode != 0
+
+    result = run_script(PRUNE, ["--dry-run=false"], cwd=repo.work)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not repo.linked.exists()
+    assert git(repo.work, "rev-parse", "linked") == before
+
+
+def test_force_discards_a_dirty_locked_worktree_without_stashing(repo: Repo, run_script):
     git(repo.work, "worktree", "lock", str(repo.linked))
     (repo.linked / "scratch.txt").write_text("unsaved\n")
 
@@ -110,3 +130,4 @@ def test_force_removes_a_dirty_locked_worktree(repo: Repo, run_script):
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert not repo.linked.exists()
+    assert git(repo.work, "stash", "list") == ""

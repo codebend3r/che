@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """🔄 Update every branch and worktree, and prune what has been merged.
 
-Fetch once, delete branches (and their clean worktrees) that were merged into a
-main or dev branch and whose upstream is gone, rebase the rest onto their
-upstream (or origin/<branch>), and track new origin branches authored by you.
-Worktrees stay worktrees and are updated in place. A branch whose changes are
-all already upstream moves to its upstream instead of replaying them. Dirty
-tracked/untracked work is saved in an exact recovery stash and restored with
-its index. Conflicts are reported; independent branches continue. Nothing is
-pushed. No local change is ever discarded.
+Fetch once, delete branches (and their worktrees) that were merged into a main
+or dev branch, rebase the rest onto their upstream (or origin/<branch>) the way
+`git pull --rebase` does, and track every origin feature branch that is not
+local yet and not merged. Worktrees stay worktrees and are updated in place. A
+branch whose changes are all already upstream moves to its upstream instead of
+replaying them. Dirty tracked/untracked work is saved in an exact recovery
+stash and restored with its index; a merged worktree's work stays stashed.
+Conflicts are reported; independent branches continue. Nothing is pushed.
 
 Usage:
   sync-all-branches.py [--dry-run] [--author=EMAIL] [--limit=N]
 
 Options:
   --dry-run        Preview cached refs only; no fetch or changes
-  --author=EMAIL   Author of new origin branches (default: git config user.email)
+  --author=EMAIL   Only track new origin branches by this author (default: all)
   --limit=N        Recent origin refs to scan for new branches (default: 100)
   --help           Show help
 
@@ -49,7 +49,7 @@ from utils import (
     warning,
 )
 
-__version__ = "3.2.0"
+__version__ = "4.0.0"
 
 
 def track_new(sync: BranchSync, author: str, limit: int) -> list[str]:
@@ -64,7 +64,13 @@ def track_new(sync: BranchSync, author: str, limit: int) -> list[str]:
         cwd=sync.root,
     )
     for email, branch, symref in refs[:limit]:
-        if symref or email != author or branch in local:
+        if symref or branch == "HEAD" or branch in local or (author and email != author):
+            continue
+        # DELIBERATE DIVERGENCE: only your own branches used to be tracked, and
+        # merged ones came back after every prune. Every feature branch is
+        # tracked now, except one already merged into a main or dev branch.
+        # No GitHub lookup here: one per remote branch would be too slow.
+        if sync.merged_reason(branch, f"refs/remotes/origin/{branch}", github=False):
             continue
         if sync.dry_run:
             info(f"🌵 Would track: {branch}")
@@ -99,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
         "--author",
         default="",
         metavar="EMAIL",
-        help="Author of new origin branches (default: git config user.email)",
+        help="Only track new origin branches by this author (default: all)",
     )
     parser.add_argument(
         "--limit",
@@ -116,16 +122,12 @@ def main(argv: list[str] | None = None) -> int:
         warning("❌ Not inside a git working tree.")
         return 1
     root = Path(run_output(["git", "rev-parse", "--show-toplevel"]))
-    author = args.author or run_output(["git", "config", "user.email"], cwd=root, check=False)
-    if not author:
-        warning("❌ No author email; pass --author=EMAIL or set git config user.email.")
-        return 1
     original = current_branch(root) or run_output(["git", "rev-parse", "--short", "HEAD"], cwd=root)
     info(f"📍 Keeping caller checkout: {original}")
     # DELIBERATE DIVERGENCE: the old sync parked on main and delegated cleanup.
     # Preserve active workspaces instead, and never delete a gone-upstream
     # branch merely because its remote was deleted: only once it is proven
-    # merged (BranchSync.drop_gone). Dry-run must not fetch.
+    # merged (BranchSync.proven_merged). Dry-run must not fetch.
     if args.dry_run:
         info("🌵 Cached remote refs only; no fetch. Results reflect the last fetch.")
     else:
@@ -133,7 +135,7 @@ def main(argv: list[str] | None = None) -> int:
     sync = BranchSync(root, args.dry_run)
     sync.update()
     try:
-        tracked = track_new(sync, author, limit)
+        tracked = track_new(sync, args.author, limit)
     except (subprocess.CalledProcessError, OSError) as exc:
         sync.block("new origin branches", str(exc))
         tracked = []

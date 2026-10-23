@@ -322,8 +322,12 @@ machine-readable output.
 
 ### Syncing branches
 
-`sync-all-branches` (alias `update-from-origin`) fetches once and rebases
-every local branch onto its upstream, falling back to `origin/<branch>`.
+`sync-all-branches` (alias `update-from-origin`) fetches once, deletes the
+branches merged into a main or dev branch, rebases every other local branch
+onto its upstream the way `git pull --rebase` does (falling back to
+`origin/<branch>`), and tracks every origin feature branch that is not local
+yet. Because it rebases from the upstream's fork point, a branch force-pushed
+from another machine replays only the commits made here.
 
 ```sh
 sync-all-branches       # update every branch and worktree
@@ -343,19 +347,22 @@ sync-all-branches-dr    # preview against cached remote refs; no fetch, no chang
     a branch rebased and force-pushed from another machine, typically after
     its parent was squash-merged) moves to the upstream instead of replaying
     commits that would conflict.
-  - A branch whose upstream is gone is deleted, with its clean worktree (a
-    lock is dropped first), once it is proven merged into `origin/main`,
-    `master`, `dev` or `develop`: contained in it, its content already there
-    (squash merges included), or a merged GitHub PR. The tip SHA is printed so
-    you can restore it. A missing upstream alone is not treated as merged: an
-    unproven one is listed as `Upstream gone` and kept. A merged branch whose
-    worktree is dirty, mid-operation or your current checkout is kept and
-    reported.
+  - A branch proven merged into `origin/main`, `master`, `dev` or `develop`
+    is deleted with its worktree: contained in it, its content already there
+    (squash merges included), or a merged GitHub PR. When its upstream still
+    exists, that must be merged too. The tip SHA is printed so you can restore
+    it. A lock is dropped, an operation in progress is aborted and uncommitted
+    work is stashed (its stash ID is printed) before the worktree goes; only
+    your current checkout is kept. A missing upstream alone is not treated as
+    merged: an unproven one is listed as `Upstream gone` and kept.
 - **Failures are isolated.** A rebase conflict is aborted and reported while
   other branches continue, and any blocked branch makes the command exit
   non-zero. If restoring work conflicts, the recovery stash ID and worktree
   path are printed.
-- New remote branches you authored become local tracking branches.
+- Every origin feature branch that is not local and not merged becomes a
+  local tracking branch (`--author=EMAIL` limits it to one author's).
+- A temporary checkout left by an interrupted earlier sync is cleared first,
+  so its half-done rebase no longer blocks the branch.
 
 Like every branch-touching script in `bin/git/`, it disables repository hooks
 for its own Git commands. The legacy `--no-push` and `--keep-locked` flags are
