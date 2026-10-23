@@ -6,44 +6,74 @@ on:
 
 permissions:
   contents: read
-  id-token: write # OIDC token for npm trusted publishing
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  publish:
-    name: 📦 Publish
+  tag:
+    name: 🏷️ Tag matches package.json
     runs-on: ubuntu-latest
-    # Must match the environment on the package's npm trusted publisher.
-    environment: che release
+    timeout-minutes: 2
 
     steps:
-      - name: 📥 Checkout repository
-        uses: actions/checkout@v4
-
-      # Trusted publishing needs npm >= 11.5.1; the latest Node 24.x bundles it.
-      - name: 🟢 Install node
-        uses: actions/setup-node@v4
+      - name: 📥 Checkout package.json
+        uses: actions/checkout@v7
         with:
-          node-version: 24
-          registry-url: https://registry.npmjs.org
+          persist-credentials: false
+          sparse-checkout: package.json
+          sparse-checkout-cone-mode: false
 
-      - name: 🐰 Install bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: 🐍 Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: 🏷️ Tag matches package.json
+      - name: 🏷️ Compare versions
         run: |
           pkg=$(node -p "require('./package.json').version")
           [ "${GITHUB_REF_NAME#v}" = "$pkg" ] || { echo "Tag $GITHUB_REF_NAME does not match package.json $pkg"; exit 1; }
 
-      # prepublishOnly runs `bun run ci` first, hence bun and uv above.
+  # The same checks `prepublishOnly` would run, but in parallel with the tag
+  # check instead of serially inside `npm publish`.
+  checks:
+    name: 🧪 Checks
+    uses: ./.github/workflows/checks.yml
+
+  publish:
+    name: 📦 Publish
+    needs: [tag, checks]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Must match the environment on the package's npm trusted publisher.
+    environment: che release
+    permissions:
+      contents: read
+      id-token: write # OIDC token for npm trusted publishing
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Trusted publishing needs npm >= 11.5.1; the latest Node 24.x bundles it.
+      - name: 🟢 Install node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      # The checks job above already ran everything prepublishOnly would.
       - name: 🚀 Publish
-        run: npm publish
+        run: npm publish --ignore-scripts
 
       - name: 🎉 Published
         run: echo "✅ Published \`@codebend3r/che@${GITHUB_REF_NAME#v}\` from ${GITHUB_SHA:0:7}." >> "$GITHUB_STEP_SUMMARY"
 
+  report:
+    name: 📝 Report
+    needs: [tag, checks, publish]
+    if: failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
       - name: 🚨 Publish failed
-        if: failure()
-        run: echo "💥 \`$GITHUB_REF_NAME\` did not publish — check the failed step above." >> "$GITHUB_STEP_SUMMARY"
+        run: echo "💥 \`$GITHUB_REF_NAME\` did not publish, check the failed job above." >> "$GITHUB_STEP_SUMMARY"

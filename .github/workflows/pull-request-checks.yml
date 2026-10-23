@@ -3,21 +3,15 @@ name: 🧪 Pull request checks
 on:
   pull_request:
 
+permissions:
+  contents: read
+
+# A new push to the PR supersedes the run still going for the old one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   checks:
     name: 🧪 Python script checks
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: 📥 Checkout repository
-        uses: actions/checkout@v4
-
-      - name: 🐰 Install bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: 🐍 Install uv
-        uses: astral-sh/setup-uv@v5
-
-      # One step, so this can never drift from the `ci` script it mirrors.
-      - name: 🚦 Full check
-        run: bun run ci
+    uses: ./.github/workflows/checks.yml
