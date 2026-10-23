@@ -15,11 +15,10 @@ Standard library only, like everything else at the ``bin/`` root.
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
 from typing import NamedTuple
 
-from utils import info, run, run_output, warning
+from utils import info, run, run_output
 
 
 def skip_git_hooks() -> None:
@@ -201,66 +200,71 @@ def worktree_is_clean(path: str | Path) -> bool:
     return not (completed.stdout or "").strip()
 
 
-def find_main_branch(cwd: str | Path | None = None) -> str:
-    """The local main branch, preferring ``main`` over ``master``, or "" for neither.
+# ---------------------------------------------------------------------------
+# Operations in progress
+#
+# A rebase, merge, cherry-pick, revert or bisect leaves state files in the
+# worktree's own git dir. A rebase or bisect also detaches HEAD while still
+# reserving the branch it started on.
+# ---------------------------------------------------------------------------
 
-    Takes an explicit ``cwd`` because callers run it after moving to the main
-    worktree; relying on the process working directory would make the answer
-    depend on where the script happened to be invoked from.
+_OPERATION_FILES = (
+    "rebase-merge",
+    "rebase-apply",
+    "MERGE_HEAD",
+    "CHERRY_PICK_HEAD",
+    "REVERT_HEAD",
+    "BISECT_START",
+)
+
+# Each operation and the command that abandons it, checked in this order.
+_ABORTS = (
+    ("rebase-merge", ("rebase", "--abort")),
+    ("rebase-apply", ("rebase", "--abort")),
+    ("MERGE_HEAD", ("merge", "--abort")),
+    ("CHERRY_PICK_HEAD", ("cherry-pick", "--abort")),
+    ("REVERT_HEAD", ("revert", "--abort")),
+    ("BISECT_START", ("bisect", "reset")),
+)
+
+
+def git_path(path: Path, name: str) -> Path:
+    result = Path(run_output(["git", "rev-parse", "--git-path", name], cwd=path))
+    return result if result.is_absolute() else path / result
+
+
+def in_progress(path: Path) -> bool:
+    return any(git_path(path, name).exists() for name in _OPERATION_FILES)
+
+
+def abort_operation(path: Path) -> bool:
+    """Abandon whatever operation is in progress in ``path``; True when none is left.
+
+    Aborting puts the branch back where the operation found it, so no commit
+    is lost: a rebase's replayed commits were never written to the branch.
     """
-    for candidate in ("main", "master"):
-        exists = run(
-            ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{candidate}"],
-            check=False,
-            capture=True,
-            cwd=cwd,
-        )
-        if exists.returncode == 0:
-            return candidate
-    return ""
+    for name, command in _ABORTS:
+        if git_path(path, name).exists():
+            run(["git", *command], cwd=path, check=False, capture=True)
+    return not in_progress(path)
 
 
-def park_main_worktree(action: str, *, dry_run: bool) -> Path:
-    """Put the main worktree on main (or master) before ``action``; return its path.
+def stash_everything(path: Path, message: str) -> str:
+    """Stash ``path``'s tracked and untracked changes; return the stash commit, or "".
 
-    The main worktree, not the one the script was run from: removing a worktree
-    fails while standing in it, and the branch scripts expect the main clone.
-    Starting from a known-good branch keeps every later step predictable.
-
-    Exits 1 outside a working tree, when there is neither a ``main`` nor a
-    ``master``, or when the main worktree has uncommitted changes to tracked
-    files (see :func:`has_tracked_changes`). ``dry_run`` reports the switch
-    instead of making it.
+    "" means there was nothing to stash. Worktrees share one ``refs/stash``, so
+    the stash outlives the worktree and ``git stash list`` shows it from any of
+    them. Ignored files (node_modules, build output) are left alone.
     """
-    # "true" on stdout, not just exit 0: inside a bare repo or a .git directory
-    # rev-parse succeeds and prints "false".
-    if run_output(["git", "rev-parse", "--is-inside-work-tree"], check=False) != "true":
-        warning("❌ Not inside a git working tree.")
-        sys.exit(1)
-
-    main_wt = Path(worktrees()[0].path)
-
-    main_branch = find_main_branch(main_wt)
-    if not main_branch:
-        warning(f"❌ Neither 'main' nor 'master' exists locally — refusing to {action}.")
-        sys.exit(1)
-
-    current = current_branch(main_wt)
-    if current == main_branch:
-        info(f"📍 Main worktree already on 🌿 {main_branch}")
-        return main_wt
-
-    if has_tracked_changes(main_wt):
-        warning(
-            f"❌ Main worktree has uncommitted changes — commit or stash before you {action}. 🧺"
-        )
-        sys.exit(1)
-
-    if dry_run:
-        info(
-            f"🌵 Would switch main worktree to 🌿 {main_branch} (currently on {current or 'detached'})"
-        )
-    else:
-        info(f"🔀 Switching main worktree to 🌿 {main_branch} (from {current or 'detached'})")
-        run(["git", "checkout", "--quiet", main_branch], cwd=main_wt)
-    return main_wt
+    if worktree_is_clean(path):
+        return ""
+    before = run_output(
+        ["git", "rev-parse", "--verify", "--quiet", "refs/stash"], cwd=path, check=False
+    )
+    run(["git", "stash", "push", "--include-untracked", "--message", message], cwd=path)
+    after = run_output(
+        ["git", "rev-parse", "--verify", "--quiet", "refs/stash"], cwd=path, check=False
+    )
+    if not after or after == before or not worktree_is_clean(path):
+        raise OSError(f"could not stash the changes in {path}")
+    return after

@@ -29,12 +29,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from branchsync import in_progress
 from gitutils import (
     current_branch,
     fetch_remotes,
     for_each_ref,
     has_tracked_changes,
+    in_progress,
     local_branches,
     skip_git_hooks,
     worktree_branch_map,
