@@ -1,0 +1,89 @@
+name: 🧪 Checks
+
+# Reusable: pull-request-checks.yml, sanity-check.yml and publish.yml all call
+# this, so the three can never drift from each other. Each job mirrors one
+# script that `bun run ci` runs, fanned out so they finish in parallel.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  static:
+    name: ${{ matrix.emoji }} ${{ matrix.check }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { check: lint, emoji: 🔍, uv: true }
+          - { check: format, emoji: 🎨, uv: true }
+          - { check: executable, emoji: 🔐, uv: false }
+          - { check: shebang, emoji: 🪄, uv: false }
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: 🐰 Install bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: 🐍 Install uv
+        if: matrix.uv
+        uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          cache-dependency-glob: requirements-dev.txt
+
+      - name: ${{ matrix.emoji }} Run ${{ matrix.check }}
+        run: bun run ${{ matrix.check }}
+
+  test:
+    name: 🧪 test (${{ matrix.suite }}, py${{ matrix.python }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # The scripts run on macOS day to day, under whichever python3 >= 3.12
+        # install.sh finds, so cover both runners and every version it accepts.
+        os: [ubuntu-latest, macos-latest]
+        python: ['3.12', '3.13', '3.14']
+        # test_sync_all_branches is about two thirds of the suite's runtime, so
+        # it gets a shard to itself. Everything else, new suites included, runs
+        # in the other.
+        suite: [branch-sync, everything-else]
+        include:
+          - suite: branch-sync
+            args: test/test_sync_all_branches.py
+          - suite: everything-else
+            args: --ignore=test/test_sync_all_branches.py
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: 🐰 Install bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      # python-version exports UV_PYTHON, which `bun run test` (uv run) honours.
+      - name: 🐍 Install uv and Python ${{ matrix.python }}
+        uses: astral-sh/setup-uv@v10
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+          cache-python: true
+          cache-dependency-glob: requirements-dev.txt
+
+      - name: 🧪 Run tests
+        run: bun run test ${{ matrix.args }}

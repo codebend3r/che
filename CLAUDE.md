@@ -232,9 +232,10 @@ an old one and hands the scripts a new enough interpreter itself).
    the version commit, so the generated headers never lag the package.
 2. `git push --follow-tags`. The `v*` tag triggers
    `.github/workflows/publish.yml`, which checks the tag matches
-   `package.json` and runs `npm publish` (`prepublishOnly` runs `bun run ci`
-   first). It authenticates through npm trusted publishing (OIDC, the
-   `che release` environment), so there is no token secret and no manual
+   `package.json` while `checks.yml` runs the full CI matrix, then runs
+   `npm publish --ignore-scripts` (the matrix already did what
+   `prepublishOnly` would). It authenticates through npm trusted publishing
+   (OIDC, the `che release` environment), so there is no token secret and no manual
    `npm publish`.
 
 The tarball is `bin/` and `shell/` plus the README and LICENSE;
