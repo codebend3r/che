@@ -1,0 +1,67 @@
+name: 🔖 Release
+
+# The only way a commit reaches main without a pull request. The `main`
+# ruleset requires a PR from everyone, admins included, and lists deploy keys
+# as its sole bypass actor; the one deploy key with write access lives in the
+# `che version` environment, which only main can deploy to. This job pushes
+# nothing but the commit and tag `npm version` makes, and refuses to if that
+# commit touches anything beyond the version and the files generated from it.
+# The pushed tag then triggers publish.yml.
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: 🔖 npm version ${{ inputs.bump }}
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: che version
+
+    steps:
+      - name: 📥 Checkout main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          ssh-key: ${{ secrets.VERSION_DEPLOY_KEY }}
+
+      # The `version` script runs `bun run generate` (python3 bin/shellgen.py).
+      - name: 🐰 Install bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: 🐍 Install Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: 🔖 Bump version
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR_ID+$GITHUB_ACTOR@users.noreply.github.com"
+          npm version ${{ inputs.bump }}
+
+      - name: 🔎 Only version files changed
+        run: |
+          stray=$(git diff --name-only HEAD~1 HEAD | grep -Ev '^(package\.json|\.zshrc|README\.md|shell/.*)$' || true)
+          [ -z "$stray" ] || { echo "The version commit touches more than version files:"; echo "$stray"; exit 1; }
+
+      - name: 🚀 Push commit and tag
+        run: git push --follow-tags origin HEAD:main
+
+      - name: 🎉 Released
+        run: echo "✅ Pushed \`$(git describe --tags)\` to \`main\`; publish.yml takes it from here." >> "$GITHUB_STEP_SUMMARY"

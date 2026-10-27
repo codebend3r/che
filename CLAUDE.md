@@ -227,16 +227,26 @@ an old one and hands the scripts a new enough interpreter itself).
 `package.json` holds the version. `bin/commands.py` reads `VERSION` and
 `PACKAGE_NAME` from it, so a release is:
 
-1. `npm version <major|minor|patch>` on `main`. Its `version` hook runs
-   `bun run generate` and stages `shell/`, `.zshrc` and the README islands into
-   the version commit, so the generated headers never lag the package.
-2. `git push --follow-tags`. The `v*` tag triggers
-   `.github/workflows/publish.yml`, which checks the tag matches
-   `package.json` while `checks.yml` runs the full CI matrix, then runs
-   `npm publish --ignore-scripts` (the matrix already did what
+1. `gh workflow run release.yml -f bump=<major|minor|patch>` (or run
+   🔖 Release from the Actions tab). It runs `npm version` on `main`, whose
+   `version` hook runs `bun run generate` and stages `shell/`, `.zshrc` and the
+   README islands into the version commit, so the generated headers never lag
+   the package. It refuses to push a version commit that touches anything
+   else, then pushes the commit and tag with the `VERSION_DEPLOY_KEY` deploy
+   key.
+2. The `v*` tag triggers `.github/workflows/publish.yml`, which checks the
+   tag matches `package.json` while `checks.yml` runs the full CI matrix, then
+   runs `npm publish --ignore-scripts` (the matrix already did what
    `prepublishOnly` would). It authenticates through npm trusted publishing
-   (OIDC, the `che release` environment), so there is no token secret and no manual
-   `npm publish`.
+   (OIDC, the `che release` environment), so there is no token secret and no
+   manual `npm publish`.
+
+`main` is protected by the `main` ruleset: no deletion, no force push, and
+every change through a pull request whose `✅ Checks passed` status is green.
+Nobody bypasses it, admins included, except deploy keys, and the only deploy
+key with write access is `VERSION_DEPLOY_KEY`, a secret of the `che version`
+environment that only `main` may deploy to. So a local `npm version` plus
+`git push` is rejected; release through the workflow.
 
 The tarball is `bin/` and `shell/` plus the README and LICENSE;
 `npm pack --dry-run` lists it. `che update` refuses to run in a copy without
