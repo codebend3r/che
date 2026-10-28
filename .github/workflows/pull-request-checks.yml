@@ -15,3 +15,16 @@ jobs:
   checks:
     name: 🧪 Python script checks
     uses: ./.github/workflows/checks.yml
+
+  # The one status the `main` ruleset requires, so the matrix in checks.yml can
+  # grow or shrink without touching the ruleset.
+  gate:
+    name: ✅ Checks passed
+    needs: checks
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: ✅ Every check passed
+        run: '[ "${{ needs.checks.result }}" = success ]'
