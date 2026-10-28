@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   checks:
-    name: 🩺 Sanity check
+    name: 🧪 Checks
     uses: ./.github/workflows/checks.yml
 
   report:
