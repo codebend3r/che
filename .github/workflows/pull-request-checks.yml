@@ -1,4 +1,4 @@
-name: 🧪 Pull request checks
+name: 🔀 Pull request
 
 on:
   pull_request:
@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   checks:
-    name: 🧪 Python script checks
+    name: 🧪 Checks
     uses: ./.github/workflows/checks.yml
 
   # The one status the `main` ruleset requires, so the matrix in checks.yml can
@@ -26,5 +26,5 @@ jobs:
     timeout-minutes: 2
 
     steps:
-      - name: ✅ Every check passed
+      - name: ✅ Require every check
         run: '[ "${{ needs.checks.result }}" = success ]'
