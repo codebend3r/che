@@ -49,12 +49,14 @@ from utils import (
     warning,
 )
 
-__version__ = "4.0.0"
+__version__ = "4.0.1"
 
 
 def track_new(sync: BranchSync, author: str, limit: int) -> list[str]:
     tracked: list[str] = []
-    local = {branch for (branch,) in local_branches(cwd=sync.root)}
+    # A branch just deleted as merged may have been proven only through its
+    # GitHub PR, which the check below skips, so it would be tracked right back.
+    local = {branch for (branch,) in local_branches(cwd=sync.root)} | set(sync.deleted)
     refs = for_each_ref(
         "refs/remotes/origin/",
         "authoremail:trim",
