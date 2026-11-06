@@ -16,6 +16,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 
 from gitutils import (
@@ -27,7 +28,22 @@ from gitutils import (
     stash_everything,
     worktrees,
 )
-from utils import info, run, run_output, success, warning
+from report import (
+    ADDED,
+    FAIL,
+    NOTE,
+    OK,
+    PLAN,
+    SAME,
+    WARN,
+    Listing,
+    Reporter,
+    Row,
+    Tone,
+    duration,
+    summary,
+)
+from utils import run, run_output
 
 # A branch is "merged" when it reached one of these on origin. They are also
 # never pruned themselves, whatever state their upstream is in.
@@ -53,29 +69,99 @@ def operation_branch(path: Path) -> str:
     return ""
 
 
+def short(ref: str) -> str:
+    """``origin/feature`` for ``refs/remotes/origin/feature``."""
+    return ref.removeprefix("refs/remotes/").removeprefix("refs/heads/")
+
+
+def conflicts(output: str, shown: int = 3) -> str:
+    """`` (conflict in a.py, b.py +2 more)`` from a failed rebase's output, or ""."""
+    marker = "Merge conflict in "
+    files = [
+        line.split(marker, 1)[1].strip()
+        for line in output.splitlines()
+        if line.startswith("CONFLICT") and marker in line
+    ]
+    if not files:
+        return ""
+    more = f" +{len(files) - shown} more" if len(files) > shown else ""
+    return f" (conflict in {', '.join(files[:shown])}{more})"
+
+
+def failure(exc: subprocess.CalledProcessError | OSError) -> str:
+    """A failed command as one line, with git's own last word when captured."""
+    stderr = exc.stderr or "" if isinstance(exc, subprocess.CalledProcessError) else ""
+    last = next((line.strip() for line in reversed(stderr.splitlines()) if line.strip()), "")
+    return f"{exc}: {last}" if last else str(exc)
+
+
+class Outcome(Enum):
+    """Everything a sync can conclude about a branch, defined once.
+
+    Each member is its live line (tone and verb; no verb means the branch is
+    counted silently) and its summary row (label and listing). The summary
+    walks this enum in declaration order: what changed, what a dry run would
+    change, what was left alone, then what needs attention, failures last.
+    """
+
+    UPDATED = (OK, "updated", "Updated", Listing.LIST)
+    RESET = (OK, "reset", "Reset to upstream", Listing.LIST)
+    DELETED = (OK, "deleted", "Deleted (merged)", Listing.LIST)
+    TRACKED = (ADDED, "tracked", "Tracked new", Listing.LIST)
+    RESTORED = (NOTE, "", "WIP restored", Listing.LIST)
+    STASHED = (NOTE, "stashed", "Stashed (merged)", Listing.LIST)
+    CLEARED = (NOTE, "cleared", "Cleared leftovers", Listing.LIST)
+    WOULD_UPDATE = (PLAN, "would update", "Would update", Listing.LIST)
+    WOULD_RESET = (PLAN, "would reset", "Would reset", Listing.LIST)
+    WOULD_DELETE = (PLAN, "would delete", "Would delete", Listing.LIST)
+    WOULD_TRACK = (PLAN, "would track", "Would track", Listing.LIST)
+    WOULD_CLEAR = (PLAN, "would clear", "Would clear", Listing.LIST)
+    CURRENT = (SAME, "", "Up to date", Listing.COUNT)
+    LOCAL_ONLY = (NOTE, "", "Local only", Listing.LIST)
+    DETACHED = (SAME, "skipped", "Detached, skipped", Listing.LIST)
+    PROTECTED = (WARN, "protected", "Protected, gone", Listing.LIST)
+    GONE = (WARN, "gone", "Upstream gone", Listing.LIST)
+    MERGED_KEPT = (WARN, "kept", "Merged, kept", Listing.LIST)
+    BLOCKED = (FAIL, "blocked", "Blocked", Listing.ALL)
+
+    def __init__(self, tone: Tone, verb: str, label: str, listing: Listing) -> None:
+        self.tone = tone
+        self.verb = verb
+        self.label = label
+        self.listing = listing
+
+
+@dataclass(frozen=True)
+class Result:
+    branch: str
+    item: str  # how the summary names it, usually just the branch
+
+
 @dataclass
 class BranchSync:
     root: Path
     dry_run: bool
-    updated: list[str] = field(default_factory=list)
-    current: list[str] = field(default_factory=list)
-    local_only: list[str] = field(default_factory=list)
-    gone: list[str] = field(default_factory=list)
-    restored: list[str] = field(default_factory=list)
-    reset: list[str] = field(default_factory=list)
-    deleted: list[str] = field(default_factory=list)
-    merged_kept: list[str] = field(default_factory=list)
-    stashed: list[str] = field(default_factory=list)
-    blocked: list[str] = field(default_factory=list)
+    report: Reporter = field(default_factory=Reporter)
+    results: dict[Outcome, list[Result]] = field(
+        default_factory=lambda: {outcome: [] for outcome in Outcome}
+    )
+    total: int = 0
     trees: list[Worktree] = field(init=False)
 
     def __post_init__(self) -> None:
         self.trees = worktrees(self.root)
 
+    def record(self, outcome: Outcome, branch: str, detail: str = "", *, item: str = "") -> None:
+        """Count ``branch`` under ``outcome`` and print its live line, if it has one."""
+        self.results[outcome].append(Result(branch, item or branch))
+        if outcome.verb:
+            self.report.event(outcome.tone, outcome.verb, branch, detail)
+
+    def names(self, outcome: Outcome) -> list[str]:
+        return [result.branch for result in self.results[outcome]]
+
     def block(self, branch: str, reason: str) -> None:
-        message = f"{branch}: {reason}"
-        self.blocked.append(message)
-        warning(f"  ❌ {message}")
+        self.record(Outcome.BLOCKED, branch, reason, item=f"{branch}: {reason}")
 
     def occupied(self) -> dict[str, Path]:
         result: dict[str, Path] = {}
@@ -87,7 +173,7 @@ class BranchSync:
             if branch:
                 result[branch] = path
             else:
-                info(f"  ℹ️ Detached worktree unchanged (no upstream): {path}")  # noqa: RUF001
+                self.record(Outcome.DETACHED, str(path), "detached HEAD; nothing to update")
         return result
 
     def pathspecs(self, path: Path) -> list[str]:
@@ -166,12 +252,29 @@ class BranchSync:
         tree = merged.stdout.splitlines()[0]
         return tree == run_output(["git", "rev-parse", f"{target}^{{tree}}"], cwd=self.root)
 
+    def drift(self, branch: str, upstream: str) -> str:
+        """``3 new commits, 2 local replayed``: what an update brings in.
+
+        The upstream is named only when it is not the usual ``origin/<branch>``,
+        so the common line does not print the branch name twice.
+        """
+        source = "" if short(upstream) == f"origin/{branch}" else f" from {short(upstream)}"
+        counts = run_output(
+            ["git", "rev-list", "--left-right", "--count", f"{upstream}...refs/heads/{branch}"],
+            cwd=self.root,
+            check=False,
+        ).split()
+        if len(counts) != 2:
+            return source.strip()
+        incoming, outgoing = (int(count) for count in counts)
+        detail = f"{incoming} new commit{'' if incoming == 1 else 's'}{source}"
+        return f"{detail}, {outgoing} local replayed" if outgoing else detail
+
     def keep_gone(self, branch: str, upstream: str) -> None:
         # Usually a merged PR whose remote branch was deleted, or one closed
         # unmerged. Nothing is left to pull, so it is not a failure; keep it
         # for the user to review.
-        info(f"  🪦 Upstream gone: {branch} ({upstream}); branch and worktree retained")
-        self.gone.append(branch)
+        self.record(Outcome.GONE, branch, f"{short(upstream)} deleted; not proven merged")
 
     def save_wip(self, branch: str, path: Path) -> str:
         if not self.dirty(path):
@@ -191,6 +294,7 @@ class BranchSync:
                 "git",
                 "stash",
                 "push",
+                "--quiet",
                 "--include-untracked",
                 "--message",
                 f"che sync-all-branches: {branch}",
@@ -204,7 +308,6 @@ class BranchSync:
             raise OSError(
                 f"could not verify a new recovery stash in {path}; inspect git stash list"
             )
-        info(f"  🧺 Recovery stash for {branch} in {path}: {oid}")
         if self.dirty(path):
             raise OSError(f"worktree remains dirty; left untouched, recovery stash {oid} in {path}")
         return oid
@@ -214,7 +317,10 @@ class BranchSync:
             return True
         # Worktrees share refs/stash. Never pop the latest entry or drop a
         # recovery copy until both working-copy and index restoration succeed.
-        if run(["git", "stash", "apply", "--index", oid], cwd=path, check=False).returncode:
+        applied = run(
+            ["git", "stash", "apply", "--index", oid], cwd=path, check=False, capture=True
+        )
+        if applied.returncode:
             self.block(
                 branch, f"WIP restoration conflicted in {path}; recovery stash retained: {oid}"
             )
@@ -235,7 +341,7 @@ class BranchSync:
         ):
             self.block(branch, f"WIP restored in {path}, but recovery stash not dropped: {oid}")
             return False
-        self.restored.append(branch)
+        self.record(Outcome.RESTORED, branch)
         return True
 
     def sync_branch(self, branch: str, upstream: str, occupied: dict[str, Path]) -> None:
@@ -248,8 +354,7 @@ class BranchSync:
                 self.block(branch, f"operation in progress in {path}; left untouched")
                 return
         if self.includes(branch, upstream):
-            info(f"  = Up to date: {branch} (local commits kept){f' in {path}' if path else ''}")
-            self.current.append(branch)
+            self.record(Outcome.CURRENT, branch)
             return
         # Replaying commits whose content the upstream already holds conflicts
         # for nothing: the usual cause is a parent branch squash-merged into main
@@ -258,14 +363,19 @@ class BranchSync:
         # no change. A branch merely behind fast-forwards through the rebase.
         local = f"refs/heads/{branch}"
         stale = not self.is_ancestor(local, upstream) and self.adds_nothing(local, upstream)
+        # Measured before anything moves; the same text serves the dry run.
+        drift = "" if stale else self.drift(branch, upstream)
         if self.dry_run:
-            action = (
-                f"reset {branch} to {upstream} (its changes are already there)"
-                if stale
-                else f"update {branch} from {upstream}"
-            )
-            info(f"  🌵 Would {action}{f' in {path}' if path else ''}; stash/restore WIP if needed")
+            if stale:
+                self.record(
+                    Outcome.WOULD_RESET, branch, f"to {short(upstream)}; its changes are there"
+                )
+            else:
+                self.record(Outcome.WOULD_UPDATE, branch, drift)
             return
+        # Messages name an existing worktree; a disposable checkout means nothing
+        # to the reader, and one kept after a failure is reported on its own.
+        where = f" in {path}" if path is not None else ""
 
         temporary: Path | None = None
         oid = ""
@@ -273,12 +383,13 @@ class BranchSync:
             if path is None:
                 temporary = Path(tempfile.mkdtemp(prefix=TEMPORARY_PREFIX))
                 path = temporary / "checkout"
-                run(["git", "worktree", "add", "--quiet", str(path), branch], cwd=self.root)
+                run(
+                    ["git", "worktree", "add", "--quiet", str(path), branch],
+                    cwd=self.root,
+                    capture=True,
+                )
             oid = self.save_wip(branch, path)
             if stale:
-                info(
-                    f"⏩ Resetting {branch} to {upstream} in {path}; its changes are already there"
-                )
                 # --keep, not --hard: WIP is already stashed, and --keep refuses
                 # rather than overwrite anything that slipped past the stash.
                 moved = (
@@ -288,17 +399,16 @@ class BranchSync:
                     == 0
                 )
                 if not moved:
-                    warning(f"  ❌ Reset failed for {branch} in {path}")
-                    self.block(branch, f"reset failed in {path}; original commits retained")
+                    self.block(branch, f"reset failed{where}; original commits retained")
                 restored = self.restore_wip(branch, path, oid)
                 if moved and restored:
                     if self.includes(branch, upstream):
-                        self.reset.append(branch)
-                        success(f"  ✅ Reset to upstream: {branch}")
+                        self.record(
+                            Outcome.RESET, branch, f"to {short(upstream)}; its changes were there"
+                        )
                     else:
                         self.block(branch, "verification failed: fetched upstream not included")
                 return
-            info(f"⬇️ Rebasing {branch} in {path} (lock preserved)")
             # DELIBERATE DIVERGENCE: one fetched snapshot instead of pull's
             # per-branch fetch. Disable autostash/updateRefs so Git cannot
             # compete with our exact WIP recovery or move unrelated branches.
@@ -307,48 +417,57 @@ class BranchSync:
             # to find where this branch left it, so after a force-push from
             # another machine only the commits made here are replayed, not the
             # dozens the upstream rewrote (which conflict for nothing).
-            rebased = (
-                run(
-                    [
-                        "git",
-                        "-c",
-                        "rebase.autoStash=false",
-                        "-c",
-                        "rebase.updateRefs=false",
-                        "rebase",
-                        "--no-autostash",
-                        "--fork-point",
-                        upstream,
-                    ],
-                    cwd=path,
-                    check=False,
-                ).returncode
-                == 0
+            # Captured: git's own "Successfully rebased" chatter would break the
+            # report's columns. A conflict is summarised from it instead.
+            rebase = run(
+                [
+                    "git",
+                    "-c",
+                    "rebase.autoStash=false",
+                    "-c",
+                    "rebase.updateRefs=false",
+                    "rebase",
+                    "--no-autostash",
+                    "--fork-point",
+                    upstream,
+                ],
+                cwd=path,
+                check=False,
+                capture=True,
             )
+            rebased = rebase.returncode == 0
             if not rebased:
-                warning(f"  ❌ Rebase failed for {branch} in {path}")
                 if in_progress(path):
                     # Abort only the rebase we started. Failure to abort is
                     # fatal: applying WIP or continuing is no longer safe.
-                    abort = run(["git", "rebase", "--abort"], cwd=path, check=False)
+                    abort = run(["git", "rebase", "--abort"], cwd=path, check=False, capture=True)
                     if abort.returncode:
-                        warning(f"STOP: cannot abort in {path}; recovery stash: {oid or 'none'}")
+                        self.block(
+                            branch,
+                            f"cannot abort the rebase in {path}; recovery stash: {oid or 'none'}",
+                        )
                         raise SystemExit(1)
-                self.block(branch, f"rebase failed in {path}; original commits retained")
+                self.block(
+                    branch,
+                    f"rebase failed{where}{conflicts(rebase.stdout + rebase.stderr)};"
+                    " original commits retained",
+                )
             restored = self.restore_wip(branch, path, oid)
             if rebased and restored:
                 if self.includes(branch, upstream):
-                    self.updated.append(branch)
-                    success(f"  ✅ Updated: {branch}")
+                    self.record(Outcome.UPDATED, branch, drift)
                 else:
                     self.block(branch, "verification failed: fetched upstream not included")
         except (subprocess.CalledProcessError, OSError) as exc:
             self.block(
-                branch, f"{exc}; inspect {path}; recovery stash: {oid or 'see git stash list'}"
+                branch,
+                f"{failure(exc)}{where}; recovery stash: {oid or 'see git stash list'}",
             )
         except KeyboardInterrupt:
-            warning(
-                f"Interrupted in {path}; inspect status before resuming. Recovery stash: {oid or 'see git stash list'}"
+            self.block(
+                branch,
+                f"interrupted; inspect {path} before resuming;"
+                f" recovery stash: {oid or 'see git stash list'}",
             )
             raise
         finally:
@@ -363,6 +482,7 @@ class BranchSync:
                         ["git", "worktree", "remove", str(temporary / "checkout")],
                         cwd=self.root,
                         check=False,
+                        capture=True,
                     ).returncode
                     == 0
                 ):
@@ -504,17 +624,21 @@ class BranchSync:
         path = occupied.get(branch)
         tree = next((t for t in self.trees if path and Path(t.path) == path), None)
         if tree is not None and self.checked_out_here(tree):
-            info(f"  ⏭️ Merged, kept: {branch} ({reason}; checked out here)")
-            self.merged_kept.append(f"{branch}: checked out here")
+            self.record(Outcome.MERGED_KEPT, branch, f"merged ({reason}) but checked out here")
             return
         if self.dry_run:
-            where = f" and its worktree {tree.path}" if tree is not None else ""
-            info(f"  🌵 Would delete merged: {branch} at {tip}{where} ({reason})")
+            where = f"; and its worktree {tree.path}" if tree is not None else ""
+            self.record(Outcome.WOULD_DELETE, branch, f"merged ({reason}) at {tip}{where}")
             return
         if tree is not None:
             worktree = Path(tree.path)
             if tree.locked:
-                run(["git", "worktree", "unlock", tree.path], cwd=self.root, check=False)
+                run(
+                    ["git", "worktree", "unlock", tree.path],
+                    cwd=self.root,
+                    check=False,
+                    capture=True,
+                )
             if worktree.is_dir():
                 if in_progress(worktree) and not abort_operation(worktree):
                     self.block(
@@ -527,22 +651,31 @@ class BranchSync:
                     self.block(branch, f"merged ({reason}) but {exc}")
                     return
                 if stash:
-                    info(f"  🧺 Stashed uncommitted work of {branch}: {stash}")
-                    self.stashed.append(f"{branch}: {stash}")
+                    self.record(
+                        Outcome.STASHED,
+                        branch,
+                        f"uncommitted work saved as stash {stash}",
+                        item=f"{branch}: {stash}",
+                    )
             removed = run(
                 ["git", "worktree", "remove", "--force", tree.path],
                 cwd=self.root,
                 check=False,
+                capture=True,
             )
             if removed.returncode:
                 self.block(branch, f"merged ({reason}) but worktree removal refused: {tree.path}")
                 return
-        if run(["git", "branch", "-D", branch], cwd=self.root, check=False).returncode:
+        if run(
+            ["git", "branch", "-D", branch], cwd=self.root, check=False, capture=True
+        ).returncode:
             self.block(branch, f"merged ({reason}) but branch deletion failed")
             return
-        self.deleted.append(branch)
-        success(
-            f"  🗑️ Deleted merged: {branch} at {tip} ({reason}) - restore with: git branch {branch} {tip}"
+        self.record(
+            Outcome.DELETED,
+            branch,
+            f"merged ({reason}); restore: git branch {branch} {tip}",
+            item=f"{branch} ({tip})",
         )
 
     def clear_leftovers(self) -> None:
@@ -562,14 +695,17 @@ class BranchSync:
         for tree in leftovers:
             path = Path(tree.path)
             if self.dry_run:
-                info(f"  🌵 Would clear a leftover sync checkout: {path}")
+                self.record(Outcome.WOULD_CLEAR, str(path), "leftover from an interrupted sync")
                 continue
-            info(f"  🧹 Clearing a leftover sync checkout: {path}")
+            self.record(Outcome.CLEARED, str(path), "leftover from an interrupted sync")
             if path.is_dir() and in_progress(path) and not abort_operation(path):
                 self.block(path.name, f"cannot abort the operation in leftover {path}")
                 continue
             if run(
-                ["git", "worktree", "remove", "--force", str(path)], cwd=self.root, check=False
+                ["git", "worktree", "remove", "--force", str(path)],
+                cwd=self.root,
+                check=False,
+                capture=True,
             ).returncode:
                 self.block(str(path), "leftover sync checkout could not be removed")
                 continue
@@ -581,49 +717,60 @@ class BranchSync:
     def update(self) -> None:
         self.clear_leftovers()
         occupied = self.occupied()
-        for branch, upstream in local_branches("upstream", cwd=self.root):
-            if not upstream and self.has_ref(f"refs/remotes/origin/{branch}"):
-                upstream = f"refs/remotes/origin/{branch}"
-            if not upstream:
-                info(f"  ℹ️ Local only: {branch} (no remote counterpart)")  # noqa: RUF001
-                self.local_only.append(branch)
-                continue
-            try:
-                gone = not self.has_ref(upstream)
-                if reason := self.proven_merged(branch, upstream, gone=gone):
-                    self.drop_merged(branch, reason, occupied)
-                elif gone:
-                    if branch in PROTECTED_BRANCHES:
-                        info(f"  🛡️ Protected: {branch} (upstream gone)")
-                    else:
-                        self.keep_gone(branch, upstream)
-                else:
-                    self.sync_branch(branch, upstream, occupied)
-            except (subprocess.CalledProcessError, OSError) as exc:
-                self.block(branch, f"preflight failed: {exc}")
+        branches = local_branches("upstream", cwd=self.root)
+        self.total = len(branches)
+        with self.report.progress(self.total) as progress:
+            for branch, upstream in branches:
+                progress.step(branch)
+                self.update_one(branch, upstream, occupied)
 
-    def summary(self, tracked: list[str]) -> None:
-        success("═══ summary ═══")
-        for label, names in (
-            ("Updated", self.updated),
-            ("Reset to upstream", self.reset),
-            ("Up to date", self.current),
-            ("Deleted (merged)", self.deleted),
-            ("Tracked new", tracked),
-            ("Local only", self.local_only),
-            ("Upstream gone", self.gone),
-            ("WIP restored", self.restored),
-        ):
-            info(f"{label}: {len(names)} ({', '.join(names)})")
-        if self.gone:
-            info("  Review them; clean-stale-branches removes them once you are sure.")
-        info(f"Stashed from merged worktrees: {len(self.stashed)}")
-        for entry in self.stashed:
-            info(f"  • {entry}")
-        info(f"Merged, kept: {len(self.merged_kept)}")
-        for reason in self.merged_kept:
-            info(f"  • {reason}")
-        info(f"Blocked: {len(self.blocked)}")
-        for reason in self.blocked:
-            warning(f"  • {reason}")
-        info("Caller checkout, unmerged branches and every local change preserved. Nothing pushed.")
+    def update_one(self, branch: str, upstream: str, occupied: dict[str, Path]) -> None:
+        if not upstream and self.has_ref(f"refs/remotes/origin/{branch}"):
+            upstream = f"refs/remotes/origin/{branch}"
+        if not upstream:
+            # Counted, not printed: a branch that was never pushed is normal,
+            # and a line per branch would bury the ones that changed.
+            self.record(Outcome.LOCAL_ONLY, branch)
+            return
+        try:
+            gone = not self.has_ref(upstream)
+            if reason := self.proven_merged(branch, upstream, gone=gone):
+                self.drop_merged(branch, reason, occupied)
+            elif gone:
+                if branch in PROTECTED_BRANCHES:
+                    self.record(
+                        Outcome.PROTECTED, branch, f"{short(upstream)} deleted; never pruned"
+                    )
+                else:
+                    self.keep_gone(branch, upstream)
+            else:
+                self.sync_branch(branch, upstream, occupied)
+        except (subprocess.CalledProcessError, OSError) as exc:
+            self.block(branch, f"preflight failed: {failure(exc)}")
+
+    def summary(self, elapsed: float) -> None:
+        """The closing table, one row per outcome in :class:`Outcome` order."""
+        rows = [
+            Row(
+                outcome.tone,
+                outcome.label,
+                [r.item for r in self.results[outcome]],
+                outcome.listing,
+            )
+            for outcome in Outcome
+        ]
+        notes = []
+        if self.results[Outcome.DELETED]:
+            notes.append("Restore a deleted branch with: git branch <name> <sha>")
+        if self.results[Outcome.GONE]:
+            notes.append("Upstream gone: review them; clean-stale-branches removes them once sure.")
+        notes.append(
+            "Nothing pushed. Your checkout, unmerged branches and local changes are preserved."
+        )
+        count = f"{self.total} branch{'' if self.total == 1 else 'es'}"
+        summary(
+            "Preview" if self.dry_run else "Summary",
+            rows,
+            facts=[count, duration(elapsed)],
+            notes=notes,
+        )

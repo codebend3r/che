@@ -261,7 +261,11 @@ def stash_everything(path: Path, message: str) -> str:
     before = run_output(
         ["git", "rev-parse", "--verify", "--quiet", "refs/stash"], cwd=path, check=False
     )
-    run(["git", "stash", "push", "--include-untracked", "--message", message], cwd=path)
+    run(
+        ["git", "stash", "push", "--quiet", "--include-untracked", "--message", message],
+        cwd=path,
+        capture=True,
+    )
     after = run_output(
         ["git", "rev-parse", "--verify", "--quiet", "refs/stash"], cwd=path, check=False
     )
