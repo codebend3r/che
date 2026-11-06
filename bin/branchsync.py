@@ -16,6 +16,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 
 from gitutils import (
@@ -35,10 +36,11 @@ from report import (
     PLAN,
     SAME,
     WARN,
-    Progress,
+    Listing,
+    Reporter,
     Row,
+    Tone,
     duration,
-    event,
     summary,
 )
 from utils import run, run_output
@@ -88,41 +90,78 @@ def conflicts(output: str, shown: int = 3) -> str:
 
 def failure(exc: subprocess.CalledProcessError | OSError) -> str:
     """A failed command as one line, with git's own last word when captured."""
-    stderr = getattr(exc, "stderr", None) or ""
+    stderr = exc.stderr or "" if isinstance(exc, subprocess.CalledProcessError) else ""
     last = next((line.strip() for line in reversed(stderr.splitlines()) if line.strip()), "")
     return f"{exc}: {last}" if last else str(exc)
+
+
+class Outcome(Enum):
+    """Everything a sync can conclude about a branch, defined once.
+
+    Each member is its live line (tone and verb; no verb means the branch is
+    counted silently) and its summary row (label and listing). The summary
+    walks this enum in declaration order: what changed, what a dry run would
+    change, what was left alone, then what needs attention, failures last.
+    """
+
+    UPDATED = (OK, "updated", "Updated", Listing.LIST)
+    RESET = (OK, "reset", "Reset to upstream", Listing.LIST)
+    DELETED = (OK, "deleted", "Deleted (merged)", Listing.LIST)
+    TRACKED = (ADDED, "tracked", "Tracked new", Listing.LIST)
+    RESTORED = (NOTE, "", "WIP restored", Listing.LIST)
+    STASHED = (NOTE, "stashed", "Stashed (merged)", Listing.LIST)
+    CLEARED = (NOTE, "cleared", "Cleared leftovers", Listing.LIST)
+    WOULD_UPDATE = (PLAN, "would update", "Would update", Listing.LIST)
+    WOULD_RESET = (PLAN, "would reset", "Would reset", Listing.LIST)
+    WOULD_DELETE = (PLAN, "would delete", "Would delete", Listing.LIST)
+    WOULD_TRACK = (PLAN, "would track", "Would track", Listing.LIST)
+    WOULD_CLEAR = (PLAN, "would clear", "Would clear", Listing.LIST)
+    CURRENT = (SAME, "", "Up to date", Listing.COUNT)
+    LOCAL_ONLY = (NOTE, "", "Local only", Listing.LIST)
+    DETACHED = (SAME, "skipped", "Detached, skipped", Listing.LIST)
+    PROTECTED = (WARN, "protected", "Protected, gone", Listing.LIST)
+    GONE = (WARN, "gone", "Upstream gone", Listing.LIST)
+    MERGED_KEPT = (WARN, "kept", "Merged, kept", Listing.LIST)
+    BLOCKED = (FAIL, "blocked", "Blocked", Listing.ALL)
+
+    def __init__(self, tone: Tone, verb: str, label: str, listing: Listing) -> None:
+        self.tone = tone
+        self.verb = verb
+        self.label = label
+        self.listing = listing
+
+
+@dataclass(frozen=True)
+class Result:
+    branch: str
+    item: str  # how the summary names it, usually just the branch
 
 
 @dataclass
 class BranchSync:
     root: Path
     dry_run: bool
-    updated: list[str] = field(default_factory=list)
-    current: list[str] = field(default_factory=list)
-    local_only: list[str] = field(default_factory=list)
-    gone: list[str] = field(default_factory=list)
-    restored: list[str] = field(default_factory=list)
-    reset: list[str] = field(default_factory=list)
-    deleted: list[str] = field(default_factory=list)
-    deleted_tips: dict[str, str] = field(default_factory=dict)
-    merged_kept: list[str] = field(default_factory=list)
-    stashed: list[str] = field(default_factory=list)
-    blocked: list[str] = field(default_factory=list)
-    # Dry-run only: what a real run would do, by verb ("update", "delete", ...).
-    planned: dict[str, list[str]] = field(default_factory=dict)
+    report: Reporter = field(default_factory=Reporter)
+    results: dict[Outcome, list[Result]] = field(
+        default_factory=lambda: {outcome: [] for outcome in Outcome}
+    )
     total: int = 0
     trees: list[Worktree] = field(init=False)
 
     def __post_init__(self) -> None:
         self.trees = worktrees(self.root)
 
-    def block(self, branch: str, reason: str) -> None:
-        self.blocked.append(f"{branch}: {reason}")
-        event(FAIL, "blocked", branch, reason)
+    def record(self, outcome: Outcome, branch: str, detail: str = "", *, item: str = "") -> None:
+        """Count ``branch`` under ``outcome`` and print its live line, if it has one."""
+        self.results[outcome].append(Result(branch, item or branch))
+        if outcome.verb:
+            self.report.event(outcome.tone, outcome.verb, branch, detail)
 
-    def plan(self, verb: str, branch: str, detail: str) -> None:
-        self.planned.setdefault(verb, []).append(branch)
-        event(PLAN, f"would {verb}", branch, detail)
+    def names(self, outcome: Outcome) -> list[str]:
+        return [result.branch for result in self.results[outcome]]
+
+    def block(self, branch: str, reason: str) -> None:
+        self.record(Outcome.BLOCKED, branch, reason, item=f"{branch}: {reason}")
 
     def occupied(self) -> dict[str, Path]:
         result: dict[str, Path] = {}
@@ -134,7 +173,7 @@ class BranchSync:
             if branch:
                 result[branch] = path
             else:
-                event(SAME, "skipped", str(path), "detached HEAD; nothing to update")
+                self.record(Outcome.DETACHED, str(path), "detached HEAD; nothing to update")
         return result
 
     def pathspecs(self, path: Path) -> list[str]:
@@ -235,8 +274,7 @@ class BranchSync:
         # Usually a merged PR whose remote branch was deleted, or one closed
         # unmerged. Nothing is left to pull, so it is not a failure; keep it
         # for the user to review.
-        event(WARN, "kept", branch, f"{short(upstream)} is gone; not proven merged")
-        self.gone.append(branch)
+        self.record(Outcome.GONE, branch, f"{short(upstream)} deleted; not proven merged")
 
     def save_wip(self, branch: str, path: Path) -> str:
         if not self.dirty(path):
@@ -303,7 +341,7 @@ class BranchSync:
         ):
             self.block(branch, f"WIP restored in {path}, but recovery stash not dropped: {oid}")
             return False
-        self.restored.append(branch)
+        self.record(Outcome.RESTORED, branch)
         return True
 
     def sync_branch(self, branch: str, upstream: str, occupied: dict[str, Path]) -> None:
@@ -316,7 +354,7 @@ class BranchSync:
                 self.block(branch, f"operation in progress in {path}; left untouched")
                 return
         if self.includes(branch, upstream):
-            self.current.append(branch)
+            self.record(Outcome.CURRENT, branch)
             return
         # Replaying commits whose content the upstream already holds conflicts
         # for nothing: the usual cause is a parent branch squash-merged into main
@@ -325,12 +363,19 @@ class BranchSync:
         # no change. A branch merely behind fast-forwards through the rebase.
         local = f"refs/heads/{branch}"
         stale = not self.is_ancestor(local, upstream) and self.adds_nothing(local, upstream)
+        # Measured before anything moves; the same text serves the dry run.
+        drift = "" if stale else self.drift(branch, upstream)
         if self.dry_run:
             if stale:
-                self.plan("reset", branch, f"to {short(upstream)}; its changes are already there")
+                self.record(
+                    Outcome.WOULD_RESET, branch, f"to {short(upstream)}; its changes are there"
+                )
             else:
-                self.plan("update", branch, self.drift(branch, upstream))
+                self.record(Outcome.WOULD_UPDATE, branch, drift)
             return
+        # Messages name an existing worktree; a disposable checkout means nothing
+        # to the reader, and one kept after a failure is reported on its own.
+        where = f" in {path}" if path is not None else ""
 
         temporary: Path | None = None
         oid = ""
@@ -354,21 +399,16 @@ class BranchSync:
                     == 0
                 )
                 if not moved:
-                    self.block(branch, f"reset failed in {path}; original commits retained")
+                    self.block(branch, f"reset failed{where}; original commits retained")
                 restored = self.restore_wip(branch, path, oid)
                 if moved and restored:
                     if self.includes(branch, upstream):
-                        self.reset.append(branch)
-                        event(
-                            OK,
-                            "reset",
-                            branch,
-                            f"to {short(upstream)}; its changes were already there",
+                        self.record(
+                            Outcome.RESET, branch, f"to {short(upstream)}; its changes were there"
                         )
                     else:
                         self.block(branch, "verification failed: fetched upstream not included")
                 return
-            drift = self.drift(branch, upstream)
             # DELIBERATE DIVERGENCE: one fetched snapshot instead of pull's
             # per-branch fetch. Disable autostash/updateRefs so Git cannot
             # compete with our exact WIP recovery or move unrelated branches.
@@ -402,14 +442,11 @@ class BranchSync:
                     # fatal: applying WIP or continuing is no longer safe.
                     abort = run(["git", "rebase", "--abort"], cwd=path, check=False, capture=True)
                     if abort.returncode:
-                        event(
-                            FAIL,
-                            "stopped",
+                        self.block(
                             branch,
                             f"cannot abort the rebase in {path}; recovery stash: {oid or 'none'}",
                         )
                         raise SystemExit(1)
-                where = "" if temporary is not None else f" in {path}"
                 self.block(
                     branch,
                     f"rebase failed{where}{conflicts(rebase.stdout + rebase.stderr)};"
@@ -418,21 +455,19 @@ class BranchSync:
             restored = self.restore_wip(branch, path, oid)
             if rebased and restored:
                 if self.includes(branch, upstream):
-                    self.updated.append(branch)
-                    event(OK, "updated", branch, drift)
+                    self.record(Outcome.UPDATED, branch, drift)
                 else:
                     self.block(branch, "verification failed: fetched upstream not included")
         except (subprocess.CalledProcessError, OSError) as exc:
             self.block(
                 branch,
-                f"{failure(exc)}; inspect {path}; recovery stash: {oid or 'see git stash list'}",
+                f"{failure(exc)}{where}; recovery stash: {oid or 'see git stash list'}",
             )
         except KeyboardInterrupt:
-            event(
-                FAIL,
-                "interrupted",
+            self.block(
                 branch,
-                f"inspect {path} before resuming; recovery stash: {oid or 'see git stash list'}",
+                f"interrupted; inspect {path} before resuming;"
+                f" recovery stash: {oid or 'see git stash list'}",
             )
             raise
         finally:
@@ -589,12 +624,11 @@ class BranchSync:
         path = occupied.get(branch)
         tree = next((t for t in self.trees if path and Path(t.path) == path), None)
         if tree is not None and self.checked_out_here(tree):
-            event(WARN, "kept", branch, f"merged ({reason}) but checked out here")
-            self.merged_kept.append(f"{branch}: checked out here")
+            self.record(Outcome.MERGED_KEPT, branch, f"merged ({reason}) but checked out here")
             return
         if self.dry_run:
             where = f"; and its worktree {tree.path}" if tree is not None else ""
-            self.plan("delete", branch, f"merged ({reason}) at {tip}{where}")
+            self.record(Outcome.WOULD_DELETE, branch, f"merged ({reason}) at {tip}{where}")
             return
         if tree is not None:
             worktree = Path(tree.path)
@@ -617,8 +651,12 @@ class BranchSync:
                     self.block(branch, f"merged ({reason}) but {exc}")
                     return
                 if stash:
-                    event(NOTE, "stashed", branch, f"uncommitted work saved as stash {stash}")
-                    self.stashed.append(f"{branch}: {stash}")
+                    self.record(
+                        Outcome.STASHED,
+                        branch,
+                        f"uncommitted work saved as stash {stash}",
+                        item=f"{branch}: {stash}",
+                    )
             removed = run(
                 ["git", "worktree", "remove", "--force", tree.path],
                 cwd=self.root,
@@ -633,9 +671,12 @@ class BranchSync:
         ).returncode:
             self.block(branch, f"merged ({reason}) but branch deletion failed")
             return
-        self.deleted.append(branch)
-        self.deleted_tips[branch] = tip
-        event(OK, "deleted", branch, f"merged ({reason}); restore: git branch {branch} {tip}")
+        self.record(
+            Outcome.DELETED,
+            branch,
+            f"merged ({reason}); restore: git branch {branch} {tip}",
+            item=f"{branch} ({tip})",
+        )
 
     def clear_leftovers(self) -> None:
         """Remove disposable worktrees an interrupted earlier sync left behind.
@@ -654,9 +695,9 @@ class BranchSync:
         for tree in leftovers:
             path = Path(tree.path)
             if self.dry_run:
-                self.plan("clear", str(path), "leftover checkout from an interrupted sync")
+                self.record(Outcome.WOULD_CLEAR, str(path), "leftover from an interrupted sync")
                 continue
-            event(NOTE, "cleared", str(path), "leftover checkout from an interrupted sync")
+            self.record(Outcome.CLEARED, str(path), "leftover from an interrupted sync")
             if path.is_dir() and in_progress(path) and not abort_operation(path):
                 self.block(path.name, f"cannot abort the operation in leftover {path}")
                 continue
@@ -678,7 +719,7 @@ class BranchSync:
         occupied = self.occupied()
         branches = local_branches("upstream", cwd=self.root)
         self.total = len(branches)
-        with Progress(self.total) as progress:
+        with self.report.progress(self.total) as progress:
             for branch, upstream in branches:
                 progress.step(branch)
                 self.update_one(branch, upstream, occupied)
@@ -689,7 +730,7 @@ class BranchSync:
         if not upstream:
             # Counted, not printed: a branch that was never pushed is normal,
             # and a line per branch would bury the ones that changed.
-            self.local_only.append(branch)
+            self.record(Outcome.LOCAL_ONLY, branch)
             return
         try:
             gone = not self.has_ref(upstream)
@@ -697,7 +738,9 @@ class BranchSync:
                 self.drop_merged(branch, reason, occupied)
             elif gone:
                 if branch in PROTECTED_BRANCHES:
-                    event(WARN, "kept", branch, f"protected; {short(upstream)} is gone")
+                    self.record(
+                        Outcome.PROTECTED, branch, f"{short(upstream)} deleted; never pruned"
+                    )
                 else:
                     self.keep_gone(branch, upstream)
             else:
@@ -705,36 +748,21 @@ class BranchSync:
         except (subprocess.CalledProcessError, OSError) as exc:
             self.block(branch, f"preflight failed: {failure(exc)}")
 
-    def summary(self, tracked: list[str], elapsed: float) -> None:
-        """The closing table: what changed, then what was left, then what failed.
-
-        Up-to-date branches are only counted. Every other row names its
-        branches, capped so a repository with thousands still fits on a
-        screen; blocked branches are never capped, since each needs action.
-        """
-        plan = self.planned.get
+    def summary(self, elapsed: float) -> None:
+        """The closing table, one row per outcome in :class:`Outcome` order."""
         rows = [
-            Row(OK, "Updated", self.updated),
-            Row(OK, "Reset to upstream", self.reset),
-            Row(OK, "Deleted (merged)", [f"{b} ({self.deleted_tips[b]})" for b in self.deleted]),
-            Row(ADDED, "Tracked new", tracked),
-            Row(NOTE, "WIP restored", self.restored),
-            Row(NOTE, "Stashed (merged)", self.stashed),
-            Row(PLAN, "Would update", plan("update", [])),
-            Row(PLAN, "Would reset", plan("reset", [])),
-            Row(PLAN, "Would delete", plan("delete", [])),
-            Row(PLAN, "Would track", plan("track", [])),
-            Row(PLAN, "Would clear", plan("clear", [])),
-            Row(SAME, "Up to date", self.current, listed=False),
-            Row(NOTE, "Local only", self.local_only),
-            Row(WARN, "Upstream gone", self.gone),
-            Row(WARN, "Merged, kept", self.merged_kept),
-            Row(FAIL, "Blocked", self.blocked, limit=None, truncate=False),
+            Row(
+                outcome.tone,
+                outcome.label,
+                [r.item for r in self.results[outcome]],
+                outcome.listing,
+            )
+            for outcome in Outcome
         ]
         notes = []
-        if self.deleted:
+        if self.results[Outcome.DELETED]:
             notes.append("Restore a deleted branch with: git branch <name> <sha>")
-        if self.gone:
+        if self.results[Outcome.GONE]:
             notes.append("Upstream gone: review them; clean-stale-branches removes them once sure.")
         notes.append(
             "Nothing pushed. Your checkout, unmerged branches and local changes are preserved."

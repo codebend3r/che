@@ -33,9 +33,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from branchsync import BranchSync, failure
+from branchsync import BranchSync, Outcome, failure
 from gitutils import current_branch, fetch_remotes, for_each_ref, local_branches, skip_git_hooks
-from report import ADDED, Progress, event
 from utils import (
     add_bool_flag,
     build_parser,
@@ -54,11 +53,12 @@ from utils import (
 __version__ = "4.1.0"
 
 
-def track_new(sync: BranchSync, author: str, limit: int) -> list[str]:
-    tracked: list[str] = []
+def track_new(sync: BranchSync, author: str, limit: int) -> None:
     # A branch just deleted as merged may have been proven only through its
     # GitHub PR, which the check below skips, so it would be tracked right back.
-    local = {branch for (branch,) in local_branches(cwd=sync.root)} | set(sync.deleted)
+    local = {branch for (branch,) in local_branches(cwd=sync.root)} | set(
+        sync.names(Outcome.DELETED)
+    )
     refs = for_each_ref(
         "refs/remotes/origin/",
         "authoremail:trim",
@@ -72,14 +72,13 @@ def track_new(sync: BranchSync, author: str, limit: int) -> list[str]:
         for email, branch, symref in refs[:limit]
         if not (symref or branch == "HEAD" or branch in local or (author and email != author))
     ]
-    with Progress(len(candidates)) as progress:
+    with sync.report.progress(len(candidates)) as progress:
         for branch in candidates:
             progress.step(f"origin/{branch}")
-            track_one(sync, branch, tracked)
-    return tracked
+            track_one(sync, branch)
 
 
-def track_one(sync: BranchSync, branch: str, tracked: list[str]) -> None:
+def track_one(sync: BranchSync, branch: str) -> None:
     # DELIBERATE DIVERGENCE: only your own branches used to be tracked, and
     # merged ones came back after every prune. Every feature branch is
     # tracked now, except one already merged into a main or dev branch.
@@ -87,7 +86,7 @@ def track_one(sync: BranchSync, branch: str, tracked: list[str]) -> None:
     if sync.merged_reason(branch, f"refs/remotes/origin/{branch}", github=False):
         return
     if sync.dry_run:
-        sync.plan("track", branch, "new on origin")
+        sync.record(Outcome.WOULD_TRACK, branch, "new on origin")
         return
     if run(
         ["git", "branch", "--track", branch, f"refs/remotes/origin/{branch}"],
@@ -97,8 +96,7 @@ def track_one(sync: BranchSync, branch: str, tracked: list[str]) -> None:
     ).returncode:
         sync.block(branch, "could not create tracking branch")
     else:
-        tracked.append(branch)
-        event(ADDED, "tracked", branch, "new on origin")
+        sync.record(Outcome.TRACKED, branch, "new on origin")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -151,14 +149,12 @@ def main(argv: list[str] | None = None) -> int:
     sync = BranchSync(root, args.dry_run)
     sync.update()
     try:
-        tracked = track_new(sync, args.author, limit)
+        track_new(sync, args.author, limit)
     except (subprocess.CalledProcessError, OSError) as exc:
         sync.block("new origin branches", failure(exc))
-        tracked = []
-    sync.summary(tracked, time.monotonic() - started)
+    sync.summary(time.monotonic() - started)
     print()
-    if sync.blocked:
-        count = len(sync.blocked)
+    if count := len(sync.results[Outcome.BLOCKED]):
         warning(
             f"⚠️  Sync partially completed: {count} branch{'' if count == 1 else 'es'} blocked."
             " Every other branch was still attempted."

@@ -2,10 +2,10 @@
 
 Three pieces, each built so the output reads the same at any scale:
 
-* :func:`event` prints one aligned line per item that changed or needs
+* :meth:`Reporter.event` prints one aligned line per item that changed or needs
   attention: a status symbol, a fixed-width verb, the item, then dim detail.
   Items that are already fine print nothing; the summary counts them instead.
-* :class:`Progress` keeps one transient ``[n/total] item`` line on stderr while
+* :meth:`Reporter.progress` keeps one transient ``[n/total] item`` line on stderr while
   a terminal is attached, so a long run never looks hung, and erases it before
   any event prints. Piped or redirected, it writes nothing at all.
 * :func:`summary` closes the run with a table: one row per outcome with a
@@ -25,6 +25,7 @@ import os
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
+from enum import Enum
 from types import TracebackType
 from typing import TextIO
 
@@ -49,13 +50,26 @@ FAIL = Tone("✗", "red")
 # Wide enough for the longest verb in use ("would update", "would delete").
 VERB_WIDTH = 12
 
-# Rows list at most this many items before collapsing the rest into a count.
-DEFAULT_LIMIT = 10
+# A LIST row names at most this many items before collapsing the rest.
+LIST_LIMIT = 10
 
-_active: Progress | None = None
-# The first event opens with a blank line, setting the list apart from the
-# script's preamble without leaving a gap when nothing happens at all.
-_opened = False
+
+class Listing(Enum):
+    """How a summary row shows its items."""
+
+    COUNT = "count"  # the count alone: naming thousands of fine items says nothing
+    LIST = "list"  # up to LIST_LIMIT, each cut to the terminal width
+    ALL = "all"  # every item, in full: each one needs the reader's attention
+
+
+@dataclass(frozen=True)
+class Row:
+    """One outcome in the summary table."""
+
+    tone: Tone
+    label: str
+    items: Sequence[str]
+    listing: Listing = Listing.LIST
 
 
 def _is_terminal(stream: TextIO) -> bool:
@@ -67,40 +81,55 @@ def _is_terminal(stream: TextIO) -> bool:
         return False
 
 
-def event(tone: Tone, verb: str, item: str, detail: str = "") -> None:
-    """One status line: ``  ✓ updated      feature-x  3 new from origin/feature-x``."""
-    global _opened
-    if _active is not None:
-        _active.clear()
-    if not _opened:
-        print()
-        _opened = True
-    p = tui.palette()
-    color = getattr(p, tone.color)
-    line = f"  {color}{tone.symbol} {verb:<{VERB_WIDTH}}{p.reset}  {item}"
-    if detail:
-        line += f"  {p.grey}{detail}{p.reset}"
-    print(line, flush=True)
+class Reporter:
+    """The live half of a run's output: event lines and the progress line.
+
+    One per run. It remembers whether anything has been printed yet, so the
+    first event opens with a blank line that sets the list apart from the
+    script's preamble without leaving a gap when nothing happens at all, and
+    which progress line is showing, so an event can erase it first.
+    """
+
+    def __init__(self) -> None:
+        self.opened = False
+        self.active: Progress | None = None
+
+    def event(self, tone: Tone, verb: str, item: str, detail: str = "") -> None:
+        """One status line: ``  ✓ updated       feature-x  3 new commits``."""
+        if self.active is not None:
+            self.active.clear()
+        if not self.opened:
+            print()
+            self.opened = True
+        p = tui.palette()
+        color = getattr(p, tone.color)
+        line = f"  {color}{tone.symbol} {verb:<{VERB_WIDTH}}{p.reset}  {item}"
+        if detail:
+            line += f"  {p.grey}{detail}{p.reset}"
+        print(line, flush=True)
+
+    def progress(self, total: int, *, stream: TextIO | None = None) -> Progress:
+        return Progress(self, total, stream=stream or sys.stderr)
 
 
 class Progress:
     """A single ``[n/total] item`` line, redrawn in place, only on a terminal.
 
     It writes to stderr so stdout stays a clean record of what happened, and
-    :func:`event` erases it first, so the two never share a line. Used as a
-    context manager so the line is gone however the loop ends.
+    its reporter erases it before any event, so the two never share a line.
+    Used as a context manager so the line is gone however the loop ends.
     """
 
-    def __init__(self, total: int, *, stream: TextIO | None = None) -> None:
-        self.stream = stream or sys.stderr
+    def __init__(self, reporter: Reporter, total: int, *, stream: TextIO) -> None:
+        self.reporter = reporter
+        self.stream = stream
         self.total = total
         self.done = 0
         self.shown = False
-        self.enabled = total > 1 and _is_terminal(self.stream)
+        self.enabled = total > 1 and _is_terminal(stream)
 
     def __enter__(self) -> Progress:
-        global _active
-        _active = self
+        self.reporter.active = self
         return self
 
     def __exit__(
@@ -109,9 +138,8 @@ class Progress:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
-        global _active
         self.clear()
-        _active = None
+        self.reporter.active = None
 
     def step(self, item: str) -> None:
         """Count one more item and show it as the one in progress."""
@@ -132,24 +160,6 @@ class Progress:
             self.shown = False
 
 
-@dataclass(frozen=True)
-class Row:
-    """One outcome in the summary table.
-
-    ``listed=False`` shows only the count (an "up to date" row over thousands
-    of items says nothing useful by naming them). ``limit=None`` lists every
-    item, for rows that each need the reader's attention. ``truncate=False``
-    lets a long item wrap instead of being cut, for rows whose detail matters.
-    """
-
-    tone: Tone
-    label: str
-    items: Sequence[str]
-    listed: bool = True
-    limit: int | None = DEFAULT_LIMIT
-    truncate: bool = True
-
-
 def duration(seconds: float) -> str:
     """``0.4s``, ``20s``, ``3m 05s``, ``1h 02m``."""
     if seconds < 10:
@@ -162,6 +172,20 @@ def duration(seconds: float) -> str:
         return f"{minutes}m {secs:02d}s"
     hours, minutes = divmod(minutes, 60)
     return f"{hours}h {minutes:02d}m"
+
+
+def _lines(row: Row, width: int | None) -> list[str]:
+    """What a row shows beside its count, one entry per terminal line."""
+    if row.listing is Listing.COUNT:
+        return []
+    if row.listing is Listing.ALL:
+        return list(row.items)
+    visible = row.items[:LIST_LIMIT]
+    lines = [tui.truncate(item, width) if width else item for item in visible]
+    if hidden := len(row.items) - len(visible):
+        p = tui.palette()
+        lines.append(f"{p.grey}… and {hidden} more{p.reset}")
+    return lines
 
 
 def summary(
@@ -186,7 +210,8 @@ def summary(
     count_width = max((len(str(len(row.items))) for row in shown), default=0)
     # "  ✓ " + label + "  " + count + "   "
     indent = 4 + label_width + 2 + count_width + 3
-    room = tui.size()[0] - indent if sys.stdout.isatty() else 0
+    # Off a terminal nothing is cut: a log or a pipe has no width to fit.
+    width = tui.size()[0] - indent if sys.stdout.isatty() else None
 
     for row in shown:
         color = getattr(p, row.tone.color)
@@ -194,11 +219,7 @@ def summary(
             f"  {color}{row.tone.symbol}{p.reset} {row.label:<{label_width}}"
             f"  {p.bold}{len(row.items):>{count_width}}{p.reset}"
         )
-        items = list(row.items) if row.listed else []
-        visible = items if row.limit is None else items[: row.limit]
-        lines = [tui.truncate(item, room) if room and row.truncate else item for item in visible]
-        if hidden := len(items) - len(visible):
-            lines.append(f"{p.grey}… and {hidden} more{p.reset}")
+        lines = _lines(row, width)
         print(f"{lead}   {lines[0]}" if lines else lead)
         for line in lines[1:]:
             print(" " * indent + line)
