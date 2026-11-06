@@ -28,12 +28,14 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from branchsync import BranchSync
+from branchsync import BranchSync, failure
 from gitutils import current_branch, fetch_remotes, for_each_ref, local_branches, skip_git_hooks
+from report import ADDED, Progress, event
 from utils import (
     add_bool_flag,
     build_parser,
@@ -49,7 +51,7 @@ from utils import (
     warning,
 )
 
-__version__ = "4.0.1"
+__version__ = "4.1.0"
 
 
 def track_new(sync: BranchSync, author: str, limit: int) -> list[str]:
@@ -65,27 +67,38 @@ def track_new(sync: BranchSync, author: str, limit: int) -> list[str]:
         sort="-committerdate",
         cwd=sync.root,
     )
-    for email, branch, symref in refs[:limit]:
-        if symref or branch == "HEAD" or branch in local or (author and email != author):
-            continue
-        # DELIBERATE DIVERGENCE: only your own branches used to be tracked, and
-        # merged ones came back after every prune. Every feature branch is
-        # tracked now, except one already merged into a main or dev branch.
-        # No GitHub lookup here: one per remote branch would be too slow.
-        if sync.merged_reason(branch, f"refs/remotes/origin/{branch}", github=False):
-            continue
-        if sync.dry_run:
-            info(f"🌵 Would track: {branch}")
-            continue
-        if run(
-            ["git", "branch", "--track", branch, f"refs/remotes/origin/{branch}"],
-            cwd=sync.root,
-            check=False,
-        ).returncode:
-            sync.block(branch, "could not create tracking branch")
-        else:
-            tracked.append(branch)
+    candidates = [
+        branch
+        for email, branch, symref in refs[:limit]
+        if not (symref or branch == "HEAD" or branch in local or (author and email != author))
+    ]
+    with Progress(len(candidates)) as progress:
+        for branch in candidates:
+            progress.step(f"origin/{branch}")
+            track_one(sync, branch, tracked)
     return tracked
+
+
+def track_one(sync: BranchSync, branch: str, tracked: list[str]) -> None:
+    # DELIBERATE DIVERGENCE: only your own branches used to be tracked, and
+    # merged ones came back after every prune. Every feature branch is
+    # tracked now, except one already merged into a main or dev branch.
+    # No GitHub lookup here: one per remote branch would be too slow.
+    if sync.merged_reason(branch, f"refs/remotes/origin/{branch}", github=False):
+        return
+    if sync.dry_run:
+        sync.plan("track", branch, "new on origin")
+        return
+    if run(
+        ["git", "branch", "--track", branch, f"refs/remotes/origin/{branch}"],
+        cwd=sync.root,
+        check=False,
+        capture=True,
+    ).returncode:
+        sync.block(branch, "could not create tracking branch")
+    else:
+        tracked.append(branch)
+        event(ADDED, "tracked", branch, "new on origin")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -116,6 +129,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Recent origin refs to scan for new branches (default: 100)",
     )
     args = parser.parse_args(argv)
+    started = time.monotonic()
     limit = parse_count(args.limit, "--limit", minimum=1)
     require_binary("git")
     skip_git_hooks()
@@ -139,12 +153,15 @@ def main(argv: list[str] | None = None) -> int:
     try:
         tracked = track_new(sync, args.author, limit)
     except (subprocess.CalledProcessError, OSError) as exc:
-        sync.block("new origin branches", str(exc))
+        sync.block("new origin branches", failure(exc))
         tracked = []
-    sync.summary(tracked)
+    sync.summary(tracked, time.monotonic() - started)
+    print()
     if sync.blocked:
+        count = len(sync.blocked)
         warning(
-            "Sync partially completed; blocked branches need attention. Remaining independent branches were attempted."
+            f"⚠️  Sync partially completed: {count} branch{'' if count == 1 else 'es'} blocked."
+            " Every other branch was still attempted."
         )
         return 1
     log("🎉 Preview complete." if args.dry_run else "🎉 Sync complete.")

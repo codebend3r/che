@@ -55,6 +55,12 @@ The scripts were bash until August 2026. Nothing in `bin/` is shell any more.
   screen and raw mode with guaranteed teardown, key decoding, a flicker-free
   frame buffer, width-aware truncation (emoji are two columns), and readline
   prompts.
+- `bin/report.py`: status output for scripts that walk many items, readable
+  at one item or thousands. `event()` prints one aligned line per item that
+  changed or needs attention (unchanged items print nothing), `Progress` keeps
+  a transient `[n/total]` line on stderr only when a terminal is attached, and
+  `summary()` closes with a table of counts whose rows list their items, capped
+  with an "… and N more" line. `sync-all-branches` uses it.
 - `bin/art.py`: the block-letter wordmark, Che's face as 32x18 text,
   `banner()`, which lays them side by side (falling back to the wordmark alone
   on a narrow terminal), and `print_logo()`. The install and doctor screens,

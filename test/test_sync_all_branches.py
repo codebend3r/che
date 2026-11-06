@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -82,6 +83,34 @@ def assert_includes_origin(repo: Repo, branch: str) -> None:
     )
 
 
+_ROW = re.compile(r"^  \S (?P<label>\S.*?)\s{2,}(?P<count>\d+)(?:   (?P<item>.*))?$")
+
+
+def summary(stdout: str) -> dict[str, list[str]]:
+    """The closing table as ``{label: items}``; an unlisted row maps to ``[]``.
+
+    Every row's count must match the items it lists, unless they were
+    collapsed into "... and N more" or the row lists none at all.
+    """
+    table = re.split(r"\n(?:Summary|Preview)  ", stdout, maxsplit=1)[-1]
+    rows: dict[str, list[str]] = {}
+    counts: dict[str, int] = {}
+    label = ""
+    for line in table.splitlines():
+        if match := _ROW.match(line):
+            label = match["label"].rstrip()
+            counts[label] = int(match["count"])
+            rows[label] = [match["item"]] if match["item"] else []
+        elif label and line.startswith("    ") and line.strip():
+            rows[label].append(line.strip())
+        else:
+            label = ""
+    for name, items in rows.items():
+        if items and not items[-1].startswith("…"):
+            assert len(items) == counts[name], (name, items, counts[name])
+    return rows
+
+
 def worktree_paths(work: Path) -> list[str]:
     return [
         line
@@ -156,7 +185,7 @@ def test_locked_dirty_worktree_updates_and_restores_exact_wip(repo: Repo, run_sc
     assert (repo.wip / ".build" / "precious.txt").read_text() == "untracked build\n"
     assert git(repo.wip, "rev-parse", "refs/stash") == older
     assert "locked supacode owner" in git(repo.work, "worktree", "list", "--porcelain")
-    assert "WIP restored: 1 (wip)" in result.stdout
+    assert summary(result.stdout)["WIP restored"] == ["wip"]
 
 
 def test_ahead_only_dirty_worktree_needs_no_stash(repo: Repo, run_script):
@@ -214,7 +243,7 @@ def test_fallback_origin_for_untracked_branch_and_tag_collision(repo: Repo, run_
     result = run_script(SYNC, cwd=repo.work)
     assert result.returncode == 0, result.stdout + result.stderr
     assert_includes_origin(repo, "behind")
-    assert "Local only: 1 (local-only)" in result.stdout
+    assert summary(result.stdout)["Local only"] == ["local-only"]
 
 
 def test_gone_upstream_is_reported_and_kept(repo: Repo, run_script):
@@ -222,8 +251,9 @@ def test_gone_upstream_is_reported_and_kept(repo: Repo, run_script):
     before = git(repo.shipped, "rev-parse", "HEAD")
     result = run_script(SYNC, cwd=repo.work)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "Upstream gone: 1 (shipped)" in result.stdout
-    assert "Blocked: 0" in result.stdout
+    rows = summary(result.stdout)
+    assert rows["Upstream gone"] == ["shipped"]
+    assert "Blocked" not in rows
     assert git(repo.shipped, "rev-parse", "HEAD") == before
     assert "shipped" in local_branches(repo.work)
     assert_includes_origin(repo, "behind")
@@ -245,7 +275,7 @@ def test_merged_gone_branch_and_its_locked_worktree_are_pruned(repo: Repo, run_s
     git(repo.work, "worktree", "lock", "--reason", "supacode", str(repo.shipped))
     result = run_script(SYNC, cwd=repo.work)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "Deleted merged: shipped" in result.stdout
+    assert re.search(r"✓ deleted +shipped ", result.stdout)
     assert "shipped" not in local_branches(repo.work)
     assert not repo.shipped.exists()
     assert "behind" in local_branches(repo.work)
@@ -272,7 +302,7 @@ def test_merged_branch_whose_upstream_still_exists_is_pruned_and_not_retracked(
     git(repo.other, "push", "--quiet", "origin", "main")
     result = run_script(SYNC, cwd=repo.work)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "Deleted merged: shipped" in result.stdout
+    assert re.search(r"✓ deleted +shipped ", result.stdout)
     assert "shipped" not in local_branches(repo.work)
     assert not repo.shipped.exists()
     assert "refs/remotes/origin/shipped" in git(repo.work, "show-ref")
@@ -331,7 +361,7 @@ def test_a_leftover_sync_checkout_mid_rebase_is_cleared(repo: Repo, run_script, 
     )
     assert Path(git(leftover, "rev-parse", "--git-path", "rebase-merge")).exists()
     result = run_script(SYNC, cwd=repo.work)
-    assert "Clearing a leftover sync checkout" in result.stdout
+    assert re.search(r"• cleared +\S+che-sync-interrupted/checkout ", result.stdout)
     assert not leftover.exists()
     assert "operation in progress" not in result.stdout
     git(repo.work, "merge-base", "--is-ancestor", before, "wip")
@@ -366,7 +396,7 @@ def test_dry_run_reports_the_merged_prune_without_deleting(repo: Repo, run_scrip
     git(repo.work, "fetch", "--quiet", "--prune")
     result = run_script(SYNC, ["--dry-run"], cwd=repo.work)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "Would delete merged: shipped" in result.stdout
+    assert summary(result.stdout)["Would delete"] == ["shipped"]
     assert "shipped" in local_branches(repo.work)
     assert repo.shipped.is_dir()
 
@@ -397,7 +427,7 @@ def test_rebase_conflict_aborts_restores_wip_and_continues(repo: Repo, run_scrip
     assert git(repo.wip, "stash", "list") == ""
     assert "wip: rebase failed" in result.stdout
     git(repo.work, "merge-base", "--is-ancestor", "refs/remotes/origin/behind", "z-after-conflict")
-    assert "Updated: z-after-conflict" in result.stdout
+    assert "z-after-conflict" in summary(result.stdout)["Updated"]
     assert "mine" in local_branches(repo.work)
     assert_includes_origin(repo, "behind")
 
@@ -573,8 +603,9 @@ def test_squash_merged_parent_is_deleted_and_stale_child_reset(repo: Repo, run_s
     assert result.returncode == 0, result.stdout + result.stderr
     assert "parent" not in local_branches(repo.work)
     assert git(repo.work, "rev-parse", "child") == git(repo.work, "rev-parse", "origin/child")
-    assert "Reset to upstream: 1 (child)" in result.stdout
-    assert "Deleted (merged): 1 (parent)" in result.stdout
+    rows = summary(result.stdout)
+    assert rows["Reset to upstream"] == ["child"]
+    assert [item.split()[0] for item in rows["Deleted (merged)"]] == ["parent"]
 
 
 def test_stale_child_in_worktree_resets_in_place_and_keeps_wip(
@@ -613,8 +644,10 @@ def test_dry_run_previews_reset_and_delete_without_changing_refs(repo: Repo, run
     result = run_script(SYNC, ["--dry-run"], cwd=repo.work)
     assert result.returncode == 0, result.stdout + result.stderr
     assert git(repo.work, "show-ref") == before
-    assert "Would reset child to refs/remotes/origin/child" in result.stdout
-    assert "Would delete merged: parent" in result.stdout
+    rows = summary(result.stdout)
+    assert rows["Would reset"] == ["child"]
+    assert rows["Would delete"] == ["parent"]
+    assert re.search(r"○ would reset +child +to origin/child", result.stdout)
 
 
 def test_gone_merged_branch_in_a_clean_worktree_is_deleted_with_it(
@@ -627,4 +660,5 @@ def test_gone_merged_branch_in_a_clean_worktree_is_deleted_with_it(
     assert result.returncode == 0, result.stdout + result.stderr
     assert "parent" not in local_branches(repo.work)
     assert not parent.exists()
-    assert "Deleted (merged): 1 (parent)" in result.stdout
+    deleted = summary(result.stdout)["Deleted (merged)"]
+    assert [item.split()[0] for item in deleted] == ["parent"]
