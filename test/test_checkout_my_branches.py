@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from conftest import EMAIL, git, local_branches
+from conftest import EMAIL, git, local_branches, summary
 
 CHECKOUT = "git/checkout-my-branches.py"
 
@@ -37,7 +38,9 @@ def test_creates_your_remote_branches_without_switching_to_them(work: Path, run_
         "origin/feat/nested"
     )
     assert git(work, "symbolic-ref", "--short", "HEAD") == "main"
-    assert "👻  Skipped (not yours): 1" in result.stdout
+    rows = summary(result.stdout)
+    assert sorted(rows["Checked out"]) == ["feat/nested", "mine"]
+    assert re.search(r"^  = Not yours +1$", result.stdout, re.M)
 
 
 def test_a_dirty_tree_does_not_block(work: Path, run_script):
@@ -57,8 +60,9 @@ def test_an_existing_branch_is_reported_as_already_local(work: Path, run_script)
     result = run_script(CHECKOUT, cwd=work)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "⏭️  Already local: mine" in result.stdout
-    assert "🆕 Checking out: mine" not in result.stdout
+    rows = summary(result.stdout)
+    assert rows["Checked out"] == ["feat/nested"]
+    assert re.search(r"^  = Already local +2$", result.stdout, re.M)
 
 
 def test_a_local_branch_named_like_a_tag_counts_as_local(work: Path, run_script):
@@ -70,7 +74,8 @@ def test_a_local_branch_named_like_a_tag_counts_as_local(work: Path, run_script)
     result = run_script(CHECKOUT, cwd=work)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "⏭️  Already local: mine" in result.stdout
+    assert re.search(r"^  = Already local +2$", result.stdout, re.M)
+    assert "Checked out" in summary(result.stdout)
 
 
 def test_author_defaults_to_the_git_config_email(work: Path, run_script):

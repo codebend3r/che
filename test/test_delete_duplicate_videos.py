@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 
 import pytest
-from conftest import load_script
+from conftest import load_script, summary
 
 SCRIPT = "video/delete-duplicate-videos.py"
 dedupe = load_script(SCRIPT)
@@ -28,58 +28,65 @@ def sha256(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def never(path, reason):
+    raise AssertionError(f"unexpected skip of {path}: {reason}")
+
+
+def key(path, strategy, *, verbose=False, skip=never):
+    return dedupe.group_key(path, strategy, verbose=verbose, skip=skip)
+
+
 def test_episode_key_is_folder_and_episode_code(episode):
-    assert dedupe.group_key(episode, "episode", verbose=False) == f"{episode.parent}{RS}S01E02"
+    assert key(episode, "episode") == f"{episode.parent}{RS}S01E02"
 
 
 def test_episode_key_skips_names_without_a_code(tmp_path):
     path = tmp_path / "Movie.mkv"
     path.touch()
 
-    assert dedupe.group_key(path, "episode", verbose=False) is None
+    assert key(path, "episode") is None
 
 
 def test_filename_key_is_folder_and_name(episode):
-    assert dedupe.group_key(episode, "filename", verbose=False) == (
-        f"{episode.parent}{RS}{episode.name}"
-    )
+    assert key(episode, "filename") == (f"{episode.parent}{RS}{episode.name}")
 
 
 def test_size_key_is_folder_and_size(episode):
-    assert dedupe.group_key(episode, "size", verbose=False) == f"{episode.parent}{RS}10"
+    assert key(episode, "size") == f"{episode.parent}{RS}10"
 
 
-def test_size_key_skips_an_unreadable_file(tmp_path, capsys):
+def test_size_key_skips_an_unreadable_file(tmp_path):
     missing = tmp_path / "gone.mkv"
+    skipped = []
 
-    assert dedupe.group_key(missing, "size", verbose=False) is None
-    assert f"SKIP: unreadable size: {missing}" in capsys.readouterr().out
+    assert key(missing, "size", skip=lambda *args: skipped.append(args)) is None
+    assert skipped == [(missing, "unreadable size")]
 
 
 def test_hash_key_is_the_digest_alone(episode, capsys):
-    assert dedupe.group_key(episode, "hash", verbose=True) == sha256(episode)
+    assert key(episode, "hash", verbose=True) == sha256(episode)
     assert f"HASH: {episode}" in capsys.readouterr().out
 
 
 def test_all_key_joins_every_field(episode):
-    assert dedupe.group_key(episode, "all", verbose=False) == RS.join(
+    assert key(episode, "all") == RS.join(
         (str(episode.parent), episode.name, "10", sha256(episode))
     )
 
 
 def test_all_key_skips_on_size_before_hashing(tmp_path, capsys):
     missing = tmp_path / "gone.mkv"
+    skipped = []
 
-    assert dedupe.group_key(missing, "all", verbose=True) is None
-    out = capsys.readouterr().out
-    assert "SKIP: unreadable size" in out
-    assert "HASH:" not in out
+    assert key(missing, "all", verbose=True, skip=lambda *args: skipped.append(args)) is None
+    assert skipped == [(missing, "unreadable size")]
+    assert "HASH:" not in capsys.readouterr().out
 
 
 def test_an_unknown_key_field_is_an_error(episode):
     """A misspelled STRATEGY_FIELDS entry must not fall through to hashing."""
     with pytest.raises(ValueError, match="unknown key field: dgest"):
-        dedupe.key_field(episode, "dgest", verbose=False)
+        dedupe.key_field(episode, "dgest", verbose=False, skip=never)
 
 
 def test_every_strategy_has_fields():
@@ -97,6 +104,9 @@ def test_deletes_the_smaller_copy(tmp_path, run_script):
     assert result.returncode == 0, result.stdout
     assert keep.exists()
     assert not drop.exists()
+    rows = summary(result.stdout)
+    assert rows["Deleted"] == [drop.name]
+    assert "Kept (largest copy)" in rows
 
 
 def test_defaults_to_dry_run(tmp_path, run_script):
@@ -108,5 +118,5 @@ def test_defaults_to_dry_run(tmp_path, run_script):
     # not turn this into a real delete.
     result = run_script(SCRIPT, [f"--path={tmp_path}"], env={"DRY_RUN": ""})
 
-    assert "[DRY-RUN] ❌ Would delete:" in result.stdout
+    assert summary(result.stdout)["Would delete"] == [files[1].name]
     assert all(path.exists() for path in files)

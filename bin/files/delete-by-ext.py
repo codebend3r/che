@@ -20,28 +20,38 @@ Env:
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from report import FAIL, OK, PLAN, Listing, Outcome, Tally, duration, plural
 from utils import (
     add_bool_flag,
     build_parser,
+    dry_run_complete,
     env_bool,
     info,
     iter_files,
     log,
     normalize_extensions,
     note_settings,
-    remove_or_warn,
     run_cli,
     scan_root,
     warning,
 )
 
-__version__ = "2.2.0"
+__version__ = "3.0.0"
 
 DEFAULT_EXTENSIONS = ("m3u", "nfo", "sfv", "jpg", "png", "txt", "log", "cue", "srr")
+
+
+class Delete(Outcome):
+    """Everything deleting a matching file can conclude, in summary order."""
+
+    DELETED = (OK, "deleted", "Deleted")
+    WOULD_DELETE = (PLAN, "would delete", "Would delete")
+    FAILED = (FAIL, "failed", "Failed", Listing.ALL)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -66,6 +76,7 @@ def main(argv: list[str] | None = None) -> int:
 
     info(f"Running command in {Path.cwd()}")
     args = parser.parse_args(argv)
+    started = time.monotonic()
 
     extensions = normalize_extensions(args.ext)
 
@@ -82,22 +93,40 @@ def main(argv: list[str] | None = None) -> int:
 
     root = scan_root(args.path)
 
-    failures = 0
+    tally = Tally(Delete)
 
     # macOS ._ sidecars are NOT skipped: the shell version deleted them when
     # they matched, and leaving them orphaned after their parent file is gone
     # is worse than deleting them.
+    # No progress line: the walk streams, so there is no total to count against.
     for path in iter_files(root, extensions=extensions, skip_macos_metadata=False):
         if args.dry_run:
-            info(f"[DRY RUN] Would delete: {path}")
+            tally.record(Delete.WOULD_DELETE, str(path))
             continue
+        try:
+            path.unlink()
+        except OSError as exc:
+            reason = exc.strerror or str(exc)
+            tally.record(Delete.FAILED, str(path), reason, item=f"{path}: {reason}")
+            continue
+        tally.record(Delete.DELETED, str(path))
 
-        log(f"Deleting: {path}")
-        if not remove_or_warn(path):
-            failures += 1
-
-    log("Completed.")
-    return 1 if failures else 0
+    matched = tally.count(*Delete)
+    tally.summary(
+        "Preview" if args.dry_run else "Summary",
+        facts=[plural(matched, "matching file"), duration(time.monotonic() - started)],
+    )
+    print()
+    if count := tally.count(Delete.FAILED):
+        warning(
+            f"⚠️  {plural(count, 'file')} could not be deleted. Every other file was still attempted."
+        )
+        return 1
+    if args.dry_run:
+        dry_run_complete("deleted")
+    else:
+        log("🎉 Deletion complete.")
+    return 0
 
 
 if __name__ == "__main__":

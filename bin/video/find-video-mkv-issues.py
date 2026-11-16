@@ -20,30 +20,27 @@ needed now.
 from __future__ import annotations
 
 import sys
-from collections import Counter
-from collections.abc import Callable
+import time
 from pathlib import Path
 from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from media import probe_media
+from report import FAIL, NOTE, SAME, WARN, Listing, Outcome, Tally, duration, plural
 from utils import (
     add_bool_flag,
     build_parser,
     format_bytes,
     info,
     iter_files,
-    note,
     note_settings,
     require_binary,
     run_cli,
     scan_root,
-    success,
-    warning,
 )
 
-__version__ = "2.1.1"
+__version__ = "3.0.0"
 
 # (score penalty, note). An empty note means "penalise silently", matching the
 # shell version, which docked a point for ac3/eac3 without explaining why.
@@ -77,19 +74,32 @@ SUBTITLE_PENALTIES: dict[str, tuple[int, str]] = {
 }
 
 
+class Rating(Outcome):
+    """Everything a scan can conclude about a file, in summary order."""
+
+    # Excellent files need nothing doing, so they are counted silently.
+    EXCELLENT = (SAME, "", "Excellent", Listing.COUNT)
+    GOOD = (NOTE, "good", "Good")
+    POOR = (WARN, "poor", "Poor")
+    BAD = (FAIL, "bad", "Bad", Listing.ALL)
+    # DELIBERATE DIVERGENCE: an unreadable file used to be counted as Bad. It
+    # has its own row now, since "could not be probed" and "probed and scored
+    # 0-3" call for different fixes.
+    UNREADABLE = (FAIL, "unreadable", "Unreadable", Listing.ALL)
+
+
 class Tier(NamedTuple):
     floor: int  # the lowest score in the tier
     label: str
-    logger: Callable[[str], None]
+    outcome: Rating
 
 
-# Best first: a score lands in the first tier it reaches. The labels double as
-# the summary rows, in this order.
+# Best first: a score lands in the first tier it reaches.
 TIERS: tuple[Tier, ...] = (
-    Tier(9, "Excellent", success),
-    Tier(7, "Good", info),
-    Tier(4, "Poor", note),
-    Tier(0, "Bad", warning),
+    Tier(9, "Excellent", Rating.EXCELLENT),
+    Tier(7, "Good", Rating.GOOD),
+    Tier(4, "Poor", Rating.POOR),
+    Tier(0, "Bad", Rating.BAD),
 )
 
 
@@ -160,65 +170,55 @@ def main(argv: list[str] | None = None) -> int:
     root = scan_root(args.path)
 
     note_settings(("Scanning", args.path), ("Recursive", args.recursive))
-
-    total = 0
-    counts: Counter[str] = Counter()
+    started = time.monotonic()
 
     # macOS ._ sidecars are skipped: they are never real media, and ffprobing
     # each one would waste a subprocess per file on a NAS scan. The shell
-    # version probed them, failed, and counted each one as Bad - so Total and
-    # Bad both read lower here on a library that has them.
-    for path in iter_files(root, extensions=["mkv"], recursive=args.recursive):
-        total += 1
+    # version probed them, failed, and counted each one as Bad - so the file
+    # count and Bad both read lower here on a library that has them.
+    files = list(iter_files(root, extensions=["mkv"], recursive=args.recursive))
+    tally = Tally(Rating)
+    with tally.progress(len(files)) as progress:
+        for path in files:
+            progress.step(str(path))
+            rate_file(tally, path)
 
-        note("Checking:")
-        print(f"  {path}", flush=True)
-
-        probe = probe_media(path)
-        if probe is None:
-            warning("  Corrupt or unreadable file")
-            print(flush=True)
-            counts["Bad"] += 1
-            continue
-
-        video_codec = probe.codec("video") or "unknown"
-        audio_codec = probe.codec("audio") or "unknown"
-        subtitle_codec = probe.codec("subtitle") or "none"
-        width = probe.width()
-        bitrate = probe.bit_rate()
-
-        try:
-            filesize = path.stat().st_size
-        except OSError:
-            filesize = 0
-
-        score, notes = rate_video(
-            video_codec, audio_codec, subtitle_codec, width or 0, bitrate or 0
-        )
-
-        print(f"  Size      : {format_bytes(filesize)}", flush=True)
-        print(f"  Video     : {video_codec}", flush=True)
-        print(f"  Audio     : {audio_codec}", flush=True)
-        print(f"  Subtitles : {subtitle_codec}", flush=True)
-        if width is not None:
-            print(f"  Resolution: {width}px", flush=True)
-        if bitrate is not None:
-            print(f"  Bitrate   : {bitrate // 1_000_000} Mbps", flush=True)
-
-        rated = tier(score)
-        rated.logger(f"  Plex Score: {score}/10")
-        counts[rated.label] += 1
-
-        print(f"  Notes     : {notes}", flush=True)
-        print(flush=True)
-
-    note("----------------------------------------------------")
-    success("Scan complete")
-    print(flush=True)
-    print(f"Total Files : {total}", flush=True)
-    for row in TIERS:
-        print(f"{row.label:<12}: {counts[row.label]}", flush=True)
+    tally.summary(
+        "Summary",
+        facts=[plural(len(files), "file"), duration(time.monotonic() - started)],
+    )
     return 0
+
+
+def rate_file(tally: Tally[Rating], path: Path) -> None:
+    """Probe and score one file, recording it under its tier."""
+    name = str(path)
+    probe = probe_media(path)
+    if probe is None:
+        reason = "corrupt or unreadable file"
+        tally.record(Rating.UNREADABLE, name, reason, item=f"{name}: {reason}")
+        return
+
+    video_codec = probe.codec("video") or "unknown"
+    audio_codec = probe.codec("audio") or "unknown"
+    subtitle_codec = probe.codec("subtitle") or "none"
+    width = probe.width()
+    bitrate = probe.bit_rate()
+
+    try:
+        filesize = path.stat().st_size
+    except OSError:
+        filesize = 0
+
+    score, notes = rate_video(video_codec, audio_codec, subtitle_codec, width or 0, bitrate or 0)
+
+    facts = [f"{score}/10", format_bytes(filesize), f"{video_codec}/{audio_codec}/{subtitle_codec}"]
+    if width is not None:
+        facts.append(f"{width}px")
+    if bitrate is not None:
+        facts.append(f"{bitrate // 1_000_000} Mbps")
+    facts.append(notes)
+    tally.record(tier(score).outcome, name, " · ".join(facts), item=f"{name}: {score}/10")
 
 
 if __name__ == "__main__":

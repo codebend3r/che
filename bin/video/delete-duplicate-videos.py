@@ -19,7 +19,7 @@ Strategies (--strategy):
 
   episode   Same directory + identical SxxEyy token (tv-style names). Files
             without such a token are ignored.
-  filename  Same directory + identical basename - exact filename duplicates.
+  filename  Same directory + identical basename: exact filename duplicates.
   size      Same directory + identical byte size. Fast, but CAN mis-group
             different videos that coincidentally match size.
   hash      Globally grouped by SHA-256 (byte-identical copies anywhere under
@@ -38,7 +38,7 @@ Security:
 Options:
   --path=PATH      Required directory to scan
   --strategy=MODE  episode | filename | size | hash | all
-  --dry-run        Show removals only - no deletes (same as env DRY_RUN=true)
+  --dry-run        Show removals only, no deletes (same as env DRY_RUN=true)
   --dry-run=BOOL   Explicit true|false (aliases: yes|no, 1|0)
   --verbose        Extra per-file logging
   --help, -h       This help
@@ -58,14 +58,18 @@ import hashlib
 import os
 import re
 import sys
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from media import LIBRARY_EXTENSIONS
+from report import FAIL, OK, PLAN, SAME, WARN, Listing, Outcome, Tally, duration, plural
 from utils import (
     add_bool_flag,
     build_parser,
+    dry_run_complete,
     env_bool,
     format_bytes,
     info,
@@ -73,13 +77,26 @@ from utils import (
     log,
     note,
     note_settings,
-    remove_or_warn,
     run_cli,
     scan_root,
     warning,
 )
 
-__version__ = "2.2.2"
+__version__ = "3.0.0"
+
+
+class Dupe(Outcome):
+    """Everything a dedupe run can conclude about a file, in summary order."""
+
+    DELETED = (OK, "deleted", "Deleted")
+    WOULD_DELETE = (PLAN, "would delete", "Would delete")
+    KEPT = (SAME, "", "Kept (largest copy)", Listing.COUNT)
+    SKIPPED = (WARN, "skipped", "Skipped")
+    FAILED = (FAIL, "failed", "Failed", Listing.ALL)
+
+
+# Called with a file and the reason it is left out of every group.
+Skip = Callable[[Path, str], None]
 
 # Glue multiple logical fields into one key without a separator that could
 # plausibly appear in a directory name.
@@ -139,8 +156,11 @@ def sha256_hex(path: Path) -> str:
     return digest.hexdigest()
 
 
-def key_field(path: Path, field: str, *, verbose: bool) -> str | None:
-    """One field of a file's group key, or None when the file must be skipped."""
+def key_field(path: Path, field: str, *, verbose: bool, skip: Skip) -> str | None:
+    """One field of a file's group key, or None when the file must be skipped.
+
+    A file that cannot be read is reported through ``skip`` with the reason.
+    """
     match field:
         case "dir":
             return str(path.parent)
@@ -154,7 +174,7 @@ def key_field(path: Path, field: str, *, verbose: bool) -> str | None:
             try:
                 return str(path.stat().st_size)
             except OSError:
-                warning(f"SKIP: unreadable size: {path}")
+                skip(path, "unreadable size")
                 return None
         case "digest":
             if verbose:
@@ -162,17 +182,17 @@ def key_field(path: Path, field: str, *, verbose: bool) -> str | None:
             try:
                 return sha256_hex(path)
             except OSError:
-                warning(f"SKIP: could not hash: {path}")
+                skip(path, "could not hash")
                 return None
         case _:
             raise ValueError(f"unknown key field: {field}")
 
 
-def group_key(path: Path, strategy: str, *, verbose: bool) -> str | None:
+def group_key(path: Path, strategy: str, *, verbose: bool, skip: Skip) -> str | None:
     """The duplicate-group key for one file, or None to skip it."""
     fields: list[str] = []
     for field in STRATEGY_FIELDS[strategy]:
-        value = key_field(path, field, verbose=verbose)
+        value = key_field(path, field, verbose=verbose, skip=skip)
         if value is None:
             return None
         fields.append(value)
@@ -202,7 +222,7 @@ def main(argv: list[str] | None = None) -> int:
         parser,
         "--dry-run",
         default=env_bool("DRY_RUN", True),
-        help="Show removals only - no deletes",
+        help="Show removals only, no deletes",
     )
     add_bool_flag(parser, "--verbose", help="Extra per-file logging")
 
@@ -235,12 +255,22 @@ def main(argv: list[str] | None = None) -> int:
     if strategy == "size":
         info("NOTICE: grouping by SIZE can flag unrelated videos with identical byte lengths.")
     elif strategy in ("hash", "all"):
-        info("NOTICE: hashing reads every scanned file entirely — slow on huge libraries.")
+        info("NOTICE: hashing reads every scanned file entirely; slow on huge libraries.")
 
     if args.dry_run:
-        info("Running in dry-run mode — no files will be deleted.")
+        info("Running in dry-run mode: no files will be deleted.")
     if args.verbose:
-        info("Verbose mode — per-file tracing enabled.")
+        info("Verbose mode: per-file tracing enabled.")
+
+    started = time.monotonic()
+    tally = Tally(Dupe)
+
+    def shown(path: Path) -> str:
+        """A file as its line names it: relative to the root, which is printed above."""
+        return str(path.relative_to(root))
+
+    def skip(path: Path, reason: str) -> None:
+        tally.record(Dupe.SKIPPED, shown(path), reason, item=f"{shown(path)}: {reason}")
 
     scanned = 0
     groups: dict[str, list[Path]] = {}
@@ -249,65 +279,73 @@ def main(argv: list[str] | None = None) -> int:
         scanned += 1
         if args.verbose:
             info(f"SCANNING: {path}")
-        key = group_key(path, strategy, verbose=args.verbose)
+        key = group_key(path, strategy, verbose=args.verbose, skip=skip)
         if key is not None:
             groups.setdefault(key, []).append(path)
 
-    deleted = 0
     duplicate_groups = 0
     reclaimed = 0
+    keys = sorted(key for key, members in groups.items() if len(members) > 1)
 
-    for key in sorted(groups):
-        members = groups[key]
-        if len(members) <= 1:
-            continue
+    with tally.progress(len(keys)) as progress:
+        for key in keys:
+            sized: list[tuple[int, Path]] = []
+            for path in groups[key]:
+                if not path.is_file():
+                    continue  # a symlink to a missing target, or deleted mid-run
+                try:
+                    sized.append((path.stat().st_size, path))
+                except OSError:
+                    skip(path, "unreadable size")
 
-        sized: list[tuple[int, Path]] = []
-        for path in members:
-            if not path.is_file():
-                continue  # a symlink to a missing target, or deleted mid-run
-            try:
-                sized.append((path.stat().st_size, path))
-            except OSError:
-                warning(f"SKIP: unreadable size: {path}")
+            if len(sized) <= 1:
+                progress.step(key)
+                continue
 
-        if len(sized) <= 1:
-            continue
+            # Largest first; same-size ties break alphabetically by path, so the
+            # keeper is deterministic across runs and machines.
+            sized.sort(key=lambda item: (-item[0], str(item[1])))
+            duplicate_groups += 1
 
-        # Largest first; same-size ties break alphabetically by path, so the
-        # keeper is deterministic across runs and machines.
-        sized.sort(key=lambda item: (-item[0], str(item[1])))
-        duplicate_groups += 1
+            keep_size, keep_path = sized[0]
+            progress.step(shown(keep_path))
+            tally.record(Dupe.KEPT, shown(keep_path))
+            if args.verbose:
+                info(f"KEEPING: {keep_path} ({format_bytes(keep_size)})")
 
-        keep_size, keep_path = sized[0]
-        if args.verbose:
-            info(f"KEEPING: {keep_path} ({format_bytes(keep_size)})")
-
-        for size, path in sized[1:]:
-            human = format_bytes(size)
-            if args.dry_run:
-                deleted += 1
+            for size, path in sized[1:]:
+                detail = f"{format_bytes(size)}; keeps {keep_path.name}"
+                if args.dry_run:
+                    reclaimed += size
+                    tally.record(Dupe.WOULD_DELETE, shown(path), detail)
+                    continue
+                try:
+                    path.unlink()
+                except OSError as exc:
+                    tally.record(Dupe.FAILED, shown(path), str(exc), item=f"{shown(path)}: {exc}")
+                    continue
                 reclaimed += size
-                warning(f"[DRY-RUN] ❌ Would delete: {path} ({human})")
-                continue
+                tally.record(Dupe.DELETED, shown(path), detail)
 
-            warning(f"❌ Deleting: {path} ({human})")
-            if not remove_or_warn(path):
-                continue
-            deleted += 1
-            reclaimed += size
-
-    if args.dry_run:
-        log(f"Total files that would be deleted: {deleted}")
-    else:
-        log(f"Total files deleted: {deleted}")
-
-    log(
-        f"Duplicate groups merged ({strategy}): {duplicate_groups} "
-        f"(~{format_bytes(reclaimed)} freed)"
+    freed = f"~{format_bytes(reclaimed)} {'to free' if args.dry_run else 'freed'}"
+    tally.summary(
+        "Preview" if args.dry_run else "Summary",
+        facts=[
+            plural(scanned, "file"),
+            plural(duplicate_groups, "duplicate group"),
+            freed,
+            duration(time.monotonic() - started),
+        ],
+        notes=[f"Strategy: {strategy}. The largest copy in each group is kept."],
     )
-    log(f"Total files scanned: {scanned}")
-    log("Scanning complete.")
+    print()
+    if count := tally.count(Dupe.FAILED):
+        # Exit status unchanged: a failed delete was only ever a warning.
+        warning(f"⚠️  {plural(count, 'file')} could not be deleted.")
+    if args.dry_run:
+        dry_run_complete("deleted")
+    else:
+        log("Scanning complete.")
     return 0
 
 

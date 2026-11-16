@@ -17,33 +17,42 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from report import ADDED, FAIL, OK, PLAN, Listing, Outcome, Tally, duration, plural
 from utils import (
     add_bool_flag,
     build_parser,
     dry_run_complete,
-    footer_rule,
+    format_bytes,
     heading,
-    info,
     log,
     note,
     run_cli,
     scan_root,
-    success,
     warning,
 )
 
-__version__ = "3.0.0"
+__version__ = "4.0.0"
+
+
+class Compress(Outcome):
+    """Everything compressing a folder can conclude, in summary order."""
+
+    ZIPPED = (OK, "zipped", "Zipped")
+    WOULD_ZIP = (PLAN, "would zip", "Would zip")
+    FAILED = (FAIL, "failed", "Failed", Listing.ALL)
 
 
 def _walk_entries(folder: Path) -> list[tuple[Path, str]]:
     """Every entry to store, as ``(source_path, archive_name)`` pairs.
 
-    Symlinks are FOLLOWED, matching ``zip -r`` - which, contrary to a common
+    Symlinks are FOLLOWED, matching ``zip -r``, which, contrary to a common
     assumption, dereferences by default and only stores links as links with
     ``-y``. Skipping them would silently drop file content from the archive.
 
@@ -77,11 +86,13 @@ def _walk_entries(folder: Path) -> list[tuple[Path, str]]:
     return entries
 
 
-def zip_folder(folder: Path, archive: Path, *, verbose: bool) -> None:
+def zip_folder(
+    folder: Path, archive: Path, *, on_file: Callable[[str], None] | None = None
+) -> None:
     """Write ``folder`` into ``archive`` with deflate level 9.
 
     Paths are stored relative to the folder's *parent*, so the archive expands
-    to ``<folder>/...``, and the top-level directory entry is written first -
+    to ``<folder>/...``, and the top-level directory entry is written first;
     without it an empty folder would archive to nothing at all, and its mode
     bits would be lost on restore.
 
@@ -91,7 +102,9 @@ def zip_folder(folder: Path, archive: Path, *, verbose: bool) -> None:
     recompresses unchanged files rather than copying them across.
 
     Filenames are stored with the UTF-8 flag bit set, which ``zip`` does not
-    do - non-ASCII names come back correctly instead of as mojibake.
+    do, so non-ASCII names come back correctly instead of as mojibake.
+
+    ``on_file`` is called with each regular file's archive name (``--verbose``).
     """
     temp_archive = archive.with_name(archive.name + ".partial")
 
@@ -100,8 +113,8 @@ def zip_folder(folder: Path, archive: Path, *, verbose: bool) -> None:
             temp_archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9
         ) as zf:
             for source, arcname in _walk_entries(folder):
-                if verbose and source.is_file():
-                    info(f"    + {arcname}")
+                if on_file and source.is_file():
+                    on_file(arcname)
                 zf.write(source, arcname)
         temp_archive.replace(archive)
     except BaseException:
@@ -122,6 +135,7 @@ def main(argv: list[str] | None = None) -> int:
     add_bool_flag(parser, "--dry-run", help="Print what would be zipped, change nothing")
     add_bool_flag(parser, "--verbose", help="Show per-file progress")
     args = parser.parse_args(argv)
+    started = time.monotonic()
 
     if not args.path:
         warning("❌ --path is required")
@@ -133,9 +147,6 @@ def main(argv: list[str] | None = None) -> int:
     heading("📦  compress-folders", dry_run=args.dry_run)
     note(f"Parent: {root}")
 
-    compressed = 0
-    skipped = 0
-
     # Matches the shell version's `for dir in "$ROOT_DIR"/*/` glob: dotted
     # directories are skipped (no `dotglob`), and a symlink to a directory IS
     # included, because `*/` matches it.
@@ -143,40 +154,47 @@ def main(argv: list[str] | None = None) -> int:
         path for path in root.iterdir() if path.is_dir() and not path.name.startswith(".")
     )
 
-    for folder in folders:
-        archive = folder.with_name(folder.name + ".zip")
+    tally = Tally(Compress)
 
-        if args.dry_run:
-            info(f"  🪄 Would zip: {folder.name} → {folder.name}.zip")
-            compressed += 1
-            continue
+    def stored(arcname: str) -> None:
+        tally.report.event(ADDED, "stored", arcname)
 
-        info(f"📦 Compressing '{folder.name}'...")
-        try:
-            zip_folder(folder, archive, verbose=args.verbose)
-        except (OSError, ValueError) as exc:
-            # ValueError covers a file whose size changes mid-write and the
-            # UnicodeEncodeError raised for surrogate bytes in names off an
-            # SMB mount. The shell version isolated each folder in a subshell,
-            # so one bad folder never stopped the batch.
-            warning(f"  ❌ Failed: {archive} ({exc})")
-            skipped += 1
-            continue
-        success(f"  ✅ {folder.name}.zip")
-        compressed += 1
+    with tally.progress(len(folders)) as progress:
+        for folder in folders:
+            progress.step(folder.name)
+            archive = folder.with_name(folder.name + ".zip")
 
-    footer_rule()
-    if args.dry_run:
-        success(f"🌵 Would compress: {compressed} folder(s)")
-        dry_run_complete()
-        return 0
+            if args.dry_run:
+                tally.record(Compress.WOULD_ZIP, folder.name, f"→ {archive.name}")
+                continue
 
-    success(f"✅ Compressed: {compressed}")
-    if skipped:
-        warning(f"❌ Failed:     {skipped}")
+            try:
+                zip_folder(folder, archive, on_file=stored if args.verbose else None)
+            except (OSError, ValueError) as exc:
+                # ValueError covers a file whose size changes mid-write and the
+                # UnicodeEncodeError raised for surrogate bytes in names off an
+                # SMB mount. The shell version isolated each folder in a subshell,
+                # so one bad folder never stopped the batch.
+                tally.record(Compress.FAILED, folder.name, str(exc), item=f"{folder.name}: {exc}")
+                continue
+            tally.record(
+                Compress.ZIPPED,
+                folder.name,
+                f"→ {archive.name}, {format_bytes(archive.stat().st_size)}",
+            )
+
+    tally.summary(
+        "Preview" if args.dry_run else "Summary",
+        facts=[plural(len(folders), "folder"), duration(time.monotonic() - started)],
+    )
+    print()
+    if count := tally.count(Compress.FAILED):
+        warning(f"⚠️  {plural(count, 'folder')} failed. Every other folder was still attempted.")
         return 1
-
-    log("🎉 Compression complete.")
+    if args.dry_run:
+        dry_run_complete()
+    else:
+        log("🎉 Compression complete.")
     return 0
 
 

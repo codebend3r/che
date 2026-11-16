@@ -20,25 +20,27 @@ from __future__ import annotations
 import os
 import re
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from media import LIBRARY_EXTENSIONS
+from report import FAIL, OK, PLAN, SAME, WARN, Listing, Outcome, Tally, duration, plural
 from utils import (
     add_bool_flag,
     build_parser,
+    dry_run_complete,
     info,
     iter_files,
     log,
     note_settings,
     run_cli,
     scan_root,
-    warning,
 )
 
-__version__ = "3.0.0"
+__version__ = "4.0.0"
 
 # Every flavour of curly quote, backtick and acute accent people end up with,
 # normalised to a plain straight apostrophe.
@@ -178,29 +180,56 @@ class TitleCaser:
         return _lower_contractions(f"{self.segment(prefix)}{self.segment(title)}{ext}")
 
 
-def safe_rename(source: Path, target: Path, *, kind: str) -> bool:
-    """Rename ``source`` to ``target`` unless something is already there.
+class Rename(Outcome):
+    """Everything a rename run can conclude about a file or folder, in summary order."""
 
-    The shell version used bare ``mv``, which silently clobbers an existing
-    file and moves a folder *inside* an existing folder of the same name.
-    A case-only change (``abc`` -> ``Abc``) is still allowed, because on a
-    case-insensitive filesystem the target "exists" as the source itself.
+    RENAMED = (OK, "renamed", "Renamed")
+    WOULD_RENAME = (PLAN, "would rename", "Would rename")
+    CORRECT = (SAME, "", "Already correct", Listing.COUNT)
+    UNPARSED = (WARN, "unparsed", "Could not parse")
+    SKIPPED = (WARN, "skipped", "Skipped")
+    FAILED = (FAIL, "failed", "Failed", Listing.ALL)
+
+
+def apply(tally: Tally[Rename], root: Path, source: Path, new_name: str, *, dry_run: bool) -> None:
+    """Rename ``source`` to ``new_name`` (or preview it) and record how it went.
+
+    A folder is named with a trailing ``/`` so it reads apart from a file.
     """
+    shown = str(source.relative_to(root)) + ("/" if source.is_dir() else "")
+    if new_name == source.name:
+        tally.record(Rename.CORRECT, shown)
+        return
+    detail = f"to {new_name}"
+    if dry_run:
+        tally.record(Rename.WOULD_RENAME, shown, detail)
+        return
+
+    def refuse(outcome: Rename, reason: str) -> None:
+        tally.record(outcome, shown, reason, item=f"{shown}: {reason}")
+
+    target = source.with_name(new_name)
+    # The shell version used bare ``mv``, which silently clobbers an existing
+    # file and moves a folder *inside* an existing folder of the same name.
+    # A case-only change (``abc`` -> ``Abc``) is still allowed, because on a
+    # case-insensitive filesystem the target "exists" as the source itself.
     try:
         # Inside the try: the source can vanish between the walk and the
         # rename, and samefile() would then raise straight past this function.
         # The shell version's bare `mv` printed an error and carried on.
         if target.exists() and not source.samefile(target):
-            warning(f"⚠️ Skipping {kind} (target already exists): {target.name}")
-            return False
+            refuse(Rename.SKIPPED, f"{new_name} already exists")
+            return
         source.rename(target)
     except OSError as exc:
-        warning(f"⚠️ Could not rename {source.name}: {exc}")
-        return False
-    return True
+        refuse(Rename.FAILED, str(exc))
+        return
+    tally.record(Rename.RENAMED, shown, detail)
 
 
-def rename_folders(root: Path, caser: TitleCaser, *, recursive: bool, dry_run: bool) -> None:
+def rename_folders(
+    tally: Tally[Rename], root: Path, caser: TitleCaser, *, recursive: bool, dry_run: bool
+) -> None:
     """Rename folders deepest-first so a parent rename cannot break child paths."""
     directories: list[Path] = []
     for dirpath, dirnames, _ in os.walk(root, followlinks=False):
@@ -218,24 +247,13 @@ def rename_folders(root: Path, caser: TitleCaser, *, recursive: bool, dry_run: b
     directories.sort(key=lambda p: (-len(p.parts), p))
 
     for folder in directories:
-        if folder.name.startswith("._"):
-            continue
-
-        new_name = caser.folder_name(folder.name)
-        if new_name == folder.name:
-            warning(f"⚠️ Skipping folder (already correct format): {folder.name}")
-            continue
-
-        target = folder.with_name(new_name)
-        if dry_run:
-            log(f"📁 [DRY RUN] Would rename folder: {folder.name} ➡️ {new_name}")
-            continue
-
-        if safe_rename(folder, target, kind="folder"):
-            log(f"📁 Renaming folder: {folder.name} ➡️ {new_name}")
+        if not folder.name.startswith("._"):
+            apply(tally, root, folder, caser.folder_name(folder.name), dry_run=dry_run)
 
 
-def rename_files(root: Path, caser: TitleCaser, *, recursive: bool, dry_run: bool) -> None:
+def rename_files(
+    tally: Tally[Rename], root: Path, caser: TitleCaser, *, recursive: bool, dry_run: bool
+) -> None:
     """Rename the .mp4/.mkv files themselves."""
     # case_sensitive: this script's find used -name, not -iname, so a file
     # called "Movie.MKV" was never renamed.
@@ -244,20 +262,9 @@ def rename_files(root: Path, caser: TitleCaser, *, recursive: bool, dry_run: boo
     ):
         new_name = caser.file_name(path.name)
         if new_name is None:
-            warning(f"Could not parse filename: {path.name}")
+            tally.record(Rename.UNPARSED, str(path.relative_to(root)))
             continue
-
-        if new_name == path.name:
-            warning(f"⚠️ Skipping (already correct format): {path.name}")
-            continue
-
-        target = path.with_name(new_name)
-        if dry_run:
-            log(f"👓 [DRY RUN] Would rename: {path.name} ➡️ {new_name}")
-            continue
-
-        if safe_rename(path, target, kind="file"):
-            log(f"📝 Renaming: {path.name} ➡️ {new_name}")
+        apply(tally, root, path, new_name, dry_run=dry_run)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -309,9 +316,24 @@ def main(argv: list[str] | None = None) -> int:
     root = scan_root(args.path)
     caser = TitleCaser.build(ignore_words, capitalize_preps=args.capitalize_preps)
 
+    started = time.monotonic()
+    tally = Tally(Rename)
     if args.rename_folders:
-        rename_folders(root, caser, recursive=args.recursive, dry_run=args.dry_run)
-    rename_files(root, caser, recursive=args.recursive, dry_run=args.dry_run)
+        rename_folders(tally, root, caser, recursive=args.recursive, dry_run=args.dry_run)
+    rename_files(tally, root, caser, recursive=args.recursive, dry_run=args.dry_run)
+
+    total = sum(tally.count(outcome) for outcome in Rename)
+    tally.summary(
+        "Preview" if args.dry_run else "Summary",
+        facts=[plural(total, "name"), duration(time.monotonic() - started)],
+        notes=["A rename onto a name that already exists is skipped, never overwritten."],
+    )
+    print()
+    # Exit status unchanged: a skipped or failed rename was only ever a warning.
+    if args.dry_run:
+        dry_run_complete("renamed")
+    else:
+        log("🎉 Rename complete.")
     return 0
 
 

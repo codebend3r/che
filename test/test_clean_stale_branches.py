@@ -6,7 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from conftest import git, local_branches
+from conftest import git, local_branches, summary
 
 CLEAN = "git/clean-stale-branches.py"
 
@@ -29,6 +29,7 @@ def test_deletes_branches_whose_upstream_is_gone(work: Path, run_script):
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert local_branches(work) == ["live", "main"]
+    assert summary(result.stdout)["Deleted"] == ["also-gone", "gone"]
 
 
 def test_a_stale_current_branch_is_reported_with_the_checked_out_ones(work: Path, run_script):
@@ -38,8 +39,7 @@ def test_a_stale_current_branch_is_reported_with_the_checked_out_ones(work: Path
     result = run_script(CLEAN, cwd=work)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "1 stale branch(es) are checked out in a worktree" in result.stdout
-    assert "• 🌿 gone (in " in result.stdout
+    assert summary(result.stdout)["Stale, checked out"] == [f"gone: in {work}"]
     assert local_branches(work) == ["gone", "live", "main"]
 
 
@@ -71,5 +71,5 @@ def test_dry_run_deletes_nothing(work: Path, run_script):
     result = run_script(CLEAN, ["--dry-run"], cwd=work)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "2 stale branch(es) would be deleted" in result.stdout
+    assert summary(result.stdout)["Would delete"] == ["also-gone", "gone"]
     assert local_branches(work) == ["also-gone", "gone", "live", "main"]

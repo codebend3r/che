@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import pytest
-from conftest import git
+from conftest import git, summary
 
 PRUNE = "git/prune-worktrees.py"
 
@@ -62,7 +62,7 @@ def test_dry_run_is_the_default_and_changes_nothing(repo: Repo, run_script):
     result = run_script(PRUNE, cwd=repo.work)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "1 worktree(s) would be removed" in result.stdout
+    assert summary(result.stdout)["Would remove"] == [str(repo.linked)]
     assert repo.linked.is_dir()
     assert git(repo.work, "symbolic-ref", "--short", "HEAD") == "feature"
 
@@ -100,6 +100,10 @@ def test_a_dirty_locked_worktree_is_removed_and_its_work_stashed(
     assert result.returncode == 0, result.stdout + result.stderr
     assert not other.exists()
     assert not repo.linked.exists()
+    rows = summary(result.stdout)
+    assert rows["Removed"] == [str(other)]
+    [stashed] = rows["Removed, work stashed"]
+    assert stashed.startswith(f"{repo.linked}: ")
     assert "che prune-worktrees: linked" in git(repo.work, "stash", "list")
     assert git(repo.work, "show", "stash@{0}:README.md") == "edited"
     assert git(repo.work, "show", "stash@{0}^3:scratch.txt") == "unsaved"

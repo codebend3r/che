@@ -6,10 +6,11 @@ end to end against the real ffprobe, so it is skipped where that is missing.
 
 from __future__ import annotations
 
+import re
 import shutil
 
 import pytest
-from conftest import load_script
+from conftest import load_script, summary
 
 SCRIPT = "video/find-video-mkv-issues.py"
 mkv = load_script(SCRIPT)
@@ -59,13 +60,15 @@ def test_rate_video_unknown_codecs_take_the_default_penalty_and_clamp_at_zero():
 
 
 @pytest.mark.skipif(not shutil.which("ffprobe"), reason="needs ffprobe")
-def test_corrupt_file_counts_as_bad_in_the_summary(tmp_path, run_script):
-    (tmp_path / "broken.mkv").write_bytes(b"\x00" * 4096)
+def test_corrupt_file_is_unreadable_in_the_summary(tmp_path, run_script):
+    broken = tmp_path / "broken.mkv"
+    broken.write_bytes(b"\x00" * 4096)
 
     result = run_script(SCRIPT, [f"--path={tmp_path}"])
 
     assert result.returncode == 0, result.stdout
-    assert "  Corrupt or unreadable file" in result.stdout
-    assert result.stdout.endswith(
-        "Total Files : 1\nExcellent   : 0\nGood        : 0\nPoor        : 0\nBad         : 1\n"
+    assert re.search(
+        r"✗ unreadable +.*broken\.mkv  corrupt or unreadable file$", result.stdout, re.M
     )
+    assert "1 file" in result.stdout
+    assert summary(result.stdout) == {"Unreadable": [f"{broken}: corrupt or unreadable file"]}

@@ -20,11 +20,13 @@ Env:
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from gitutils import fetch_remotes, local_branches, skip_git_hooks, worktree_branch_map
+from report import NOTE, OK, PLAN, SAME, Listing, Outcome, Tally, duration, plural
 from utils import (
     add_bool_flag,
     build_parser,
@@ -32,33 +34,37 @@ from utils import (
     env_bool,
     heading,
     info,
+    log,
     require_binary,
     run,
     run_cli,
-    success,
-    warning,
 )
 
-__version__ = "3.2.0"
+__version__ = "4.0.0"
 
 DEFAULT_PROTECTED = ("main", "master", "dev", "develop", "staging")
 
 
-def stale_branches(protected: set[str]) -> list[str]:
-    """Local branches whose upstream is marked ``[gone]``.
+class Clean(Outcome):
+    """Everything a cleanup can conclude about a local branch, in summary order."""
+
+    DELETED = (OK, "deleted", "Deleted")
+    WOULD_DELETE = (PLAN, "would delete", "Would delete")
+    LEFT_ALONE = (SAME, "", "Not stale or protected", Listing.COUNT)
+    CHECKED_OUT = (NOTE, "checked out", "Stale, checked out", Listing.ALL)
+
+
+def is_stale(branch: str, track: str, protected: set[str]) -> bool:
+    """Whether ``branch``'s upstream is marked ``[gone]`` and it is not protected.
 
     ``[gone]`` means the remote branch was deleted, which is what a merged and
-    tidied-up PR leaves behind. It does *not* mean merged - a closed-unmerged
+    tidied-up PR leaves behind. It does *not* mean merged: a closed-unmerged
     PR looks identical here, same as in the shell version.
 
     The current branch gets no special case: its worktree pins it like any
     other checked-out branch, so ``main`` reports it alongside those.
     """
-    return [
-        branch
-        for branch, track in local_branches("upstream:track")
-        if branch not in protected and "[gone]" in track
-    ]
+    return branch not in protected and "[gone]" in track
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -79,6 +85,7 @@ def main(argv: list[str] | None = None) -> int:
         help=f"Comma-separated extra branches to protect (defaults: {' '.join(DEFAULT_PROTECTED)})",
     )
     args = parser.parse_args(argv)
+    started = time.monotonic()
 
     require_binary("git")
     skip_git_hooks()
@@ -91,44 +98,47 @@ def main(argv: list[str] | None = None) -> int:
     fetch_remotes()
 
     info("🔍 Scanning local branches for gone upstreams...")
-    stale = stale_branches(protected)
+    branches = local_branches("upstream:track")
 
-    if not stale:
-        success("✨ No stale branches. All clean! 🎉")
-        return 0
-
-    # A branch checked out in a worktree cannot be deleted — git refuses with
-    # "already used by worktree". Split those out so one pinned branch doesn't
-    # abort the whole run. Worktrees are the user's, so they are reported and
-    # left alone, never removed to free the branch.
+    # A branch checked out in a worktree cannot be deleted: git refuses with
+    # "already used by worktree". Those are reported rather than aborting the
+    # whole run. Worktrees are the user's, so they are left alone, never
+    # removed to free the branch.
     # One `git worktree list` for the whole set, not one per branch as the
     # shell's per-branch `worktree_for_branch` did.
     pinned_by_branch = worktree_branch_map()
-    deletable = [branch for branch in stale if branch not in pinned_by_branch]
-    pinned = [(branch, pinned_by_branch[branch]) for branch in stale if branch in pinned_by_branch]
 
-    if pinned:
-        warning(f"⏭️  {len(pinned)} stale branch(es) are checked out in a worktree:")
-        for branch, path in pinned:
-            warning(f"  • 🌿 {branch} (in {path})")
-        info("💡 Switch off or remove those worktrees, and the next run deletes their branches.")
+    tally = Tally(Clean)
+    with tally.progress(len(branches)) as progress:
+        for branch, track in branches:
+            progress.step(branch)
+            if not is_stale(branch, track, protected):
+                tally.record(Clean.LEFT_ALONE, branch)
+            elif pinned := pinned_by_branch.get(branch):
+                tally.record(
+                    Clean.CHECKED_OUT, branch, f"in {pinned}", item=f"{branch}: in {pinned}"
+                )
+            elif args.dry_run:
+                tally.record(Clean.WOULD_DELETE, branch, "upstream gone")
+            else:
+                run(["git", "branch", "-D", branch], capture=True)
+                tally.record(Clean.DELETED, branch, "upstream gone")
 
-    if not deletable:
-        success("✨ Nothing left to delete. 🎉")
-        return 0
-
+    notes = []
+    if tally.count(Clean.CHECKED_OUT):
+        notes.append(
+            "Switch off or remove those worktrees, and the next run deletes their branches."
+        )
+    tally.summary(
+        "Preview" if args.dry_run else "Summary",
+        facts=[plural(len(branches), "branch", "branches"), duration(time.monotonic() - started)],
+        notes=notes,
+    )
+    print()
     if args.dry_run:
-        warning(f"🌵 {len(deletable)} stale branch(es) would be deleted:")
-        for branch in deletable:
-            warning(f"  • 🪦 {branch}")
         dry_run_complete("deleted")
-        return 0
-
-    for branch in deletable:
-        warning(f"🗑️  Deleting: {branch}")
-        run(["git", "branch", "-D", branch])
-
-    success(f"✨ Removed {len(deletable)} stale branch(es). 🎉")
+    else:
+        log("🎉 Cleanup complete.")
     return 0
 
 

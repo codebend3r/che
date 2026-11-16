@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import zipfile
 
+from conftest import summary
+
 SCRIPT = "files/compress-folders.py"
 
 
@@ -26,10 +28,11 @@ def test_zips_each_immediate_subfolder(tmp_path, run_script):
     (tmp_path / "foo" / "a.txt").touch()
     (tmp_path / "bar" / "b.txt").touch()
 
-    run_script(SCRIPT, [f"--path={tmp_path}"], check=True)
+    result = run_script(SCRIPT, [f"--path={tmp_path}"], check=True)
 
     assert (tmp_path / "foo.zip").is_file()
     assert (tmp_path / "bar.zip").is_file()
+    assert summary(result.stdout) == {"Zipped": ["bar", "foo"]}
     assert "foo/a.txt" in entries(tmp_path / "foo.zip")
     assert "bar/b.txt" in entries(tmp_path / "bar.zip")
 
@@ -131,9 +134,10 @@ def test_dry_run_creates_no_archives(tmp_path, run_script):
     (tmp_path / "foo").mkdir()
     (tmp_path / "foo" / "a.txt").touch()
 
-    run_script(SCRIPT, [f"--path={tmp_path}", "--dry-run"], check=True)
+    result = run_script(SCRIPT, [f"--path={tmp_path}", "--dry-run"], check=True)
 
     assert not (tmp_path / "foo.zip").exists()
+    assert summary(result.stdout) == {"Would zip": ["foo"]}
 
 
 def test_no_partial_file_is_left_behind(tmp_path, run_script):

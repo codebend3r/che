@@ -21,11 +21,13 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from media import CODEC_SCAN_EXTENSIONS
+from report import FAIL, NOTE, OK, PLAN, WARN, Listing, Outcome, Tally, duration, plural
 from utils import (
     add_bool_flag,
     build_parser,
@@ -35,16 +37,26 @@ from utils import (
     iter_files,
     log,
     note_settings,
-    remove_or_warn,
     require_binary,
     run,
     run_cli,
     scan_root,
-    success,
     warning,
 )
 
-__version__ = "3.1.0"
+__version__ = "4.0.0"
+
+
+class Encode(Outcome):
+    """Everything a re-encode run can conclude about a file, in summary order."""
+
+    CONVERTED = (OK, "converted", "Converted")
+    WOULD_CONVERT = (PLAN, "would encode", "Would convert")
+    ALREADY_FIXED = (NOTE, "skipped", "Already _fixed")
+    OUTPUT_EXISTS = (WARN, "skipped", "Output exists")
+    KEPT_ORIGINAL = (WARN, "kept", "Original not deleted")
+    FAILED = (FAIL, "failed", "Failed", Listing.ALL)
+
 
 FFMPEG_ARGS = (
     "-map",
@@ -147,15 +159,20 @@ def main(argv: list[str] | None = None) -> int:
         ("Dry run", args.dry_run),
     )
 
-    converted = 0
-    failed = 0
+    started = time.monotonic()
+    tally = Tally(Encode)
+    scanned = 0
 
+    # No progress line: ffmpeg streams its own progress to the terminal, and
+    # the walk streams too, so there is no total to count against.
     for path in iter_files(root, extensions=CODEC_SCAN_EXTENSIONS):
+        scanned += 1
+        shown = str(path.relative_to(root))
         # Don't re-encode our own output on a second run. Announced rather than
         # silent, because scene "PROPER/FIXED" repacks legitimately end in
         # _fixed and would otherwise vanish from the listing with no trace.
         if path.stem.endswith("_fixed"):
-            info(f"⏭️  Skipping (already _fixed): {path}")
+            tally.record(Encode.ALREADY_FIXED, shown, "already _fixed")
             continue
 
         output = path.with_name(f"{path.stem}_fixed.mp4")
@@ -165,38 +182,46 @@ def main(argv: list[str] | None = None) -> int:
         # one this run just made for a different same-stem source. Checked
         # before the dry-run branch so a preview reports the same skips.
         if output.exists():
-            warning(f"⏭️  Skipping (output already exists): {output}")
+            reason = f"{output.name} already exists"
+            tally.record(Encode.OUTPUT_EXISTS, shown, reason, item=f"{shown}: {reason}")
             continue
 
         if args.dry_run:
-            info(f"[DRY RUN] Would re-encode: {path} -> {output}")
-            if args.delete_original:
-                info(f"[DRY RUN] Would delete original: {path}")
+            then = "; would delete the original" if args.delete_original else ""
+            tally.record(Encode.WOULD_CONVERT, shown, f"to {output.name}{then}")
             continue
 
-        log(f"Processing: {path}")
-
+        info(f"🔧 Encoding {shown}")
         if not encode(path, output):
-            warning(f"❌ ffmpeg failed for: {path}")
-            failed += 1
+            tally.record(Encode.FAILED, shown, "ffmpeg failed", item=f"{shown}: ffmpeg failed")
             continue
 
-        log(f"✅ Converted to: {output}")
-        converted += 1
+        tally.record(Encode.CONVERTED, shown, f"to {output.name}")
+        if args.delete_original:
+            try:
+                path.unlink()
+            except OSError as exc:
+                tally.record(Encode.KEPT_ORIGINAL, shown, str(exc), item=f"{shown}: {exc}")
 
-        if args.delete_original and remove_or_warn(path):
-            warning(f"🗑 Deleted original: {path}")
-
+    notes = ["Existing conversions are never overwritten."]
+    if args.delete_original and not args.dry_run:
+        notes.append("Each original was deleted only after its conversion succeeded.")
+    tally.summary(
+        "Preview" if args.dry_run else "Summary",
+        facts=[plural(scanned, "file"), duration(time.monotonic() - started)],
+        notes=notes,
+    )
+    print()
     if args.dry_run:
         dry_run_complete()
         return 0
 
-    # Summary and the non-zero exit on failure are both new; the shell version
-    # printed nothing and always exited 0 from the loop.
-    success(f"✅ Converted: {converted}")
-    if failed:
-        warning(f"❌ Failed:    {failed}")
+    # The non-zero exit on failure is new; the shell version printed nothing
+    # and always exited 0 from the loop.
+    if count := tally.count(Encode.FAILED):
+        warning(f"❌ {plural(count, 'file')} failed to convert.")
         return 1
+    log("🎉 Conversion complete.")
     return 0
 
 

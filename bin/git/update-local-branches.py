@@ -15,6 +15,7 @@ Options:
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -28,9 +29,11 @@ from gitutils import (
     worktree_branch_map,
     worktree_is_clean,
 )
+from report import FAIL, OK, PLAN, SAME, WARN, Listing, Outcome, Tally, duration, plural
 from utils import (
     add_bool_flag,
     build_parser,
+    dry_run_complete,
     heading,
     info,
     log,
@@ -38,18 +41,42 @@ from utils import (
     require_binary,
     run,
     run_cli,
-    success,
+    run_output,
     warning,
 )
 
-__version__ = "3.2.0"
+__version__ = "4.0.0"
 
 
-def branches_with_upstream() -> list[str]:
-    """Local branches that have an upstream, most recently committed first."""
-    return [
-        branch for branch, upstream in local_branches("upstream", sort="-committerdate") if upstream
-    ]
+class Update(Outcome):
+    """Everything an update can conclude about a branch, in summary order."""
+
+    UPDATED = (OK, "updated", "Updated")
+    WOULD_UPDATE = (PLAN, "would update", "Would update")
+    CURRENT = (SAME, "", "Already up to date", Listing.COUNT)
+    SKIPPED = (WARN, "skipped", "Skipped")
+    FAILED = (FAIL, "failed", "Failed", Listing.ALL)
+
+
+def branches_with_upstream() -> dict[str, str]:
+    """Each local branch that has an upstream, mapped to that upstream's full
+    ref, most recently committed first."""
+    return {
+        branch: upstream
+        for branch, upstream in local_branches("upstream", sort="-committerdate")
+        if upstream
+    }
+
+
+def behind(branch: str, upstream: str) -> int:
+    """How many commits ``upstream`` has that ``branch`` lacks.
+
+    Spelled ``refs/heads/``, so a tag named like the branch cannot stand in.
+    """
+    count = run_output(
+        ["git", "rev-list", "--count", f"refs/heads/{branch}..{upstream}"], check=False
+    )
+    return int(count) if count.isdigit() else 0
 
 
 def rebase(git: list[str]) -> bool:
@@ -60,11 +87,42 @@ def rebase(git: list[str]) -> bool:
     are fetched once up front, so a bare ``rebase`` (onto ``@{upstream}``, with
     the same fork-point handling ``pull --rebase`` uses) is the whole job.
     """
-    if run([*git, "rebase", "--quiet"], check=False).returncode == 0:
+    if run([*git, "rebase", "--quiet"], check=False, capture=True).returncode == 0:
         return True
-    warning("  ❌ rebase failed — aborting and moving on")
     run([*git, "rebase", "--abort"], check=False, capture=True)
     return False
+
+
+def update_one(tally: Tally[Update], branch: str, pinned: str | None) -> None:
+    """Rebase ``branch`` onto its upstream, here or in the worktree that holds it."""
+    if pinned:
+        # Uncommitted work in a worktree is the user's, left exactly as it
+        # is. Skipping it is not a failure, or one worktree in progress
+        # would stop every run of sync-all-branches at this step.
+        if not worktree_is_clean(pinned):
+            reason = f"dirty worktree {pinned}"
+            tally.record(Update.SKIPPED, branch, reason, item=f"{branch}: {reason}")
+            return
+        git, where = ["git", "-C", pinned], f"in {pinned}; "
+    else:
+        checkout = run(["git", "checkout", "--quiet", branch], check=False, capture=True)
+        if checkout.returncode != 0:
+            tally.record(
+                Update.FAILED, branch, "checkout failed", item=f"{branch}: checkout failed"
+            )
+            return
+        git, where = ["git"], ""
+
+    before = run_output([*git, "rev-parse", "HEAD"])
+    if not rebase(git):
+        reason = "rebase failed, aborted"
+        tally.record(Update.FAILED, branch, reason, item=f"{branch}: {reason}")
+        return
+    after = run_output([*git, "rev-parse", "HEAD"])
+    if after == before:
+        tally.record(Update.CURRENT, branch)
+    else:
+        tally.record(Update.UPDATED, branch, f"{where}was {before[:7]}, now {after[:7]}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -84,6 +142,7 @@ def main(argv: list[str] | None = None) -> int:
         help="List branches that would be updated, change nothing",
     )
     args = parser.parse_args(argv)
+    started = time.monotonic()
 
     limit = parse_count(args.limit, "--limit")
 
@@ -94,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
 
     original_branch = current_branch()
     if not original_branch:
-        warning("❌ Detached HEAD — check out a branch first.")
+        warning("❌ Detached HEAD: check out a branch first.")
         return 1
 
     # Tracked changes only: an untracked file survives checkout and rebase, and
@@ -108,7 +167,8 @@ def main(argv: list[str] | None = None) -> int:
     # fetch sync-all-branches runs.
     fetch_remotes()
 
-    branches = branches_with_upstream()
+    upstreams = branches_with_upstream()
+    branches = list(upstreams)
     if limit > 0:
         branches = branches[:limit]
 
@@ -116,15 +176,8 @@ def main(argv: list[str] | None = None) -> int:
         info("ℹ️  No local branches with upstreams.")  # noqa: RUF001
         return 0
 
-    if args.dry_run:
-        info(f"🌵 Would update {len(branches)} branch(es):")
-        for branch in branches:
-            info(f"  • 🌿 {branch}")
-        return 0
-
-    succeeded: list[str] = []
-    skipped: list[str] = []
-    failed: list[str] = []
+    if not args.dry_run:
+        info(f"📍 Returning to {original_branch} at the end")
 
     # Branches checked out in ANOTHER worktree: every pinned one but the branch
     # this worktree has checked out. One `git worktree list` for the whole run,
@@ -132,56 +185,42 @@ def main(argv: list[str] | None = None) -> int:
     elsewhere = worktree_branch_map()
     elsewhere.pop(original_branch, None)
 
-    for branch in branches:
-        # A branch checked out in another worktree cannot be checked out here —
-        # git refuses with "already used by worktree". That's a mechanical
-        # limit, not a conflict, so update it in place rather than counting it
-        # as a failure.
-        if pinned := elsewhere.get(branch):
-            # Uncommitted work in a worktree is the user's, left exactly as it
-            # is. Skipping it is not a failure, or one worktree in progress
-            # would stop every run of sync-all-branches at this step.
-            if not worktree_is_clean(pinned):
-                warning(f"  ⏭️  {branch} — worktree is dirty ({pinned}), skipping")
-                skipped.append(branch)
+    tally = Tally(Update)
+    with tally.progress(len(branches)) as progress:
+        for branch in branches:
+            progress.step(branch)
+            # A branch checked out in another worktree cannot be checked out
+            # here: git refuses with "already used by worktree". That's a
+            # mechanical limit, not a conflict, so update it in place rather
+            # than counting it as a failure.
+            pinned = elsewhere.get(branch)
+            if args.dry_run:
+                if count := behind(branch, upstreams[branch]):
+                    where = f"in {pinned}; " if pinned else ""
+                    tally.record(Update.WOULD_UPDATE, branch, f"{where}{count} behind upstream")
+                else:
+                    tally.record(Update.CURRENT, branch)
                 continue
+            update_one(tally, branch, pinned)
 
-            log(f"⬇️  Rebasing {branch} in its worktree ({pinned})")
-            git, where = ["git", "-C", pinned], f" (in {pinned})"
-        else:
-            info(f"📂 Switching to 🌿 {branch}")
-            checkout = run(["git", "checkout", "--quiet", branch], check=False, capture=True)
-            if checkout.returncode != 0:
-                warning("  ✗ checkout failed, skipping")
-                failed.append(branch)
-                continue
+    if not args.dry_run:
+        run(["git", "checkout", "--quiet", original_branch])
 
-            log(f"⬇️  Rebasing {branch} onto upstream")
-            git, where = ["git"], ""
-
-        if rebase(git):
-            success(f"  ✅ {branch} up to date{where}")
-            succeeded.append(branch)
-        else:
-            failed.append(branch)
-
-    info(f"🔁 Returning to 🌿 {original_branch}")
-    run(["git", "checkout", "--quiet", original_branch])
-
+    tally.summary(
+        "Preview" if args.dry_run else "Summary",
+        facts=[plural(len(branches), "branch", "branches"), duration(time.monotonic() - started)],
+        notes=["Nothing pushed."],
+    )
     print()
-    success("═══ summary ═══")
-    success(f"✅ Updated: {len(succeeded)}")
-    if skipped:
-        warning(f"⏭️  Skipped: {len(skipped)} (dirty worktree)")
-        for branch in skipped:
-            warning(f"  • 🌿 {branch}")
-    if failed:
-        warning(f"❌ Failed:  {len(failed)}")
-        for branch in failed:
-            warning(f"  • 💥 {branch}")
+    if count := tally.count(Update.FAILED):
+        warning(
+            f"⚠️  {plural(count, 'branch', 'branches')} failed. Every other branch was still attempted."
+        )
         return 1
-
-    success("🎉 All clean!")
+    if args.dry_run:
+        dry_run_complete("updated")
+    else:
+        log("🎉 Update complete.")
     return 0
 
 

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from conftest import commit, git, local_branches
+from conftest import commit, git, local_branches, summary
 
 RESET = "git/hard-reset-all-branches.py"
 REAL = {"DRY_RUN": "false"}
@@ -45,7 +46,7 @@ def test_resets_every_branch_to_origin_and_returns(work: Path, run_script):
     assert sha(work, "main") == sha(work, "origin/main")
     assert (work / "upstream.txt").exists()
     assert git(work, "branch", "--show-current") == "main"
-    assert "Reset:    2" in result.stdout
+    assert summary(result.stdout)["Reset to origin"] == ["feature", "main"]
 
 
 def test_a_branch_without_origin_is_left_alone(work: Path, run_script):
@@ -55,7 +56,7 @@ def test_a_branch_without_origin_is_left_alone(work: Path, run_script):
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert sha(work, "local-only") == before
-    assert "• 🌿 local-only" in result.stdout
+    assert summary(result.stdout)["No origin, left alone"] == ["local-only"]
 
 
 def test_dry_run_changes_nothing(work: Path, run_script):
@@ -64,9 +65,9 @@ def test_dry_run_changes_nothing(work: Path, run_script):
     result = run_script(RESET, cwd=work, env={"DRY_RUN": "true"})
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "2 branch(es) would be hard reset" in result.stdout
-    assert "feature — drops 1 local commit(s)" in result.stdout
-    assert "main — picks up 1 from origin" in result.stdout
+    assert summary(result.stdout)["Would reset"] == ["feature", "main"]
+    assert re.search(r"○ would reset +feature  drops 1 local commit$", result.stdout, re.M)
+    assert re.search(r"○ would reset +main  picks up 1 from origin$", result.stdout, re.M)
     assert {branch: sha(work, branch) for branch in local_branches(work)} == before
 
 
@@ -76,7 +77,7 @@ def test_previews_unless_told_otherwise(work: Path, run_script):
     result = run_script(RESET, cwd=work, env={"DRY_RUN": ""})
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "would be hard reset" in result.stdout
+    assert "would reset" in result.stdout
     assert sha(work, "feature") == before
 
 
@@ -134,7 +135,7 @@ def test_a_dirty_worktree_is_skipped(work: Path, tmp_path: Path, run_script):
     assert result.returncode == 0, result.stdout + result.stderr
     assert sha(work, "feature") == before
     assert (linked / "README.md").read_text() == "in progress\n"
-    assert "feature (dirty worktree)" in result.stdout
+    assert summary(result.stdout)["Skipped"] == [f"feature: dirty worktree {linked}"]
     assert sha(work, "main") == sha(work, "origin/main")
 
 
@@ -144,4 +145,4 @@ def test_nothing_to_do_when_everything_matches(git_repo: Callable[[str], Path], 
     result = run_script(RESET, cwd=work, env=REAL)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "already match it" in result.stdout
+    assert "Already match" in summary(result.stdout)

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Callable, Sequence
@@ -68,6 +69,34 @@ def commit(cwd: Path, name: str, *, when: str = "") -> None:
     subprocess.run(
         ["git", "commit", "--quiet", "-m", name], cwd=cwd, env=env, check=True, capture_output=True
     )
+
+
+_SUMMARY_ROW = re.compile(r"^  \S (?P<label>\S.*?)\s{2,}(?P<count>\d+)(?:   (?P<item>.*))?$")
+
+
+def summary(stdout: str) -> dict[str, list[str]]:
+    """The closing table as ``{label: items}``; an unlisted row maps to ``[]``.
+
+    Every row's count must match the items it lists, unless they were
+    collapsed into "... and N more" or the row lists none at all.
+    """
+    table = re.split(r"\n(?:Summary|Preview)(?:  |\n)", stdout, maxsplit=1)[-1]
+    rows: dict[str, list[str]] = {}
+    counts: dict[str, int] = {}
+    label = ""
+    for line in table.splitlines():
+        if match := _SUMMARY_ROW.match(line):
+            label = match["label"].rstrip()
+            counts[label] = int(match["count"])
+            rows[label] = [match["item"]] if match["item"] else []
+        elif label and line.startswith("    ") and line.strip():
+            rows[label].append(line.strip())
+        else:
+            label = ""
+    for name, items in rows.items():
+        if items and not items[-1].startswith("…"):
+            assert len(items) == counts[name], (name, items, counts[name])
+    return rows
 
 
 @pytest.fixture

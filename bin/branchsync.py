@@ -16,7 +16,6 @@ import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
 from pathlib import Path
 
 from gitutils import (
@@ -39,10 +38,10 @@ from report import (
     Listing,
     Reporter,
     Row,
-    Tone,
     duration,
     summary,
 )
+from report import Outcome as BaseOutcome
 from utils import run, run_output
 
 # A branch is "merged" when it reached one of these on origin. They are also
@@ -95,7 +94,7 @@ def failure(exc: subprocess.CalledProcessError | OSError) -> str:
     return f"{exc}: {last}" if last else str(exc)
 
 
-class Outcome(Enum):
+class Outcome(BaseOutcome):
     """Everything a sync can conclude about a branch, defined once.
 
     Each member is its live line (tone and verb; no verb means the branch is
@@ -123,12 +122,6 @@ class Outcome(Enum):
     GONE = (WARN, "gone", "Upstream gone", Listing.LIST)
     MERGED_KEPT = (WARN, "kept", "Merged, kept", Listing.LIST)
     BLOCKED = (FAIL, "blocked", "Blocked", Listing.ALL)
-
-    def __init__(self, tone: Tone, verb: str, label: str, listing: Listing) -> None:
-        self.tone = tone
-        self.verb = verb
-        self.label = label
-        self.listing = listing
 
 
 @dataclass(frozen=True)

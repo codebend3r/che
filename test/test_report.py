@@ -89,3 +89,34 @@ def test_a_second_reporter_opens_its_own_list(capsys: pytest.CaptureFixture[str]
         Reporter().event(OK, "updated", "feature")
     line = "  ✓ updated       feature"
     assert capsys.readouterr().out.splitlines() == ["", line, "", line]
+
+
+class Sample(report.Outcome):
+    DONE = (OK, "done", "Done")
+    QUIET = (SAME, "", "Already fine", Listing.COUNT)
+    BROKE = (FAIL, "failed", "Failed", Listing.ALL)
+
+
+def test_tally_prints_and_counts_in_one_call(capsys: pytest.CaptureFixture[str]):
+    tally = report.Tally(Sample)
+    tally.record(Sample.DONE, "one", "detail")
+    tally.record(Sample.QUIET, "two")
+    tally.record(Sample.BROKE, "three", "boom", item="three: boom")
+    out = capsys.readouterr().out
+    assert "  ✓ done          one  detail" in out
+    assert "two" not in out  # a verbless outcome is counted silently
+    assert tally.names(Sample.BROKE) == ["three"]
+    assert tally.count(Sample.DONE, Sample.QUIET) == 2
+
+    tally.summary("Summary", facts=["3 items"])
+    table = capsys.readouterr().out
+    assert "Summary  3 items" in table
+    assert "  ✓ Done          1   one" in table
+    assert "  = Already fine  1\n" in table
+    assert "  ✗ Failed        1   three: boom" in table
+
+
+def test_plural_picks_the_noun():
+    assert report.plural(1, "file") == "1 file"
+    assert report.plural(2, "file") == "2 files"
+    assert report.plural(3, "branch", "branches") == "3 branches"

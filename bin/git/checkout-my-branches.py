@@ -15,11 +15,13 @@ Options:
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from gitutils import fetch_remotes, for_each_ref, local_branches, skip_git_hooks
+from report import ADDED, SAME, Listing, Outcome, Tally, duration, plural
 from utils import (
     build_parser,
     heading,
@@ -30,11 +32,18 @@ from utils import (
     run,
     run_cli,
     run_output,
-    success,
     warning,
 )
 
-__version__ = "3.1.0"
+__version__ = "4.0.0"
+
+
+class Checkout(Outcome):
+    """Everything a scan can conclude about a remote branch, in summary order."""
+
+    CREATED = (ADDED, "checked out", "Checked out")
+    LOCAL = (SAME, "", "Already local", Listing.COUNT)
+    NOT_MINE = (SAME, "", "Not yours", Listing.COUNT)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -55,6 +64,7 @@ def main(argv: list[str] | None = None) -> int:
         help="How many recent remote branches to scan (default: 100)",
     )
     args = parser.parse_args(argv)
+    started = time.monotonic()
 
     limit = parse_count(args.limit, "--limit", minimum=1)
 
@@ -63,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
     # reporting that no author email is set.
     author = args.author or run_output(["git", "config", "user.email"], check=False).strip()
     if not author:
-        warning("❌ No author email — pass --author=EMAIL or set git config user.email")
+        warning("❌ No author email: pass --author=EMAIL or set git config user.email")
         return 1
 
     # Nothing here checks out, but fetch and branch still fire a repo's
@@ -76,49 +86,51 @@ def main(argv: list[str] | None = None) -> int:
 
     info(f"📦 Scanning {limit} most recent remote branches for author 👤 {author}...")
 
-    checked_out = 0
-    skipped = 0
-    not_mine = 0
-
     local = {branch for (branch,) in local_branches()}
 
     # One pass: author email + branch name + symref target, newest first.
     # %(symref) is non-empty for symbolic refs like origin/HEAD, which must be
-    # skipped - it is a pointer, not a branch anyone authored.
-    refs = for_each_ref(
-        "refs/remotes/origin",
-        "authoremail",
-        "refname:lstrip=3",
-        "symref",
-        sort="-committerdate",
+    # skipped: it is a pointer, not a branch anyone authored.
+    refs = [
+        (author_email, branch)
+        for author_email, branch, symref in for_each_ref(
+            "refs/remotes/origin",
+            "authoremail",
+            "refname:lstrip=3",
+            "symref",
+            sort="-committerdate",
+        )[:limit]
+        if not symref
+    ]
+
+    tally = Tally(Checkout)
+    with tally.progress(len(refs)) as progress:
+        for author_email, branch in refs:
+            progress.step(branch)
+            if author_email.removeprefix("<").removesuffix(">") != author:
+                tally.record(Checkout.NOT_MINE, branch)
+            elif branch in local:
+                tally.record(Checkout.LOCAL, branch)
+            else:
+                # `git branch --track`, not `checkout -b`: switching to each new
+                # branch left HEAD on the last one, undoing the park on main that
+                # sync-all-branches runs this after. The full ref name cannot be
+                # mistaken for a local branch called `origin/<branch>`.
+                run(
+                    ["git", "branch", "--quiet", "--track", branch, f"refs/remotes/origin/{branch}"]
+                )
+                tally.record(Checkout.CREATED, branch, f"tracking origin/{branch}")
+
+    tally.summary(
+        "Summary",
+        facts=[
+            plural(len(refs), "remote branch", "remote branches"),
+            duration(time.monotonic() - started),
+        ],
+        notes=["HEAD stays where it was."],
     )
-
-    for author_email, branch, symref in refs[:limit]:
-        if symref:
-            continue
-
-        if author_email.removeprefix("<").removesuffix(">") != author:
-            not_mine += 1
-            continue
-
-        if branch in local:
-            info(f"⏭️  Already local: {branch}")
-            skipped += 1
-        else:
-            log(f"🆕 Checking out: {branch}")
-            # `git branch --track`, not `checkout -b`: switching to each new
-            # branch left HEAD on the last one, undoing the park on main that
-            # sync-all-branches runs this after. The full ref name cannot be
-            # mistaken for a local branch called `origin/<branch>`.
-            run(["git", "branch", "--track", branch, f"refs/remotes/origin/{branch}"])
-            checked_out += 1
-
     print()
-    success("═══ summary ═══")
-    success(f"🆕  Checked out: {checked_out}")
-    success(f"⏭️  Already local: {skipped}")
-    success(f"👻  Skipped (not yours): {not_mine}")
-    success("✨ Done.")
+    log("✨ Done.")
     return 0
 
 

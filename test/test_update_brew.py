@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from conftest import summary
 
 SCRIPT = "system/update-brew.py"
 
@@ -40,8 +41,11 @@ def test_dry_run_only_previews_and_never_updates(brew, run_script):
     result = run_script(SCRIPT, ["--dry-run"], check=True)
 
     assert calls(brew) == PREVIEWS
-    assert "  🪄 Would run: brew update" in result.stdout
     assert "update-brew 🌵 (dry run)" in result.stdout
+    assert summary(result.stdout) == {
+        "Previewed": ["brew upgrade", "brew upgrade --cask", "brew autoremove", "brew cleanup -s"],
+        "Would run": ["brew update"],
+    }
 
 
 def test_real_run(brew, run_script):
@@ -49,13 +53,22 @@ def test_real_run(brew, run_script):
 
     assert calls(brew) == ["update", "upgrade", "upgrade --cask", "autoremove", "cleanup -s"]
     assert "  ▶ brew update" in result.stdout
+    assert summary(result.stdout) == {
+        "Ran": [
+            "brew update",
+            "brew upgrade",
+            "brew upgrade --cask",
+            "brew autoremove",
+            "brew cleanup -s",
+        ]
+    }
 
 
 def test_no_cask_skips_the_cask_upgrade(brew, run_script):
     result = run_script(SCRIPT, ["--dry-run", "--no-cask"], check=True)
 
     assert calls(brew) == [call for call in PREVIEWS if "--cask" not in call]
-    assert "⏭️  Skipping cask upgrades (--no-cask)" in result.stdout
+    assert summary(result.stdout)["Skipped"] == ["brew upgrade --cask: --no-cask"]
 
 
 def test_greedy_reaches_the_cask_upgrade(brew, run_script):
@@ -65,9 +78,13 @@ def test_greedy_reaches_the_cask_upgrade(brew, run_script):
 
 
 def test_skipping_autoremove_and_cleanup(brew, run_script):
-    run_script(SCRIPT, ["--no-autoremove", "--no-cleanup"], check=True)
+    result = run_script(SCRIPT, ["--no-autoremove", "--no-cleanup"], check=True)
 
     assert calls(brew) == ["update", "upgrade", "upgrade --cask"]
+    assert summary(result.stdout)["Skipped"] == [
+        "brew autoremove: --no-autoremove",
+        "brew cleanup -s: --no-cleanup",
+    ]
 
 
 @pytest.mark.parametrize("flag", ["--no-cask=false", "--no-cleanup=true", "--no-autoremove=no"])
@@ -97,4 +114,4 @@ def test_doctor_is_advisory(brew, run_script):
     result = run_script(SCRIPT, ["--doctor"], env={"FAKE_FAIL": "doctor"}, check=True)
 
     assert calls(brew)[-1] == "doctor"
-    assert "⚠️  brew doctor reported issues (non-fatal)" in result.stdout
+    assert summary(result.stdout)["Reported issues"] == ["brew doctor: non-fatal"]
