@@ -13,6 +13,11 @@ Three pieces, each built so the output reads the same at any scale:
   run over thousands of items still fits on a screen, with the overflow counted
   rather than silently dropped.
 
+A script defines everything it can conclude about an item once, as an
+:class:`Outcome` enum (live verb plus summary row), and reports through a
+:class:`Tally`, whose ``record()`` prints the line and counts the item in one
+call so the two can never drift apart.
+
 Symbols are single-column characters rather than emoji, whose width varies
 between terminals, so every column lines up. Colour goes through
 :func:`tui.palette`, which honours ``NO_COLOR`` and non-tty output; the symbols
@@ -23,11 +28,11 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from types import TracebackType
-from typing import TextIO
+from typing import Generic, TextIO, TypeVar
 
 import tui
 from utils import footer_rule
@@ -229,3 +234,73 @@ def summary(
         for line in notes:
             print(f"  {p.grey}{line}{p.reset}")
     sys.stdout.flush()
+
+
+class Outcome(Enum):
+    """Base for a script's outcome table: subclass it with one member per result.
+
+    Each member is ``(tone, verb, label, listing)``: its live line (no verb
+    means the item is counted silently) and its summary row. The summary walks
+    the members in declaration order, so declare what changed first, then what
+    a dry run would change, what was left alone, and failures last.
+    """
+
+    def __init__(self, tone: Tone, verb: str, label: str, listing: Listing = Listing.LIST) -> None:
+        self.tone = tone
+        self.verb = verb
+        self.label = label
+        self.listing = listing
+
+
+@dataclass(frozen=True)
+class Entry:
+    name: str  # the item, as its live line names it
+    item: str  # how the summary row names it, usually the same
+
+
+# A TypeVar rather than PEP 695 syntax: detect-green-magenta-videos imports
+# this under its own OpenCV venv, whose interpreter may predate Python 3.12.
+OutcomeT = TypeVar("OutcomeT", bound=Outcome)
+
+
+class Tally(Generic[OutcomeT]):  # noqa: UP046
+    """One run's results, keyed by a script's :class:`Outcome` enum."""
+
+    def __init__(self, outcomes: type[OutcomeT]) -> None:
+        self.outcomes = outcomes
+        self.report = Reporter()
+        self.results: dict[OutcomeT, list[Entry]] = {outcome: [] for outcome in outcomes}
+
+    def record(self, outcome: OutcomeT, name: str, detail: str = "", *, item: str = "") -> None:
+        """Count ``name`` under ``outcome`` and print its live line, if it has one."""
+        self.results[outcome].append(Entry(name, item or name))
+        if outcome.verb:
+            self.report.event(outcome.tone, outcome.verb, name, detail)
+
+    def names(self, outcome: OutcomeT) -> list[str]:
+        return [entry.name for entry in self.results[outcome]]
+
+    def count(self, *outcomes: OutcomeT) -> int:
+        return sum(len(self.results[outcome]) for outcome in outcomes)
+
+    def progress(self, total: int, *, stream: TextIO | None = None) -> Progress:
+        return self.report.progress(total, stream=stream)
+
+    def rows(self) -> Iterator[Row]:
+        for outcome in self.outcomes:
+            entries = self.results[outcome]
+            yield Row(outcome.tone, outcome.label, [e.item for e in entries], outcome.listing)
+
+    def summary(
+        self,
+        title: str,
+        *,
+        facts: Sequence[str] = (),
+        notes: Sequence[str] = (),
+    ) -> None:
+        summary(title, list(self.rows()), facts=facts, notes=notes)
+
+
+def plural(count: int, singular: str, plural_form: str = "") -> str:
+    """``1 branch``, ``3 branches``: the count with the right noun."""
+    return f"{count} {singular if count == 1 else plural_form or singular + 's'}"

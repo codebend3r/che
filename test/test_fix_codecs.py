@@ -7,6 +7,7 @@ satisfies the binary check and fails loudly if anything does invoke it.
 from __future__ import annotations
 
 import pytest
+from conftest import summary
 
 SCRIPT = "video/fix-codecs.py"
 
@@ -31,13 +32,11 @@ def test_dry_run_reports_the_skip_a_real_run_would_make(library, stub_ffmpeg, ru
     result = run_script(SCRIPT, [f"--path={library}"], env={"DRY_RUN": ""})
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert f"⏭️  Skipping (output already exists): {library / 'done_fixed.mp4'}" in result.stdout
-    assert f"Would re-encode: {library / 'done.avi'}" not in result.stdout
-    assert (
-        f"[DRY RUN] Would re-encode: {library / 'todo.mkv'} -> {library / 'todo_fixed.mp4'}"
-        in result.stdout
-    )
-    assert f"⏭️  Skipping (already _fixed): {library / 'done_fixed.mp4'}" in result.stdout
+    rows = summary(result.stdout)
+    assert rows["Output exists"] == ["done.avi: done_fixed.mp4 already exists"]
+    assert rows["Would convert"] == ["todo.mkv"]
+    assert rows["Already _fixed"] == ["done_fixed.mp4"]
+    assert "○ would encode  todo.mkv  to todo_fixed.mp4" in result.stdout
 
 
 def test_dry_run_changes_nothing(library, stub_ffmpeg, run_script):

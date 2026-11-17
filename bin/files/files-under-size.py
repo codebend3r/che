@@ -18,13 +18,16 @@ Env:
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from report import FAIL, OK, PLAN, Listing, Outcome, Tally, duration, plural
 from utils import (
     add_bool_flag,
     build_parser,
+    dry_run_complete,
     env_bool,
     format_bytes,
     info,
@@ -33,13 +36,12 @@ from utils import (
     note,
     note_settings,
     parse_size,
-    remove_or_warn,
     run_cli,
     scan_root,
     warning,
 )
 
-__version__ = "2.2.0"
+__version__ = "3.0.0"
 
 VIDEO_EXTENSIONS = (
     "mp4",
@@ -53,6 +55,14 @@ VIDEO_EXTENSIONS = (
     "mpg",
     "m4v",
 )
+
+
+class Small(Outcome):
+    """Everything deleting an undersized video can conclude, in summary order."""
+
+    DELETED = (OK, "deleted", "Deleted")
+    WOULD_DELETE = (PLAN, "would delete", "Would delete")
+    FAILED = (FAIL, "failed", "Failed", Listing.ALL)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -71,6 +81,7 @@ def main(argv: list[str] | None = None) -> int:
 
     info(f"Running command in {Path.cwd()}")
     args = parser.parse_args(argv)
+    started = time.monotonic()
 
     note_settings(("Scanning", args.path), ("Size threshold", args.size), ("Dry run", args.dry_run))
 
@@ -99,27 +110,47 @@ def main(argv: list[str] | None = None) -> int:
             matches.append((path, size))
 
     total = len(matches)
-    if total == 0:
-        log(f"No matching video files ≤ {args.size} ({limit_bytes} bytes).")
-        return 0
-
-    info(f"Found {total} file(s) ≤ {args.size} ({limit_bytes} bytes)")
+    info(f"Found {plural(total, 'file')} ≤ {args.size} ({limit_bytes} bytes)")
     note(f"Threshold: {limit_bytes:,} bytes ({args.size})")
 
-    failures = 0
+    tally = Tally(Small)
+    with tally.progress(total) as progress:
+        for path, size in matches:
+            progress.step(str(path))
+            if args.dry_run:
+                tally.record(Small.WOULD_DELETE, str(path), format_bytes(size))
+                continue
+            try:
+                path.unlink()
+            except OSError as exc:
+                reason = exc.strerror or str(exc)
+                tally.record(Small.FAILED, str(path), reason, item=f"{path}: {reason}")
+                continue
+            tally.record(Small.DELETED, str(path), format_bytes(size))
 
-    for index, (path, size) in enumerate(matches, start=1):
-        log(f"File size: {format_bytes(size)}")
-        if args.dry_run:
-            warning(f"[{index}/{total}] Would delete: {format_bytes(size)} - {path}")
-            continue
-
-        warning(f"[{index}/{total}] Deleting: {format_bytes(size)} - {path}")
-        if not remove_or_warn(path):
-            failures += 1
-
-    log("Done.")
-    return 1 if failures else 0
+    deleted = set(tally.names(Small.DELETED))
+    freed = sum(size for path, size in matches if str(path) in deleted)
+    notes = []
+    if not total:
+        notes.append(f"No matching video files ≤ {args.size} ({limit_bytes} bytes).")
+    elif freed:
+        notes.append(f"Freed {format_bytes(freed)}.")
+    tally.summary(
+        "Preview" if args.dry_run else "Summary",
+        facts=[plural(total, "file"), duration(time.monotonic() - started)],
+        notes=notes,
+    )
+    print()
+    if count := tally.count(Small.FAILED):
+        warning(
+            f"⚠️  {plural(count, 'file')} could not be deleted. Every other file was still attempted."
+        )
+        return 1
+    if args.dry_run:
+        dry_run_complete("deleted")
+    else:
+        log("🎉 Done.")
+    return 0
 
 
 if __name__ == "__main__":

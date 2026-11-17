@@ -12,7 +12,8 @@ from pathlib import Path
 
 import nas
 import pytest
-from conftest import load_script
+from conftest import load_script, summary
+from report import Tally
 
 EJECT = "drives/eject-all-drives.py"
 MOUNT = "drives/mount-all-drives.py"
@@ -68,7 +69,7 @@ def test_smb_url():
 
 
 def test_mount_smb_runs_applescript_mount_volume(osascript, no_color, capsys):
-    assert nas.mount_smb("Meleys", "Meleys") is True
+    assert nas.mount_smb("Meleys", "Meleys") == ""
 
     assert osascript.read_text().splitlines() == ["-e", 'mount volume "smb://crivas@Meleys/Meleys"']
     assert capsys.readouterr().out == ""
@@ -77,13 +78,8 @@ def test_mount_smb_runs_applescript_mount_volume(osascript, no_color, capsys):
 def test_mount_smb_failure_says_why(failing_osascript, no_color, capsys, monkeypatch):
     monkeypatch.setenv("FAKE_STDERR", "execution error: no route (-5014)")
 
-    assert nas.mount_smb("Meleys", "192.168.50.2") is False
-
-    assert capsys.readouterr().out == (
-        "  ❌ mount failed for smb://crivas@192.168.50.2/Meleys\n"
-        "     execution error: no route (-5014)\n"
-        "     Check that Keychain has a password for 'crivas@192.168.50.2'.\n"
-    )
+    assert nas.mount_smb("Meleys", "192.168.50.2") == "execution error: no route (-5014)"
+    assert capsys.readouterr().out == ""
 
 
 # ---------------------------------------------------------------------------
@@ -91,33 +87,105 @@ def test_mount_smb_failure_says_why(failing_osascript, no_color, capsys, monkeyp
 # ---------------------------------------------------------------------------
 
 
-def test_mount_drive_output(osascript, no_color, capsys, monkeypatch):
+def test_mount_drive_records_a_mount(osascript, no_color, capsys, monkeypatch):
     monkeypatch.setattr(mount_all_drives, "is_mounted", lambda name: False)
+    tally = Tally(mount_all_drives.Mount)
 
-    assert mount_all_drives.mount_drive("Meleys", "192.168.50.2", quiet=False) == "mounted"
+    mount_all_drives.mount_drive(tally, "Meleys", "192.168.50.2")
 
+    assert tally.names(mount_all_drives.Mount.MOUNTED) == ["Meleys"]
     assert capsys.readouterr().out == (
-        "🔗 Mounting Meleys (smb://crivas@192.168.50.2/Meleys)...\n  ✅ Meleys mounted 🐉\n"
+        "\n  ✓ mounted       Meleys  smb://crivas@192.168.50.2/Meleys\n"
     )
 
 
-def test_mount_drive_skips_a_mounted_drive(osascript, no_color, capsys, monkeypatch):
+def test_mount_drive_counts_a_mounted_drive_silently(osascript, no_color, capsys, monkeypatch):
     monkeypatch.setattr(mount_all_drives, "is_mounted", lambda name: True)
+    tally = Tally(mount_all_drives.Mount)
 
-    assert mount_all_drives.mount_drive("Meleys", "Meleys", quiet=False) == "skipped"
+    mount_all_drives.mount_drive(tally, "Meleys", "Meleys")
 
-    assert capsys.readouterr().out == "⏭️  Meleys — already mounted\n"
+    assert tally.names(mount_all_drives.Mount.ALREADY) == ["Meleys"]
+    assert capsys.readouterr().out == ""
     assert not osascript.exists()
 
 
-def test_remount_drive_output(failing_osascript, no_color, capsys):
-    assert ping_nas.remount_drive("Vhagar", "Vhagar") is False
+def test_mount_drive_folds_the_failure_into_one_line(
+    failing_osascript, no_color, capsys, monkeypatch
+):
+    monkeypatch.setattr(mount_all_drives, "is_mounted", lambda name: False)
+    monkeypatch.setenv("FAKE_STDERR", "execution error: no route (-5014)")
+    tally = Tally(mount_all_drives.Mount)
+
+    mount_all_drives.mount_drive(tally, "Vhagar", "Vhagar")
 
     assert capsys.readouterr().out == (
-        "  🔗 Remounting Vhagar (smb://crivas@Vhagar/Vhagar)...\n"
-        "  ❌ mount failed for smb://crivas@Vhagar/Vhagar\n"
-        "     Check that Keychain has a password for 'crivas@Vhagar'.\n"
+        "\n  ✗ failed        Vhagar  "
+        "smb://crivas@Vhagar/Vhagar: execution error: no route (-5014)\n"
     )
+    assert [e.item for e in tally.results[mount_all_drives.Mount.FAILED]] == [
+        "Vhagar: execution error: no route (-5014)"
+    ]
+
+
+DRIVE = nas.NasDrive("Vhagar", "192.168.50.5")
+
+
+@pytest.mark.parametrize(
+    ("reachable", "mounted", "remount", "outcome"),
+    [
+        (False, False, True, "UNREACHABLE"),
+        (True, True, True, "MOUNTED"),
+        (True, False, False, "NOT_MOUNTED"),
+        (True, False, True, "REMOUNTED"),
+    ],
+)
+def test_check_drive_outcomes(
+    osascript, no_color, monkeypatch, reachable, mounted, remount, outcome
+):
+    monkeypatch.setattr(ping_nas, "smb_reachable", lambda ip, timeout: reachable)
+    monkeypatch.setattr(ping_nas, "is_mounted", lambda name: mounted)
+    tally = Tally(ping_nas.Ping)
+
+    ping_nas.check_drive(tally, DRIVE, ping_timeout=1, remount=remount, use_ip=False)
+
+    assert tally.names(ping_nas.Ping[outcome]) == ["Vhagar"]
+
+
+def test_check_drive_remount_failure(failing_osascript, no_color, capsys, monkeypatch):
+    monkeypatch.setattr(ping_nas, "smb_reachable", lambda ip, timeout: True)
+    monkeypatch.setattr(ping_nas, "is_mounted", lambda name: False)
+    tally = Tally(ping_nas.Ping)
+
+    ping_nas.check_drive(tally, DRIVE, ping_timeout=1, remount=True, use_ip=False)
+
+    assert capsys.readouterr().out == (
+        "\n  ✗ failed        Vhagar  smb://crivas@Vhagar/Vhagar: mount volume failed\n"
+    )
+
+
+def test_ping_cycle_summary(osascript, no_color, capsys, monkeypatch):
+    monkeypatch.setattr(ping_nas, "smb_reachable", lambda ip, timeout: ip != "192.168.50.2")
+    monkeypatch.setattr(ping_nas, "is_mounted", lambda name: name != "Vermithor")
+    active = nas.select_drives("")
+
+    ping_nas.ping_all_nas(active, cycle=1, ping_timeout=1, remount=True, use_ip=False, quiet=False)
+
+    rows = summary(capsys.readouterr().out)
+    assert rows["Remounted"] == ["Vermithor"]
+    assert rows["Unreachable"] == ["Meleys: SMB port 445 unreachable at 192.168.50.2"]
+    assert rows["Mounted"] == []
+
+
+def test_ping_quiet_cycle_with_everything_fine_prints_nothing(no_color, capsys, monkeypatch):
+    monkeypatch.setattr(ping_nas, "smb_reachable", lambda ip, timeout: True)
+    monkeypatch.setattr(ping_nas, "is_mounted", lambda name: True)
+
+    ping_nas.ping_all_nas(
+        nas.select_drives(""), cycle=1, ping_timeout=1, remount=True, use_ip=False, quiet=True
+    )
+
+    assert capsys.readouterr().out == ""
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +199,8 @@ def test_eject_unknown_only_warns_and_exits_zero(run_script):
 
     assert result.returncode == 0
     assert "⚠️  No drive named 'nope'. Known: Meleys, Vermithor, Caraxes" in result.stdout
-    assert "🌵 Would eject:  0" in result.stdout
+    assert "\nPreview  0 drives" in result.stdout
+    assert summary(result.stdout) == {}
 
 
 def test_mount_unknown_only_warns_and_exits_zero(osascript, run_script):
@@ -145,10 +214,11 @@ def test_mount_unknown_only_warns_and_exits_zero(osascript, run_script):
         "⚠️  No drive named 'nope'. Known: Meleys, Vermithor, Caraxes, Syrax, Vhagar",
         "",
         "─" * 45,
-        "✅ Mounted:  0",
-        "⏭️  Skipped:  0 (already mounted)",
+        result.stdout.splitlines()[6],
+        "",
         "🎉 All drives are up! 🐉🐉🐉",
     ]
+    assert result.stdout.splitlines()[6].startswith("Summary  0 drives · ")
     assert not osascript.exists()
 
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from conftest import summary
+
 SCRIPT = "files/delete-smb-files.py"
 
 # The script defaults DRY_RUN=true (repo policy). Anything that expects a real
@@ -35,7 +37,7 @@ def test_removes_nested_placeholders_and_nothing_else(tmp_path, run_script):
 
     assert [path for path in junk if path.exists()] == []
     assert [path for path in keep if not path.exists()] == []
-    assert "📊 Deleted 2 file(s)." in result.stdout
+    assert sorted(summary(result.stdout)["Deleted"]) == sorted(str(path) for path in junk)
 
 
 def test_defaults_to_preview(tmp_path, run_script):
@@ -44,9 +46,9 @@ def test_defaults_to_preview(tmp_path, run_script):
     result = run_script(SCRIPT, [f"--path={tmp_path}"], check=True)
 
     assert all(path.exists() for path in junk)
-    for path in junk:
-        assert f"{path}\n" in result.stdout
-    assert "Deleted" not in result.stdout
+    rows = summary(result.stdout)
+    assert sorted(rows["Would delete"]) == sorted(str(path) for path in junk)
+    assert "Deleted" not in rows
 
 
 def test_missing_path_errors(run_script):

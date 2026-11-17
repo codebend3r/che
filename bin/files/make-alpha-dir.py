@@ -13,15 +13,25 @@ from __future__ import annotations
 
 import string
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from utils import build_parser, info, run_cli, warning
+from report import ADDED, FAIL, SAME, Listing, Outcome, Tally, duration, plural
+from utils import build_parser, info, log, run_cli, warning
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 
 BUCKETS = ("#", *string.ascii_uppercase)
+
+
+class Bucket(Outcome):
+    """Everything creating a bucket folder can conclude, in summary order."""
+
+    CREATED = (ADDED, "created", "Created")
+    EXISTED = (SAME, "", "Already there", Listing.COUNT)
+    FAILED = (FAIL, "failed", "Failed", Listing.ALL)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -38,6 +48,7 @@ def main(argv: list[str] | None = None) -> int:
 
     info(f"Running command in {Path.cwd()}")
     args = parser.parse_args(argv)
+    started = time.monotonic()
 
     root = Path(args.path or ".")
     try:
@@ -50,15 +61,31 @@ def main(argv: list[str] | None = None) -> int:
     # every other operand, so a parent already holding a FILE named "A" ended
     # up with the remaining 26 buckets. Bailing on the first error would leave
     # a half-built bucket set behind.
-    failures = 0
+    tally = Tally(Bucket)
     for bucket in BUCKETS:
+        path = root / bucket
+        if path.is_dir():
+            tally.record(Bucket.EXISTED, bucket)
+            continue
         try:
-            (root / bucket).mkdir(exist_ok=True)
+            path.mkdir(exist_ok=True)
         except OSError as exc:
-            warning(f"mkdir: {bucket}: {exc.strerror or exc}")
-            failures += 1
+            reason = exc.strerror or str(exc)
+            tally.record(Bucket.FAILED, bucket, reason, item=f"{bucket}: {reason}")
+            continue
+        tally.record(Bucket.CREATED, bucket)
 
-    return 1 if failures else 0
+    tally.summary(
+        "Summary",
+        facts=[plural(len(BUCKETS), "bucket"), duration(time.monotonic() - started)],
+        notes=[f"In {root.resolve()}"],
+    )
+    print()
+    if count := tally.count(Bucket.FAILED):
+        warning(f"⚠️  {plural(count, 'bucket')} could not be created. Every other bucket was.")
+        return 1
+    log("🎉 Buckets ready.")
+    return 0
 
 
 if __name__ == "__main__":

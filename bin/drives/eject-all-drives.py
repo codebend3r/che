@@ -26,51 +26,58 @@ Options:
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from nas import NasDrive, select_drives, warn_unknown_drive
+from report import FAIL, OK, PLAN, SAME, Listing, Outcome, Tally, duration, plural
 from utils import (
     add_bool_flag,
     build_parser,
     dry_run_complete,
-    footer_rule,
     heading,
-    info,
     log,
     require_binary,
     run,
     run_cli,
-    success,
     warning,
 )
 
-__version__ = "3.3.0"
+__version__ = "4.0.0"
 
 
-def eject_volume(label: str, *, dry_run: bool, force: bool, quiet: bool) -> str:
-    """Unmount ``/Volumes/<label>``. Returns "ejected", "skipped" or "failed"."""
+class Eject(Outcome):
+    """Everything an eject can conclude about a volume, in summary order."""
+
+    EJECTED = (OK, "ejected", "Ejected")
+    WOULD_EJECT = (PLAN, "would eject", "Would eject")
+    NOT_MOUNTED = (SAME, "", "Not mounted", Listing.COUNT)
+    FAILED = (FAIL, "failed", "Failed", Listing.ALL)
+
+
+def eject_volume(tally: Tally[Eject], label: str, *, dry_run: bool, force: bool) -> None:
+    """Unmount ``/Volumes/<label>`` and record how it went."""
     mount = Path("/Volumes") / label
 
     if not mount.is_dir():
-        if not quiet:
-            info(f"  ⏭️  {label} — not mounted")
-        return "skipped"
+        tally.record(Eject.NOT_MOUNTED, label)
+        return
 
     if dry_run:
-        warning(f"  🪄 Would unmount {mount}")
-        return "ejected"
+        tally.record(Eject.WOULD_EJECT, label)
+        return
 
     unmount_cmd = ["diskutil", "unmount"]
     if force:
         unmount_cmd.append("force")
 
-    log(f"  📤 Unmounting {mount}...")
     completed = run([*unmount_cmd, str(mount)], check=False, capture=True)
     if completed.returncode != 0:
-        warning(f"  ❌ Failed to unmount {mount}")
-        return "failed"
+        reason = (completed.stderr or "").strip() or "diskutil unmount failed"
+        tally.record(Eject.FAILED, label, reason, item=f"{label}: {reason}")
+        return
 
     # A force-unmount can leave the placeholder directory behind. Try to clear
     # it unprivileged first; fall back to sudo, and give up quietly if neither
@@ -81,8 +88,7 @@ def eject_volume(label: str, *, dry_run: bool, force: bool, quiet: bool) -> str:
         except OSError:
             run(["sudo", "rmdir", str(mount)], check=False, capture=True)
 
-    success(f"  ✅ {label} ejected")
-    return "ejected"
+    tally.record(Eject.EJECTED, label)
 
 
 def reset_finder_state(selected: list[NasDrive], *, reset_lists: bool) -> None:
@@ -140,6 +146,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     add_bool_flag(parser, "--quiet", help="Only log unmounts and failures")
     args = parser.parse_args(argv)
+    started = time.monotonic()
 
     # Only gate on diskutil for a real run: the shell version's dry-run never
     # invoked it, so previewing worked anywhere.
@@ -153,32 +160,36 @@ def main(argv: list[str] | None = None) -> int:
         warn_unknown_drive(args.only)
 
     force = not args.no_force
-    counts = {"ejected": 0, "skipped": 0, "failed": 0}
+    # macOS re-mounts of the same share land at "<name>-1" or at the IP.
+    labels = [label for d in selected for label in (d.name, f"{d.name}-1", d.ip)]
 
-    for drive in selected:
-        info(f"🐉 {drive.name} ({drive.ip})")
-        # macOS re-mounts of the same share land at "<name>-1" or at the IP.
-        for label in (drive.name, f"{drive.name}-1", drive.ip):
-            counts[eject_volume(label, dry_run=args.dry_run, force=force, quiet=args.quiet)] += 1
+    # --quiet is still accepted, but has nothing left to hide: a volume that is
+    # not mounted (all it used to silence) is now only counted in the summary.
+    tally = Tally(Eject)
+    with tally.progress(len(labels)) as progress:
+        for label in labels:
+            progress.step(label)
+            eject_volume(tally, label, dry_run=args.dry_run, force=force)
 
-    footer_rule()
+    failed = tally.count(Eject.FAILED)
+    if not args.dry_run and not failed:
+        # The lists are left alone under --only: resetlist is all-or-nothing and
+        # would nuke the other drives' favorites too.
+        print()
+        reset_finder_state(selected, reset_lists=not args.only and not args.no_clear_favorites)
 
-    if args.dry_run:
-        success(f"🌵 Would eject:  {counts['ejected']}")
-        info(f"⏭️  Skipped:     {counts['skipped']} (not mounted)")
-        dry_run_complete("ejected")
-        return 0
-
-    success(f"✅ Ejected:  {counts['ejected']}")
-    info(f"⏭️  Skipped:  {counts['skipped']} (not mounted)")
-    if counts["failed"]:
-        warning(f"❌ Failed:   {counts['failed']}")
+    tally.summary(
+        "Preview" if args.dry_run else "Summary",
+        facts=[plural(len(selected), "drive"), duration(time.monotonic() - started)],
+    )
+    print()
+    if failed:
+        warning(f"⚠️  {plural(failed, 'volume')} failed to unmount; Finder was left alone.")
         return 1
-
-    # The lists are left alone under --only: resetlist is all-or-nothing and
-    # would nuke the other drives' favorites too.
-    reset_finder_state(selected, reset_lists=not args.only and not args.no_clear_favorites)
-    log("🎉 All clean! 🧹✨")
+    if args.dry_run:
+        dry_run_complete("ejected")
+    else:
+        log("🎉 All clean! 🧹✨")
     return 0
 
 

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from conftest import commit, git
+from conftest import commit, git, summary
 
 UPDATE = "git/update-local-branches.py"
 
@@ -51,6 +52,17 @@ def test_updates_every_branch(work: Path, run_script):
     assert is_ancestor(work, "origin/older", "older")
     assert is_ancestor(work, "origin/main", "main")
     assert git(work, "symbolic-ref", "--short", "HEAD") == "older"
+    assert summary(result.stdout)["Updated"] == ["main", "older"]
+
+
+def test_dry_run_changes_nothing(work: Path, run_script):
+    before = git(work, "rev-parse", "older")
+
+    result = run_script(UPDATE, ["--dry-run"], cwd=work)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert summary(result.stdout)["Would update"] == ["main", "older"]
+    assert git(work, "rev-parse", "older") == before
 
 
 def test_run_from_a_subdirectory_updates_the_branch_checked_out_there(work: Path, run_script):
@@ -62,7 +74,7 @@ def test_run_from_a_subdirectory_updates_the_branch_checked_out_there(work: Path
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert is_ancestor(work, "origin/older", "older"), result.stdout
-    assert "in its worktree" not in result.stdout
+    assert f"in {work}" not in result.stdout
     assert git(work, "symbolic-ref", "--short", "HEAD") == "older"
 
 
@@ -74,7 +86,7 @@ def test_a_branch_in_another_worktree_is_rebased_in_place(work: Path, run_script
     result = run_script(UPDATE, cwd=work)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "older up to date (in " in result.stdout
+    assert re.search(rf"✓ updated +older  in {re.escape(str(linked))}; was ", result.stdout)
     assert is_ancestor(work, "origin/older", "older")
     assert git(linked, "symbolic-ref", "--short", "HEAD") == "older"
 

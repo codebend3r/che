@@ -12,11 +12,13 @@ Options:
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from media import probe_media
+from report import FAIL, NOTE, WARN, Listing, Outcome, Tally, duration, plural
 from utils import (
     build_parser,
     info,
@@ -25,10 +27,9 @@ from utils import (
     require_binary,
     run_cli,
     scan_root,
-    warning,
 )
 
-__version__ = "3.1.0"
+__version__ = "4.0.0"
 
 VIDEO_EXTENSIONS = ("mp4", "mkv", "avi", "mov", "flv", "wmv", "webm")
 
@@ -48,6 +49,15 @@ LANG_COLOR = {
 DEFAULT_COLOR = "\033[90m"  # Gray for unknown languages
 
 
+class Audio(Outcome):
+    """Everything a scan can conclude about a file, in summary order."""
+
+    # Every file prints: its languages are the data this script exists for.
+    TAGGED = (NOTE, "audio", "Tagged", Listing.COUNT)
+    UNTAGGED = (WARN, "untagged", "Not tagged")
+    UNREADABLE = (FAIL, "unreadable", "Unreadable", Listing.ALL)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser(
         prog="scan-videos-audio-language",
@@ -63,30 +73,46 @@ def main(argv: list[str] | None = None) -> int:
 
     require_binary("ffprobe", hint="ffprobe (from ffmpeg) is required but not installed.")
 
-    for path in iter_files(root, extensions=VIDEO_EXTENSIONS):
-        info(f"File: {path}")
+    started = time.monotonic()
+    files = list(iter_files(root, extensions=VIDEO_EXTENSIONS))
+    tally = Tally(Audio)
+    with tally.progress(len(files)) as progress:
+        for path in files:
+            progress.step(str(path))
+            scan_file(tally, path)
 
-        # Telling "no language tags" apart from "could not be read" matters:
-        # the shell version aborted the whole scan on an unreadable file
-        # (`set -e` on a failing command substitution), so it never had to
-        # render the difference.
-        probe = probe_media(path)
-        if probe is None:
-            warning(f"Audio language(s): {paint('Unreadable - ffprobe failed', DEFAULT_COLOR)}")
-            continue
-
-        # DELIBERATE DIVERGENCE: the shell version's csv output read `und,`
-        # for AC3 or E-AC3 audio in an MP4 on ffprobe 9 (see MediaProbe), and
-        # a bare `,` when such a stream had no tag. Both now read cleanly.
-        languages = probe.languages("audio")
-        if not languages:
-            info(f"Audio language(s): {paint('Unknown or not tagged', DEFAULT_COLOR)}")
-            continue
-
-        colored = " ".join(paint(lang, LANG_COLOR.get(lang, DEFAULT_COLOR)) for lang in languages)
-        info(f"Audio language(s): {colored} ")
-
+    tally.summary(
+        "Summary",
+        facts=[plural(len(files), "file"), duration(time.monotonic() - started)],
+    )
     return 0
+
+
+def scan_file(tally: Tally[Audio], path: Path) -> None:
+    """Record one file's audio language tags."""
+    name = str(path)
+
+    # Telling "no language tags" apart from "could not be read" matters:
+    # the shell version aborted the whole scan on an unreadable file
+    # (`set -e` on a failing command substitution), so it never had to
+    # render the difference.
+    probe = probe_media(path)
+    if probe is None:
+        reason = "ffprobe failed"
+        tally.record(Audio.UNREADABLE, name, reason, item=f"{name}: {reason}")
+        return
+
+    # DELIBERATE DIVERGENCE: the shell version's csv output read `und,`
+    # for AC3 or E-AC3 audio in an MP4 on ffprobe 9 (see MediaProbe), and
+    # a bare `,` when such a stream had no tag. Both now read cleanly.
+    languages = probe.languages("audio")
+    if not languages:
+        tally.record(Audio.UNTAGGED, name, "unknown or not tagged")
+        return
+
+    # Each language keeps its own colour inside the otherwise dim detail.
+    colored = " ".join(paint(lang, LANG_COLOR.get(lang, DEFAULT_COLOR)) for lang in languages)
+    tally.record(Audio.TAGGED, name, colored)
 
 
 if __name__ == "__main__":

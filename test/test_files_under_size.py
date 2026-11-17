@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import re
+
+from conftest import summary
+
 SCRIPT = "files/files-under-size.py"
 
 # The script defaults DRY_RUN=true (repo policy). Anything that expects a real
@@ -44,7 +48,8 @@ def test_defaults_to_preview(tmp_path, run_script):
     result = run_script(SCRIPT, [f"--path={tmp_path}", "--size=1k"], check=True)
 
     assert small.exists()
-    assert f"[1/1] Would delete: 10 B - {small}" in result.stdout
+    assert summary(result.stdout)["Would delete"] == [str(small)]
+    assert re.search(rf"○ would delete +{re.escape(str(small))}  10 B$", result.stdout, re.M)
 
 
 def test_nothing_under_the_threshold(tmp_path, run_script):

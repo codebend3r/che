@@ -22,26 +22,37 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from collections.abc import Container
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from report import FAIL, OK, PLAN, SAME, Listing, Outcome, Tally, duration, plural
 from utils import (
     add_bool_flag,
     build_parser,
+    dry_run_complete,
     env_bool,
     info,
     log,
-    note,
     note_settings,
-    remove_or_warn,
     report_walk_error,
     run_cli,
     scan_root,
+    warning,
 )
 
-__version__ = "3.1.0"
+__version__ = "4.0.0"
+
+
+class Prune(Outcome):
+    """Everything a directory can come to, in summary order."""
+
+    DELETED = (OK, "deleted", "Deleted")
+    WOULD_DELETE = (PLAN, "would delete", "Would delete")
+    KEPT = (SAME, "", "Not empty, kept", Listing.COUNT)
+    FAILED = (FAIL, "failed", "Failed", Listing.ALL)
 
 
 def directories_deepest_first(root: Path) -> list[Path]:
@@ -49,8 +60,8 @@ def directories_deepest_first(root: Path) -> list[Path]:
 
     This is ``find -depth -type d``. The ordering is what makes cascading work:
     emptying a leaf lets its parent become empty, and the parent is visited
-    afterwards. The whole tree is enumerated up front - exactly like ``find``
-    piping into a loop - and emptiness is re-checked at visit time, so a
+    afterwards. The whole tree is enumerated up front (exactly like ``find``
+    piping into a loop), and emptiness is re-checked at visit time, so a
     directory emptied earlier in the run is seen as empty when its turn comes.
     """
     walk = os.walk(root, topdown=False, followlinks=False, onerror=report_walk_error)
@@ -85,6 +96,7 @@ def main(argv: list[str] | None = None) -> int:
 
     info(f"Running command in {Path.cwd()}")
     args = parser.parse_args(argv)
+    started = time.monotonic()
 
     # An empty --path reads "--path is required", where the shell version
     # printed "Error: --path is required.".
@@ -102,30 +114,52 @@ def main(argv: list[str] | None = None) -> int:
     # this one, until 3.1.0) re-checked the untouched filesystem and previewed
     # only the leaf, under-reporting what the real run then deleted.
     would_delete: set[Path] = set()
-    deleted_count = 0
-    failures = 0
+    tally = Tally(Prune)
 
-    for directory in directories_deepest_first(root):
-        if directory == root:
-            continue  # never touch the root the user pointed at
+    # The root is never touched: it is the folder the user pointed at.
+    directories = [d for d in directories_deepest_first(root) if d != root]
+    with tally.progress(len(directories)) as progress:
+        for directory in directories:
+            progress.step(str(directory))
 
-        if not is_strictly_empty(directory, would_delete):
-            if args.verbose:
-                note(f"Skipped (not empty): {directory}")
-            continue
-
-        if args.dry_run:
-            log(f"[DRY-RUN] Would delete: {directory}")
-            would_delete.add(directory)
-        else:
-            if not remove_or_warn(directory, Path.rmdir):
-                failures += 1
+            if not is_strictly_empty(directory, would_delete):
+                tally.record(Prune.KEPT, str(directory))
+                if args.verbose:
+                    tally.report.event(SAME, "not empty", str(directory))
                 continue
-            log(f"Deleted: {directory}")
-        deleted_count += 1
 
-    log(f"📊 Total deleted directories: {deleted_count}")
-    return 1 if failures else 0
+            if args.dry_run:
+                tally.record(Prune.WOULD_DELETE, str(directory))
+                would_delete.add(directory)
+                continue
+            try:
+                directory.rmdir()
+            except OSError as exc:
+                reason = exc.strerror or str(exc)
+                tally.record(Prune.FAILED, str(directory), reason, item=f"{directory}: {reason}")
+                continue
+            tally.record(Prune.DELETED, str(directory))
+
+    tally.summary(
+        "Preview" if args.dry_run else "Summary",
+        facts=[
+            plural(len(directories), "directory", "directories"),
+            duration(time.monotonic() - started),
+        ],
+        notes=["Only strictly empty directories go; .DS_Store or ._* files keep a folder."],
+    )
+    print()
+    if count := tally.count(Prune.FAILED):
+        warning(
+            f"⚠️  {plural(count, 'directory', 'directories')} could not be deleted. "
+            "Every other directory was still attempted."
+        )
+        return 1
+    if args.dry_run:
+        dry_run_complete("deleted")
+    else:
+        log("🎉 Cleanup complete.")
+    return 0
 
 
 if __name__ == "__main__":

@@ -8,6 +8,8 @@ symlinked root, ``--ext`` with a leading dot, and glob metacharacters in
 
 from __future__ import annotations
 
+from conftest import summary
+
 SCRIPT = "files/delete-by-ext.py"
 
 # The script defaults DRY_RUN=true (repo policy). Anything that expects a real
@@ -20,21 +22,29 @@ def test_deletes_matching_extensions(tmp_path, run_script):
     (tmp_path / "b.png").touch()
     (tmp_path / "c.mp4").touch()
 
-    run_script(SCRIPT, [f"--path={tmp_path}", "--ext=jpg,png"], env=REAL, check=True)
+    result = run_script(SCRIPT, [f"--path={tmp_path}", "--ext=jpg,png"], env=REAL, check=True)
 
     assert not (tmp_path / "a.jpg").exists()
     assert not (tmp_path / "b.png").exists()
     assert (tmp_path / "c.mp4").exists()
+    assert sorted(summary(result.stdout)["Deleted"]) == [
+        str(tmp_path / "a.jpg"),
+        str(tmp_path / "b.png"),
+    ]
 
 
 def test_dry_run_deletes_nothing(tmp_path, run_script):
     (tmp_path / "a.jpg").touch()
     (tmp_path / "b.png").touch()
 
-    run_script(SCRIPT, [f"--path={tmp_path}", "--ext=jpg,png", "--dry-run"], check=True)
+    result = run_script(SCRIPT, [f"--path={tmp_path}", "--ext=jpg,png", "--dry-run"], check=True)
 
     assert (tmp_path / "a.jpg").exists()
     assert (tmp_path / "b.png").exists()
+    assert sorted(summary(result.stdout)["Would delete"]) == [
+        str(tmp_path / "a.jpg"),
+        str(tmp_path / "b.png"),
+    ]
 
 
 def test_defaults_to_dry_run(tmp_path, run_script):

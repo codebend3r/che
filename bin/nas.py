@@ -81,22 +81,17 @@ def smb_url(name: str, host: str) -> str:
     return f"smb://{SMB_USER}@{host}/{name}"
 
 
-def mount_smb(name: str, host: str) -> bool:
-    """Mount one share via AppleScript's ``mount volume``. True on success.
+def mount_smb(name: str, host: str) -> str:
+    """Mount one share via AppleScript's ``mount volume``.
 
-    AppleScript rather than ``mount_smbfs`` takes the same NetAuth path Finder
-    does: ``/Volumes/<name>`` is created automatically and Keychain credentials
-    are used silently, with no Finder modals. On failure this prints why; the
-    caller prints its own progress and success lines.
+    Returns "" on success, otherwise why it failed in one line (osascript's
+    error), so the caller can report it as a single event. AppleScript rather
+    than ``mount_smbfs`` takes the same NetAuth path Finder does:
+    ``/Volumes/<name>`` is created automatically and Keychain credentials are
+    used silently, with no Finder modals.
     """
     url = smb_url(name, host)
     completed = run(["osascript", "-e", f'mount volume "{url}"'], check=False, capture=True)
     if completed.returncode == 0:
-        return True
-
-    warning(f"  ❌ mount failed for {url}")
-    stderr = (completed.stderr or "").strip()
-    if stderr:
-        warning(f"     {stderr}")
-    warning(f"     Check that Keychain has a password for '{SMB_USER}@{host}'.")
-    return False
+        return ""
+    return (completed.stderr or "").strip() or "mount volume failed"

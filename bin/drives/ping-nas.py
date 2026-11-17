@@ -34,6 +34,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from nas import SMB_USER, NasDrive, is_mounted, mount_smb, select_drives, smb_url
+from report import FAIL, OK, SAME, WARN, Listing, Outcome, Tally, duration, plural
 from utils import (
     add_bool_flag,
     build_parser,
@@ -43,13 +44,22 @@ from utils import (
     parse_count,
     run,
     run_cli,
-    success,
     warning,
 )
 
-__version__ = "3.4.0"
+__version__ = "4.0.0"
 
 SMB_PORT = 445
+
+
+class Ping(Outcome):
+    """Everything one cycle can conclude about a drive, in summary order."""
+
+    REMOUNTED = (OK, "remounted", "Remounted")
+    MOUNTED = (SAME, "", "Mounted", Listing.COUNT)
+    NOT_MOUNTED = (WARN, "not mounted", "Not mounted")
+    UNREACHABLE = (FAIL, "unreachable", "Unreachable", Listing.ALL)
+    REMOUNT_FAILED = (FAIL, "failed", "Remount failed", Listing.ALL)
 
 
 def smb_reachable(ip: str, timeout: int) -> bool:
@@ -69,14 +79,30 @@ def smb_reachable(ip: str, timeout: int) -> bool:
     return completed.returncode == 0
 
 
-def remount_drive(name: str, host: str) -> bool:
-    """Remount one drive via AppleScript. True on success."""
-    log(f"  🔗 Remounting {name} ({smb_url(name, host)})...")
-    if not mount_smb(name, host):
-        return False
+def check_drive(
+    tally: Tally[Ping], drive: NasDrive, *, ping_timeout: int, remount: bool, use_ip: bool
+) -> None:
+    """Probe one drive, remount it if it dropped off, and record how it went."""
+    name = drive.name
+    if not smb_reachable(drive.ip, ping_timeout):
+        reason = f"SMB port {SMB_PORT} unreachable at {drive.ip}"
+        tally.record(Ping.UNREACHABLE, name, reason, item=f"{name}: {reason}")
+        return
 
-    success(f"  ✅ {name} remounted 🐉")
-    return True
+    if is_mounted(name):
+        tally.record(Ping.MOUNTED, name)
+        return
+
+    if not remount:
+        tally.record(Ping.NOT_MOUNTED, name, f"reachable at {drive.ip}; --no-remount")
+        return
+
+    host = drive.host(use_ip=use_ip)
+    url = smb_url(name, host)
+    if reason := mount_smb(name, host):
+        tally.record(Ping.REMOUNT_FAILED, name, f"{url}: {reason}", item=f"{name}: {reason}")
+        return
+    tally.record(Ping.REMOUNTED, name, url)
 
 
 def ping_all_nas(
@@ -89,49 +115,34 @@ def ping_all_nas(
     quiet: bool,
 ) -> None:
     """Run check cycle number ``cycle`` over the active drive list."""
-    unreachable = 0
-    unmounted = 0
-    remounted = 0
-    remount_failed = 0
-
+    started = time.monotonic()
     if not quiet:
-        log(f"🔄 Cycle #{cycle} — checking {len(active)} NAS drive(s)...")
+        if cycle > 1:
+            print()
+        log(f"🔄 Cycle #{cycle}: checking {plural(len(active), 'NAS drive')}...")
 
-    for drive in active:
-        if not smb_reachable(drive.ip, ping_timeout):
-            warning(f"  ❌ {drive.name} ({drive.ip}): SMB port {SMB_PORT} unreachable")
-            unreachable += 1
-            continue
+    tally = Tally(Ping)
+    with tally.progress(len(active)) as progress:
+        for drive in active:
+            progress.step(drive.name)
+            check_drive(tally, drive, ping_timeout=ping_timeout, remount=remount, use_ip=use_ip)
 
-        if is_mounted(drive.name):
-            if not quiet:
-                log(f"  ✅ 🐉 {drive.name} ({drive.ip}) — mounted")
-            continue
-
-        warning(f"  ⚠️  {drive.name} ({drive.ip}) — reachable but not mounted")
-        unmounted += 1
-
-        if remount:
-            if remount_drive(drive.name, drive.host(use_ip=use_ip)):
-                remounted += 1
-            else:
-                remount_failed += 1
-
-    if unreachable == 0 and unmounted == 0:
-        if not quiet:
-            success(f"✨ All {len(active)} drive(s) responded and mounted 🎉")
+    # Under --quiet a cycle where every drive answered and is mounted prints
+    # nothing at all, as before; any other cycle still closes with its table.
+    if quiet and tally.count(Ping.MOUNTED) == len(active):
         return
-
-    parts = []
-    if unreachable:
-        parts.append(f"{unreachable} unreachable")
-    if remounted:
-        parts.append(f"{remounted} remounted")
-    if remount_failed:
-        parts.append(f"{remount_failed} remount-failed")
-    if not remount and unmounted:
-        parts.append(f"{unmounted} unmounted")
-    warning(f"⚠️  Cycle summary: {' '.join(parts)}")
+    notes = []
+    if tally.count(Ping.REMOUNT_FAILED):
+        notes.append(f"Check that Keychain has a password for {SMB_USER} on each failed host.")
+    tally.summary(
+        "Summary",
+        facts=[
+            f"cycle #{cycle}",
+            plural(len(active), "drive"),
+            duration(time.monotonic() - started),
+        ],
+        notes=notes,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -206,7 +217,7 @@ def main(argv: list[str] | None = None) -> int:
             time.sleep(interval)
     except KeyboardInterrupt:
         print()
-        info(f"👋 Stopping keep-alive pinger after {cycle} cycle(s).")
+        info(f"👋 Stopping keep-alive pinger after {plural(cycle, 'cycle')}.")
         return 0
 
 

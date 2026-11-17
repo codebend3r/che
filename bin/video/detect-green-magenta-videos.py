@@ -23,15 +23,26 @@ have to live somewhere isolated. Override the location with $DETECT_GM_PYTHON.
 
 import os
 import sys
+import time
 from pathlib import Path
 from typing import NamedTuple, NoReturn
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-# Standard library only, so this imports the same under the venv interpreter.
-from utils import add_bool_flag, build_parser, iter_files, parse_count, run_cli
+# Standard library only, so these import the same under the venv interpreter.
+from report import FAIL, OK, WARN, Listing, Outcome, Tally, duration, plural
+from utils import add_bool_flag, build_parser, iter_files, log, parse_count, run_cli, warning
 
-__version__ = "2.0.0"
+__version__ = "3.0.0"
+
+
+class Tint(Outcome):
+    """Everything a scan can conclude about a video, in summary order."""
+
+    FINE = (OK, "", "Look fine", Listing.COUNT)
+    SKIPPED = (WARN, "skipped", "Could not judge")
+    FLAGGED = (FAIL, "flagged", "Green/magenta", Listing.ALL)
+
 
 VENV_PYTHON = Path(
     os.environ.get("DETECT_GM_PYTHON", Path.home() / ".venvs" / "green-magenta" / "bin" / "python")
@@ -207,7 +218,8 @@ def iter_videos(paths):
         elif p.is_file():
             yield p
         else:
-            print(f"[skip] {p}: not a file or directory", file=sys.stderr)
+            # Yielded so the caller can record it as a skip, like an unreadable video.
+            yield p
 
 
 def main(argv=None):
@@ -245,30 +257,48 @@ def main(argv=None):
     print(f"Scanning: {' '.join(args.paths)}")
     print("----------------------------------------------------")
 
-    bad = []
-    any_seen = False
-    for v in iter_videos(args.paths):
-        any_seen = True
-        try:
-            verdict = analyze_video(v, sample_count=samples, threshold=args.threshold)
-        except SkipVideo as exc:
-            print(f"[skip] {v}: {exc}", file=sys.stderr)
-            continue
-        if verdict.flagged or args.verbose:
-            tag = "BAD " if verdict.flagged else "ok  "
-            print(f"{tag} ratio={verdict.ratio:.2f} sat={verdict.saturation:>5.1f}  {v}")
-        if verdict.flagged:
-            bad.append(str(v))
+    started = time.monotonic()
+    tally = Tally(Tint)
+    # DELIBERATE DIVERGENCE: skips and the flagged list went to stderr and the
+    # verdicts to stdout. Every line now goes to stdout as one aligned event
+    # list with a closing table, like the rest of the repo; the exit codes
+    # (1 for any flagged video, 2 for none found) are unchanged.
+    # Collected up front so the progress line can show a total: decoding the
+    # sampled frames dwarfs the walk.
+    videos = list(iter_videos(args.paths))
+    with tally.progress(len(videos)) as progress:
+        for v in videos:
+            progress.step(str(v))
+            if not v.is_file():
+                tally.record(Tint.SKIPPED, str(v), "not a file or directory")
+                continue
+            try:
+                verdict = analyze_video(v, sample_count=samples, threshold=args.threshold)
+            except SkipVideo as exc:
+                tally.record(Tint.SKIPPED, str(v), str(exc), item=f"{v}: {exc}")
+                continue
+            detail = f"ratio={verdict.ratio:.2f} sat={verdict.saturation:.1f}"
+            if verdict.flagged:
+                tally.record(Tint.FLAGGED, str(v), detail)
+                continue
+            tally.record(Tint.FINE, str(v))
+            if args.verbose:
+                tally.report.event(Tint.FINE.tone, "ok", str(v), detail)
 
-    if not any_seen:
-        print("No video files found.", file=sys.stderr)
+    if not videos:
+        warning("No video files found.")
         return 2
 
-    if bad:
-        print(f"\n{len(bad)} video(s) flagged as green/magenta-tinted:", file=sys.stderr)
-        for b in bad:
-            print(f"  {b}", file=sys.stderr)
+    tally.summary(
+        "Summary",
+        facts=[plural(len(videos), "video"), duration(time.monotonic() - started)],
+        notes=[f"Flagged at a green/magenta ratio of {args.threshold} or more, when saturated."],
+    )
+    print()
+    if count := tally.count(Tint.FLAGGED):
+        warning(f"⚠️  {plural(count, 'video')} flagged as green/magenta-tinted.")
         return 1
+    log("🎉 No green/magenta videos found.")
     return 0
 
 

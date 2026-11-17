@@ -5,6 +5,10 @@ Carries over every case from the old ``test/delete-empty-folders.test.sh``.
 
 from __future__ import annotations
 
+import re
+
+from conftest import summary
+
 SCRIPT = "files/delete-empty-folders.py"
 
 REAL = {"DRY_RUN": "false"}
@@ -107,8 +111,10 @@ def test_folder_with_spaces(tmp_path, run_script):
     assert not spaced.exists()
 
 
-def reported(stdout: str, prefix: str) -> list[str]:
-    return [line.removeprefix(prefix) for line in stdout.splitlines() if line.startswith(prefix)]
+def reported(stdout: str, verb: str) -> list[str]:
+    """The paths of the live event lines with ``verb``, in the order they printed."""
+    line = re.compile(rf"^  \S {verb} +(.*)$")
+    return [m[1] for text in stdout.splitlines() if (m := line.match(text))]
 
 
 def test_dry_run_previews_the_whole_empty_chain(tmp_path, run_script):
@@ -118,12 +124,12 @@ def test_dry_run_previews_the_whole_empty_chain(tmp_path, run_script):
 
     result = run_script(SCRIPT, [f"--path={tmp_path}", "--dry-run"], check=True)
 
-    assert reported(result.stdout, "[DRY-RUN] Would delete: ") == [
+    assert reported(result.stdout, "would delete") == [
         str(chain),
         str(chain.parent),
         str(chain.parent.parent),
     ]
-    assert "📊 Total deleted directories: 3" in result.stdout
+    assert len(summary(result.stdout)["Would delete"]) == 3
     assert chain.exists()
 
 
@@ -138,9 +144,21 @@ def test_dry_run_previews_exactly_what_a_real_run_deletes(tmp_path, run_script):
     preview = run_script(SCRIPT, [f"--path={tmp_path}", "--dry-run"], check=True)
     real = run_script(SCRIPT, [f"--path={tmp_path}"], env=REAL, check=True)
 
-    previewed = reported(preview.stdout, "[DRY-RUN] Would delete: ")
-    assert previewed == reported(real.stdout, "Deleted: ")
+    previewed = reported(preview.stdout, "would delete")
+    assert previewed == reported(real.stdout, "deleted")
+    assert summary(preview.stdout)["Would delete"] == summary(real.stdout)["Deleted"]
     assert sorted(previewed) == sorted(
         str(tmp_path / rel)
         for rel in ("a", "a/b", "a/b/c", "a/b2", "keep/x", "keep/x/y", "hidden/z")
     )
+
+
+def test_verbose_reports_kept_directories(tmp_path, run_script):
+    keep = tmp_path / "keep"
+    keep.mkdir()
+    (keep / "file.txt").touch()
+
+    result = run_script(SCRIPT, [f"--path={tmp_path}", "--verbose"], check=True)
+
+    assert reported(result.stdout, "not empty") == [str(keep)]
+    assert "Not empty, kept" in summary(result.stdout)

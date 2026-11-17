@@ -8,7 +8,7 @@ reaches below the top level is the part ``--recursive`` decides.
 from __future__ import annotations
 
 import pytest
-from conftest import load_script
+from conftest import load_script, summary
 
 SCRIPT = "video/rename-video-file.py"
 rename = load_script(SCRIPT)
@@ -83,5 +83,6 @@ def test_renames_nested_folders_deepest_first(library, run_script):
 def test_defaults_to_dry_run(library, run_script):
     result = run_script(SCRIPT, [f"--path={library}"])
 
-    assert "📁 [DRY RUN] Would rename folder: top one ➡️ Top One" in result.stdout
+    assert "○ would rename  top one/  to Top One" in result.stdout
+    assert summary(result.stdout)["Would rename"] == ["top one/nested two/", "top one/"]
     assert folders(library) == ["top one", "top one/nested two"]

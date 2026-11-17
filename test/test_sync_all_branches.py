@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import pytest
-from conftest import commit, git, local_branches
+from conftest import commit, git, local_branches, summary
 
 SYNC = "git/sync-all-branches.py"
 HOOKS = (
@@ -81,34 +81,6 @@ def assert_includes_origin(repo: Repo, branch: str) -> None:
         f"refs/remotes/origin/{branch}",
         f"refs/heads/{branch}",
     )
-
-
-_ROW = re.compile(r"^  \S (?P<label>\S.*?)\s{2,}(?P<count>\d+)(?:   (?P<item>.*))?$")
-
-
-def summary(stdout: str) -> dict[str, list[str]]:
-    """The closing table as ``{label: items}``; an unlisted row maps to ``[]``.
-
-    Every row's count must match the items it lists, unless they were
-    collapsed into "... and N more" or the row lists none at all.
-    """
-    table = re.split(r"\n(?:Summary|Preview)  ", stdout, maxsplit=1)[-1]
-    rows: dict[str, list[str]] = {}
-    counts: dict[str, int] = {}
-    label = ""
-    for line in table.splitlines():
-        if match := _ROW.match(line):
-            label = match["label"].rstrip()
-            counts[label] = int(match["count"])
-            rows[label] = [match["item"]] if match["item"] else []
-        elif label and line.startswith("    ") and line.strip():
-            rows[label].append(line.strip())
-        else:
-            label = ""
-    for name, items in rows.items():
-        if items and not items[-1].startswith("…"):
-            assert len(items) == counts[name], (name, items, counts[name])
-    return rows
 
 
 def worktree_paths(work: Path) -> list[str]:
