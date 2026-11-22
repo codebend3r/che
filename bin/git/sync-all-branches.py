@@ -50,7 +50,7 @@ from utils import (
     warning,
 )
 
-__version__ = "4.1.0"
+__version__ = "4.2.0"
 
 
 def track_new(sync: BranchSync, author: str, limit: int) -> None:

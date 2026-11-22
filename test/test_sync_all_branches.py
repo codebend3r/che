@@ -254,6 +254,25 @@ def test_merged_gone_branch_and_its_locked_worktree_are_pruned(repo: Repo, run_s
     assert repo.wip.is_dir()
 
 
+def test_merged_branch_with_no_upstream_is_pruned(repo: Repo, run_script):
+    squash_merge_shipped_and_delete_remote(repo)
+    git(repo.work, "config", "--unset", "branch.shipped.remote")
+    git(repo.work, "config", "--unset", "branch.shipped.merge")
+    result = run_script(SYNC, cwd=repo.work)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert re.search(r"✓ deleted +shipped ", result.stdout)
+    assert "shipped" not in local_branches(repo.work)
+    assert not repo.shipped.exists()
+
+
+def test_new_branch_on_a_base_tip_with_no_upstream_is_kept(repo: Repo, run_script):
+    git(repo.work, "branch", "--no-track", "fresh", "origin/main")
+    result = run_script(SYNC, cwd=repo.work)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "fresh" in local_branches(repo.work)
+    assert summary(result.stdout)["Local only"] == ["fresh"]
+
+
 def test_merged_branch_with_uncommitted_work_is_pruned_and_its_work_stashed(repo: Repo, run_script):
     squash_merge_shipped_and_delete_remote(repo)
     (repo.shipped / "scratch.txt").write_text("unsaved\n")

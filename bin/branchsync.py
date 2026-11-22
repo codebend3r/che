@@ -486,6 +486,9 @@ class BranchSync:
                         f"temporary worktree retained for inspection: {temporary / 'checkout'}",
                     )
 
+    def rev(self, ref: str) -> str:
+        return run_output(["git", "rev-parse", "--verify", ref], cwd=self.root)
+
     def bases(self) -> list[str]:
         return [ref for name in BASE_BRANCHES if self.has_ref(ref := f"refs/remotes/origin/{name}")]
 
@@ -504,7 +507,7 @@ class BranchSync:
         force-pushed before a squash).
         """
         ref = ref or f"refs/heads/{branch}"
-        tip = run_output(["git", "rev-parse", "--verify", ref], cwd=self.root)
+        tip = self.rev(ref)
         for base in self.bases():
             label = base.removeprefix("refs/remotes/")
             if (
@@ -580,23 +583,42 @@ class BranchSync:
         path = Path(tree.path).resolve()
         return path in (self.root.resolve(), Path(self.trees[0].path).resolve())
 
+    def on_base_tip(self, branch: str) -> bool:
+        tip = self.rev(f"refs/heads/{branch}")
+        return any(tip == self.rev(base) for base in self.bases())
+
+    def merged_without_upstream(self, branch: str) -> str:
+        """Why a branch with no upstream counts as merged, or "".
+
+        GitHub deletes the remote branch on merge, so a branch pushed without
+        tracking has neither an upstream nor an ``origin/<branch>`` left to
+        follow. The same proofs apply, with one more guard: with no upstream to
+        vouch for it, a branch holding no commit of its own (a new branch cut
+        from a main that has since moved, which every ancestry or content proof
+        sees as "merged") counts only when GitHub reports a merged PR for it.
+        """
+        ref = f"refs/heads/{branch}"
+        own = run_output(["git", "rev-list", "--count", ref, "--not", *self.bases()], cwd=self.root)
+        if own == "0":
+            return self.merged_pull_request(branch, self.rev(ref))
+        return self.merged_reason(branch)
+
     def proven_merged(self, branch: str, upstream: str, *, gone: bool) -> str:
         """Why ``branch`` counts as merged into a main or dev branch, or "".
 
         With its upstream still on origin, the upstream must be merged too, so
         commits pushed from elsewhere are never dropped. A branch sitting on a
         base's tip has nothing to merge yet; that is a new branch, not a merged one.
+        An empty ``upstream`` is a branch that was never tracked.
         """
         if branch in PROTECTED_BRANCHES:
             return ""
         if gone:
             return self.merged_reason(branch)
-        tip = run_output(["git", "rev-parse", "--verify", f"refs/heads/{branch}"], cwd=self.root)
-        if any(
-            tip == run_output(["git", "rev-parse", "--verify", base], cwd=self.root)
-            for base in self.bases()
-        ):
+        if self.on_base_tip(branch):
             return ""
+        if not upstream:
+            return self.merged_without_upstream(branch)
         reason = self.merged_reason(branch)
         if not reason or self.is_ancestor(upstream, f"refs/heads/{branch}"):
             return reason
@@ -720,15 +742,14 @@ class BranchSync:
     def update_one(self, branch: str, upstream: str, occupied: dict[str, Path]) -> None:
         if not upstream and self.has_ref(f"refs/remotes/origin/{branch}"):
             upstream = f"refs/remotes/origin/{branch}"
-        if not upstream:
-            # Counted, not printed: a branch that was never pushed is normal,
-            # and a line per branch would bury the ones that changed.
-            self.record(Outcome.LOCAL_ONLY, branch)
-            return
         try:
-            gone = not self.has_ref(upstream)
+            gone = bool(upstream) and not self.has_ref(upstream)
             if reason := self.proven_merged(branch, upstream, gone=gone):
                 self.drop_merged(branch, reason, occupied)
+            elif not upstream:
+                # Counted, not printed: a branch that was never pushed is normal,
+                # and a line per branch would bury the ones that changed.
+                self.record(Outcome.LOCAL_ONLY, branch)
             elif gone:
                 if branch in PROTECTED_BRANCHES:
                     self.record(
