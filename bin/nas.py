@@ -25,15 +25,21 @@ SMB_USER = "crivas"
 
 
 class NasDrive(NamedTuple):
-    """One NAS. The share name is assumed to match the drive name, so
-    //crivas@Meleys/Meleys mounts at /Volumes/Meleys."""
+    """One NAS. The share name matches the drive name unless ``share`` says
+    otherwise, so //crivas@Meleys/Meleys mounts at /Volumes/Meleys."""
 
     name: str
     ip: str
+    share: str = ""
 
-    def host(self, *, use_ip: bool) -> str:
-        """How to reach it in a share URL: by IP under ``--use-ip``, else by name."""
-        return self.ip if use_ip else self.name
+    @property
+    def volume(self) -> str:
+        """The share to mount, which is also its name under ``/Volumes``."""
+        return self.share or self.name
+
+    def url(self, *, use_ip: bool) -> str:
+        """Its share URL, reaching the NAS by IP under ``--use-ip``, else by name."""
+        return f"smb://{SMB_USER}@{self.ip if use_ip else self.name}/{self.volume}"
 
 
 NAS_DRIVES: tuple[NasDrive, ...] = (
@@ -42,6 +48,8 @@ NAS_DRIVES: tuple[NasDrive, ...] = (
     NasDrive("Caraxes", "192.168.50.4"),
     NasDrive("Syrax", "192.168.50.5"),
     NasDrive("Vhagar", "192.168.50.6"),
+    # A UGREEN box, not a Synology: its shares are fixed names, none "Balerion".
+    NasDrive("Balerion", "192.168.50.234", share="Media"),
 )
 
 
@@ -64,33 +72,27 @@ def warn_unknown_drive(only: str) -> None:
     warning(f"⚠️  No drive named '{only}'. Known: {known}")
 
 
-def is_mounted(name: str) -> bool:
-    """True when something is actually mounted at ``/Volumes/<name>``.
+def is_mounted(volume: str) -> bool:
+    """True when something is actually mounted at ``/Volumes/<volume>``.
 
-    The shell version grepped ``mount`` output for `` on /Volumes/<name> (``;
+    The shell version grepped ``mount`` output for `` on /Volumes/<volume> (``;
     ``os.path.ismount`` asks the kernel directly. The two agree for every
     healthy mount. The one real difference: ``ismount`` lstats the mount root,
     so on a wedged SMB mount it can block for the server timeout where reading
     the mount table cannot.
     """
-    return os.path.ismount(f"/Volumes/{name}")
+    return os.path.ismount(f"/Volumes/{volume}")
 
 
-def smb_url(name: str, host: str) -> str:
-    """The share URL for drive ``name``, reached at ``host`` (its name or its IP)."""
-    return f"smb://{SMB_USER}@{host}/{name}"
-
-
-def mount_smb(name: str, host: str) -> str:
-    """Mount one share via AppleScript's ``mount volume``.
+def mount_smb(url: str) -> str:
+    """Mount the share at ``url`` via AppleScript's ``mount volume``.
 
     Returns "" on success, otherwise why it failed in one line (osascript's
     error), so the caller can report it as a single event. AppleScript rather
     than ``mount_smbfs`` takes the same NetAuth path Finder does:
-    ``/Volumes/<name>`` is created automatically and Keychain credentials are
+    ``/Volumes/<share>`` is created automatically and Keychain credentials are
     used silently, with no Finder modals.
     """
-    url = smb_url(name, host)
     completed = run(["osascript", "-e", f'mount volume "{url}"'], check=False, capture=True)
     if completed.returncode == 0:
         return ""
