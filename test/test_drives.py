@@ -19,6 +19,8 @@ EJECT = "drives/eject-all-drives.py"
 MOUNT = "drives/mount-all-drives.py"
 PING = "drives/ping-nas.py"
 
+DRIVE = nas.NasDrive("Vhagar", "192.168.50.5")
+
 mount_all_drives = load_script(MOUNT)
 ping_nas = load_script(PING)
 
@@ -56,7 +58,7 @@ def test_select_drives_without_only_is_every_drive():
 
 @pytest.mark.parametrize("only", ["Meleys", "meleys", "MELEYS"])
 def test_select_drives_matches_case_insensitively(only):
-    assert nas.select_drives(only) == [("Meleys", "192.168.50.2")]
+    assert nas.select_drives(only) == [nas.NasDrive("Meleys", "192.168.50.2")]
 
 
 @pytest.mark.parametrize("only", ["nope", "Mele", "Meleys-1", "192.168.50.2"])
@@ -64,12 +66,27 @@ def test_select_drives_unknown_name_selects_nothing(only):
     assert nas.select_drives(only) == []
 
 
-def test_smb_url():
-    assert nas.smb_url("Meleys", "192.168.50.2") == "smb://crivas@192.168.50.2/Meleys"
+def test_volume_is_the_drive_name_unless_a_share_is_given():
+    assert nas.NasDrive("Meleys", "192.168.50.2").volume == "Meleys"
+    assert nas.NasDrive("Balerion", "192.168.50.234", share="Media").volume == "Media"
+
+
+def test_url_reaches_the_drive_by_name_or_by_ip():
+    meleys = nas.NasDrive("Meleys", "192.168.50.2")
+
+    assert meleys.url(use_ip=False) == "smb://crivas@Meleys/Meleys"
+    assert meleys.url(use_ip=True) == "smb://crivas@192.168.50.2/Meleys"
+
+
+def test_balerion_mounts_its_media_share():
+    """Balerion has no share named after itself, so the default would not exist."""
+    (balerion,) = nas.select_drives("balerion")
+
+    assert balerion.url(use_ip=False) == "smb://crivas@Balerion/Media"
 
 
 def test_mount_smb_runs_applescript_mount_volume(osascript, no_color, capsys):
-    assert nas.mount_smb("Meleys", "Meleys") == ""
+    assert nas.mount_smb("smb://crivas@Meleys/Meleys") == ""
 
     assert osascript.read_text().splitlines() == ["-e", 'mount volume "smb://crivas@Meleys/Meleys"']
     assert capsys.readouterr().out == ""
@@ -78,7 +95,9 @@ def test_mount_smb_runs_applescript_mount_volume(osascript, no_color, capsys):
 def test_mount_smb_failure_says_why(failing_osascript, no_color, capsys, monkeypatch):
     monkeypatch.setenv("FAKE_STDERR", "execution error: no route (-5014)")
 
-    assert nas.mount_smb("Meleys", "192.168.50.2") == "execution error: no route (-5014)"
+    url = "smb://crivas@192.168.50.2/Meleys"
+
+    assert nas.mount_smb(url) == "execution error: no route (-5014)"
     assert capsys.readouterr().out == ""
 
 
@@ -91,7 +110,7 @@ def test_mount_drive_records_a_mount(osascript, no_color, capsys, monkeypatch):
     monkeypatch.setattr(mount_all_drives, "is_mounted", lambda name: False)
     tally = Tally(mount_all_drives.Mount)
 
-    mount_all_drives.mount_drive(tally, "Meleys", "192.168.50.2")
+    mount_all_drives.mount_drive(tally, nas.NasDrive("Meleys", "192.168.50.2"), use_ip=True)
 
     assert tally.names(mount_all_drives.Mount.MOUNTED) == ["Meleys"]
     assert capsys.readouterr().out == (
@@ -99,11 +118,31 @@ def test_mount_drive_records_a_mount(osascript, no_color, capsys, monkeypatch):
     )
 
 
+def test_mount_drive_mounts_a_differently_named_share(osascript, no_color, capsys, monkeypatch):
+    checked = []
+    monkeypatch.setattr(mount_all_drives, "is_mounted", lambda name: checked.append(name))
+    tally = Tally(mount_all_drives.Mount)
+
+    balerion = nas.NasDrive("Balerion", "192.168.50.234", share="Media")
+
+    mount_all_drives.mount_drive(tally, balerion, use_ip=False)
+
+    assert checked == ["Media"]
+    assert tally.names(mount_all_drives.Mount.MOUNTED) == ["Balerion"]
+    assert osascript.read_text().splitlines() == [
+        "-e",
+        'mount volume "smb://crivas@Balerion/Media"',
+    ]
+    assert capsys.readouterr().out == (
+        "\n  ✓ mounted       Balerion  smb://crivas@Balerion/Media\n"
+    )
+
+
 def test_mount_drive_counts_a_mounted_drive_silently(osascript, no_color, capsys, monkeypatch):
     monkeypatch.setattr(mount_all_drives, "is_mounted", lambda name: True)
     tally = Tally(mount_all_drives.Mount)
 
-    mount_all_drives.mount_drive(tally, "Meleys", "Meleys")
+    mount_all_drives.mount_drive(tally, nas.NasDrive("Meleys", "192.168.50.2"), use_ip=False)
 
     assert tally.names(mount_all_drives.Mount.ALREADY) == ["Meleys"]
     assert capsys.readouterr().out == ""
@@ -117,7 +156,7 @@ def test_mount_drive_folds_the_failure_into_one_line(
     monkeypatch.setenv("FAKE_STDERR", "execution error: no route (-5014)")
     tally = Tally(mount_all_drives.Mount)
 
-    mount_all_drives.mount_drive(tally, "Vhagar", "Vhagar")
+    mount_all_drives.mount_drive(tally, DRIVE, use_ip=False)
 
     assert capsys.readouterr().out == (
         "\n  ✗ failed        Vhagar  "
@@ -126,9 +165,6 @@ def test_mount_drive_folds_the_failure_into_one_line(
     assert [e.item for e in tally.results[mount_all_drives.Mount.FAILED]] == [
         "Vhagar: execution error: no route (-5014)"
     ]
-
-
-DRIVE = nas.NasDrive("Vhagar", "192.168.50.5")
 
 
 @pytest.mark.parametrize(
@@ -150,6 +186,23 @@ def test_check_drive_outcomes(
     ping_nas.check_drive(tally, DRIVE, ping_timeout=1, remount=remount, use_ip=False)
 
     assert tally.names(ping_nas.Ping[outcome]) == ["Vhagar"]
+
+
+def test_check_drive_checks_and_remounts_the_share(osascript, no_color, monkeypatch):
+    checked = []
+    monkeypatch.setattr(ping_nas, "smb_reachable", lambda ip, timeout: True)
+    monkeypatch.setattr(ping_nas, "is_mounted", lambda name: checked.append(name))
+    tally = Tally(ping_nas.Ping)
+    balerion = nas.NasDrive("Balerion", "192.168.50.234", share="Media")
+
+    ping_nas.check_drive(tally, balerion, ping_timeout=1, remount=True, use_ip=False)
+
+    assert checked == ["Media"]
+    assert tally.names(ping_nas.Ping.REMOUNTED) == ["Balerion"]
+    assert osascript.read_text().splitlines() == [
+        "-e",
+        'mount volume "smb://crivas@Balerion/Media"',
+    ]
 
 
 def test_check_drive_remount_failure(failing_osascript, no_color, capsys, monkeypatch):
@@ -211,7 +264,7 @@ def test_mount_unknown_only_warns_and_exits_zero(osascript, run_script):
         "═" * 43,
         "💿  mount-all-drives",
         "═" * 43,
-        "⚠️  No drive named 'nope'. Known: Meleys, Vermithor, Caraxes, Syrax, Vhagar",
+        "⚠️  No drive named 'nope'. Known: Meleys, Vermithor, Caraxes, Syrax, Vhagar, Balerion",
         "",
         "─" * 45,
         result.stdout.splitlines()[6],

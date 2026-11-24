@@ -4,7 +4,7 @@
 Using AppleScript (rather than ``mount_smbfs``) takes the same NetAuth path
 Finder does, so ``/Volumes/<name>`` is created automatically and Keychain
 credentials are used silently, with no Finder modals. Already-mounted drives
-are skipped. The share name is assumed to match the drive name, e.g.
+are skipped. The share name matches the drive name unless nas.py says otherwise, e.g.
 ``//crivas@Meleys/Meleys`` → ``/Volumes/Meleys``.
 
 Usage:
@@ -25,7 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from nas import SMB_USER, is_mounted, mount_smb, select_drives, smb_url, warn_unknown_drive
+from nas import SMB_USER, NasDrive, is_mounted, mount_smb, select_drives, warn_unknown_drive
 from report import FAIL, OK, SAME, Listing, Outcome, Tally, duration, plural
 from utils import (
     add_bool_flag,
@@ -37,7 +37,7 @@ from utils import (
     warning,
 )
 
-__version__ = "5.0.0"
+__version__ = "5.1.0"
 
 
 class Mount(Outcome):
@@ -48,14 +48,15 @@ class Mount(Outcome):
     FAILED = (FAIL, "failed", "Failed", Listing.ALL)
 
 
-def mount_drive(tally: Tally[Mount], name: str, host: str) -> None:
+def mount_drive(tally: Tally[Mount], drive: NasDrive, *, use_ip: bool) -> None:
     """Mount one drive and record how it went."""
-    if is_mounted(name):
+    name = drive.name
+    if is_mounted(drive.volume):
         tally.record(Mount.ALREADY, name)
         return
 
-    url = smb_url(name, host)
-    if reason := mount_smb(name, host):
+    url = drive.url(use_ip=use_ip)
+    if reason := mount_smb(url):
         tally.record(Mount.FAILED, name, f"{url}: {reason}", item=f"{name}: {reason}")
         return
     tally.record(Mount.MOUNTED, name, url)
@@ -88,7 +89,7 @@ def main(argv: list[str] | None = None) -> int:
     with tally.progress(len(selected)) as progress:
         for drive in selected:
             progress.step(drive.name)
-            mount_drive(tally, drive.name, drive.host(use_ip=args.use_ip))
+            mount_drive(tally, drive, use_ip=args.use_ip)
 
     failed = tally.count(Mount.FAILED)
     notes = []

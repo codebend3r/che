@@ -45,7 +45,7 @@ from utils import (
     warning,
 )
 
-__version__ = "4.0.0"
+__version__ = "4.1.0"
 
 
 class Eject(Outcome):
@@ -101,7 +101,7 @@ def reset_finder_state(selected: list[NasDrive], *, reset_lists: bool) -> None:
                 "-e",
                 'tell application "Finder" to try',
                 "-e",
-                f'eject disk "{drive.name}"',
+                f'eject disk "{drive.volume}"',
                 "-e",
                 "end try",
             ],
@@ -160,8 +160,8 @@ def main(argv: list[str] | None = None) -> int:
         warn_unknown_drive(args.only)
 
     force = not args.no_force
-    # macOS re-mounts of the same share land at "<name>-1" or at the IP.
-    labels = [label for d in selected for label in (d.name, f"{d.name}-1", d.ip)]
+    # macOS re-mounts of the same share land at "<share>-1" or at the IP.
+    labels = [label for d in selected for label in (d.volume, f"{d.volume}-1", d.ip)]
 
     # --quiet is still accepted, but has nothing left to hide: a volume that is
     # not mounted (all it used to silence) is now only counted in the summary.

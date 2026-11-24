@@ -33,7 +33,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from nas import SMB_USER, NasDrive, is_mounted, mount_smb, select_drives, smb_url
+from nas import SMB_USER, NasDrive, is_mounted, mount_smb, select_drives
 from report import FAIL, OK, SAME, WARN, Listing, Outcome, Tally, duration, plural
 from utils import (
     add_bool_flag,
@@ -47,7 +47,7 @@ from utils import (
     warning,
 )
 
-__version__ = "4.0.0"
+__version__ = "4.1.0"
 
 SMB_PORT = 445
 
@@ -89,7 +89,7 @@ def check_drive(
         tally.record(Ping.UNREACHABLE, name, reason, item=f"{name}: {reason}")
         return
 
-    if is_mounted(name):
+    if is_mounted(drive.volume):
         tally.record(Ping.MOUNTED, name)
         return
 
@@ -97,9 +97,8 @@ def check_drive(
         tally.record(Ping.NOT_MOUNTED, name, f"reachable at {drive.ip}; --no-remount")
         return
 
-    host = drive.host(use_ip=use_ip)
-    url = smb_url(name, host)
-    if reason := mount_smb(name, host):
+    url = drive.url(use_ip=use_ip)
+    if reason := mount_smb(url):
         tally.record(Ping.REMOUNT_FAILED, name, f"{url}: {reason}", item=f"{name}: {reason}")
         return
     tally.record(Ping.REMOUNTED, name, url)

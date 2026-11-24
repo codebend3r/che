@@ -102,9 +102,10 @@ The scripts were bash until August 2026. Nothing in `bin/` is shell any more.
     worktrees let unoccupied branches update without switching the caller.
   - `bin/media.py` — `probe_media()`, one ffprobe JSON call per file read
     through `MediaProbe`'s accessors, and the shared video extension lists.
-  - `bin/nas.py` — the NAS drive table (`NasDrive`) and SMB helpers:
-    `select_drives` (`--only`), `warn_unknown_drive`, `is_mounted`, `smb_url`,
-    `mount_smb`.
+  - `bin/nas.py` — the NAS drive table (`NasDrive`, whose `share` overrides the
+    share name when it differs from the drive's, and whose `url()` is its share
+    URL) and SMB helpers: `select_drives` (`--only`), `warn_unknown_drive`,
+    `is_mounted`, `mount_smb`.
 - `shell/` — GENERATED. Never edit by hand: change `bin/commands.py` and run
   `bun run generate`. Each wrapper invokes its script through `$CHE_PYTHON`,
   then calls `che_notify <sound> $?`, which plays `playsound-N` when that
