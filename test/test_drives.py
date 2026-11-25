@@ -52,6 +52,12 @@ def failing_osascript(osascript, monkeypatch) -> Path:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def names_resolve(monkeypatch):
+    """Drive names resolve, so URLs use them; the fallback tests override this."""
+    monkeypatch.setattr(nas, "resolves", lambda host: True)
+
+
 def test_select_drives_without_only_is_every_drive():
     assert nas.select_drives("") == list(nas.NAS_DRIVES)
 
@@ -311,3 +317,17 @@ def test_inverted_flags_take_no_value(run_script, script, flag):
 
     assert result.returncode == 1
     assert f"❌ argument {flag.partition('=')[0]}: ignored explicit argument" in result.stdout
+
+
+def test_mount_url_falls_back_to_ip_when_the_name_does_not_resolve(monkeypatch):
+    monkeypatch.setattr(nas, "resolves", lambda host: False)
+    (balerion,) = nas.select_drives("balerion")
+
+    assert balerion.mount_url(use_ip=False) == "smb://crivas@192.168.50.234/Media"
+
+
+def test_mount_url_keeps_the_name_when_it_resolves(monkeypatch):
+    monkeypatch.setattr(nas, "resolves", lambda host: True)
+    (balerion,) = nas.select_drives("balerion")
+
+    assert balerion.mount_url(use_ip=False) == "smb://crivas@Balerion/Media"

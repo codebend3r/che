@@ -97,7 +97,7 @@ def check_drive(
         tally.record(Ping.NOT_MOUNTED, name, f"reachable at {drive.ip}; --no-remount")
         return
 
-    url = drive.url(use_ip=use_ip)
+    url = drive.mount_url(use_ip=use_ip)
     if reason := mount_smb(url):
         tally.record(Ping.REMOUNT_FAILED, name, f"{url}: {reason}", item=f"{name}: {reason}")
         return

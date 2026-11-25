@@ -37,7 +37,7 @@ from utils import (
     warning,
 )
 
-__version__ = "5.1.0"
+__version__ = "5.2.0"
 
 
 class Mount(Outcome):
@@ -55,7 +55,7 @@ def mount_drive(tally: Tally[Mount], drive: NasDrive, *, use_ip: bool) -> None:
         tally.record(Mount.ALREADY, name)
         return
 
-    url = drive.url(use_ip=use_ip)
+    url = drive.mount_url(use_ip=use_ip)
     if reason := mount_smb(url):
         tally.record(Mount.FAILED, name, f"{url}: {reason}", item=f"{name}: {reason}")
         return
