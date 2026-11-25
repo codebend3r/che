@@ -17,11 +17,14 @@ is macOS-only; callers check for it with ``require_binary``.
 from __future__ import annotations
 
 import os
+import socket
+import subprocess
 from typing import NamedTuple
 
 from utils import run, warning
 
 SMB_USER = "crivas"
+MOUNT_TIMEOUT = 30.0
 
 
 class NasDrive(NamedTuple):
@@ -40,6 +43,26 @@ class NasDrive(NamedTuple):
     def url(self, *, use_ip: bool) -> str:
         """Its share URL, reaching the NAS by IP under ``--use-ip``, else by name."""
         return f"smb://{SMB_USER}@{self.ip if use_ip else self.name}/{self.volume}"
+
+    def mount_url(self, *, use_ip: bool) -> str:
+        """The URL to mount: by name, unless the name does not resolve.
+
+        Divergence from :meth:`url`: Balerion (a UGREEN box) does not advertise
+        its name the way the Synology boxes do, so ``smb://...@Balerion`` made
+        ``mount volume`` hang. A name that fails to resolve falls back to the IP.
+        """
+        if use_ip or resolves(self.name):
+            return self.url(use_ip=use_ip)
+        return self.url(use_ip=True)
+
+
+def resolves(host: str) -> bool:
+    """Whether ``host`` resolves to an address right now."""
+    try:
+        socket.gethostbyname(host)
+    except OSError:
+        return False
+    return True
 
 
 NAS_DRIVES: tuple[NasDrive, ...] = (
@@ -93,7 +116,17 @@ def mount_smb(url: str) -> str:
     ``/Volumes/<share>`` is created automatically and Keychain credentials are
     used silently, with no Finder modals.
     """
-    completed = run(["osascript", "-e", f'mount volume "{url}"'], check=False, capture=True)
+    try:
+        completed = run(
+            ["osascript", "-e", f'mount volume "{url}"'],
+            check=False,
+            capture=True,
+            timeout=MOUNT_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        # Divergence: AppleScript has no timeout of its own and can wait forever
+        # on an unreachable host, so the whole run used to stall on one drive.
+        return f"timed out after {MOUNT_TIMEOUT:.0f}s"
     if completed.returncode == 0:
         return ""
     return (completed.stderr or "").strip() or "mount volume failed"
