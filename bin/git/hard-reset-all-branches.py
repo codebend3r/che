@@ -118,27 +118,21 @@ def reset_one(
 ) -> None:
     """Hard reset ``branch`` to origin, here or in the worktree that holds it."""
 
-    def skip(reason: str) -> None:
-        tally.record(Reset.SKIPPED, branch, reason, item=f"{branch}: {reason}")
-
-    def fail(reason: str) -> None:
-        tally.record(Reset.FAILED, branch, reason, item=f"{branch}: {reason}")
-
     if pinned:
         path = Path(pinned)
         if in_progress(path):
-            skip(f"operation in progress in {pinned}")
+            tally.flag(Reset.SKIPPED, branch, f"operation in progress in {pinned}")
             return
         # Uncommitted work in another worktree is the user's; only --force
         # may throw it away.
         if has_tracked_changes(path) and not force:
-            skip(f"dirty worktree {pinned}")
+            tally.flag(Reset.SKIPPED, branch, f"dirty worktree {pinned}")
             return
         git, where = ["git", "-C", pinned], f"in {pinned}; "
     else:
         checkout = ["git", "checkout", "--quiet", *(["--force"] if force else []), branch]
         if run(checkout, check=False, capture=True, cwd=root).returncode != 0:
-            fail("checkout failed")
+            tally.flag(Reset.FAILED, branch, "checkout failed")
             return
         git, where = ["git", "-C", str(root)], ""
 
@@ -149,7 +143,7 @@ def reset_one(
         capture=True,
     )
     if completed.returncode != 0:
-        fail(f"reset failed: {(completed.stderr or '').strip()}")
+        tally.flag(Reset.FAILED, branch, f"reset failed: {(completed.stderr or '').strip()}")
         return
     tally.record(Reset.RESET, branch, f"{where}was {before}; {detail}")
 

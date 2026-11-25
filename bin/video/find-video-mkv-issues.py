@@ -22,7 +22,6 @@ from __future__ import annotations
 import sys
 import time
 from pathlib import Path
-from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -88,18 +87,12 @@ class Rating(Outcome):
     UNREADABLE = (FAIL, "unreadable", "Unreadable", Listing.ALL)
 
 
-class Tier(NamedTuple):
-    floor: int  # the lowest score in the tier
-    label: str
-    outcome: Rating
-
-
-# Best first: a score lands in the first tier it reaches.
-TIERS: tuple[Tier, ...] = (
-    Tier(9, "Excellent", Rating.EXCELLENT),
-    Tier(7, "Good", Rating.GOOD),
-    Tier(4, "Poor", Rating.POOR),
-    Tier(0, "Bad", Rating.BAD),
+# Best first: a score lands in the first tier whose floor it reaches.
+TIERS: tuple[tuple[int, Rating], ...] = (
+    (9, Rating.EXCELLENT),
+    (7, Rating.GOOD),
+    (4, Rating.POOR),
+    (0, Rating.BAD),
 )
 
 
@@ -142,9 +135,9 @@ def rate_video(
     return score, ";".join(reasons) if reasons else "Excellent Plex compatibility"
 
 
-def tier(score: int) -> Tier:
-    """The ``TIERS`` row for a 0-10 score."""
-    return next(row for row in TIERS if score >= row.floor)
+def tier(score: int) -> Rating:
+    """The rating for a 0-10 score."""
+    return next(rating for floor, rating in TIERS if score >= floor)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -196,7 +189,7 @@ def rate_file(tally: Tally[Rating], path: Path) -> None:
     probe = probe_media(path)
     if probe is None:
         reason = "corrupt or unreadable file"
-        tally.record(Rating.UNREADABLE, name, reason, item=f"{name}: {reason}")
+        tally.flag(Rating.UNREADABLE, name, reason)
         return
 
     video_codec = probe.codec("video") or "unknown"
@@ -218,7 +211,7 @@ def rate_file(tally: Tally[Rating], path: Path) -> None:
     if bitrate is not None:
         facts.append(f"{bitrate // 1_000_000} Mbps")
     facts.append(notes)
-    tally.record(tier(score).outcome, name, " · ".join(facts), item=f"{name}: {score}/10")
+    tally.record(tier(score), name, " · ".join(facts), item=f"{name}: {score}/10")
 
 
 if __name__ == "__main__":

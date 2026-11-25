@@ -86,34 +86,18 @@ def main(argv: list[str] | None = None) -> int:
         warning("❌ No valid extensions provided.")
         return 1
 
-    ext_args: list[str] = []
-    for ext in exts:
-        ext_args += ["-ext", ext]
+    # '-i */._*' makes exiftool ignore the AppleDouble sidecars, which
+    # otherwise get rewritten pointlessly. The preview and the strip select
+    # the same files, so they share one selection.
+    selection = ["-r", "-i", "*/._*", *(arg for ext in exts for arg in ("-ext", ext)), str(root)]
 
     info(f"Removing metadata from extensions: {' '.join(exts)}")
     info(f"Target path: {args.path}")
 
-    # Preview: list the files exiftool will touch. '-i */._*' makes it ignore
-    # the AppleDouble sidecars, which otherwise get rewritten pointlessly.
     info("Listing candidate files:")
-    run(
-        ["exiftool", "-r", "-i", "*/._*", *ext_args, "-q", "-p", "$FilePath", str(root)],
-        check=False,
-    )
+    run(["exiftool", "-q", "-p", "$FilePath", *selection], check=False)
 
-    run(
-        [
-            "exiftool",
-            "-all=",
-            "-overwrite_original",
-            "-r",
-            "-progress",
-            "-i",
-            "*/._*",
-            *ext_args,
-            str(root),
-        ]
-    )
+    run(["exiftool", "-all=", "-overwrite_original", "-progress", *selection])
 
     log("Done.")
     return 0

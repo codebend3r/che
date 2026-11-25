@@ -68,20 +68,14 @@ class Prune(Outcome):
 def preview(tally: Tally[Prune], worktree: Worktree, force: bool) -> None:
     """Record what removing ``worktree`` would take, changing nothing."""
     path = Path(worktree.path)
-    notes = [
-        note
-        for note, applies in (
-            ("locked; would unlock", worktree.locked),
-            ("operation in progress; would abort", path.is_dir() and in_progress(path)),
-            (
-                "uncommitted changes; would discard"
-                if force
-                else "uncommitted changes; would stash",
-                path.is_dir() and not worktree_is_clean(path),
-            ),
-        )
-        if applies
-    ]
+    notes = []
+    if worktree.locked:
+        notes.append("locked; would unlock")
+    if path.is_dir():
+        if in_progress(path):
+            notes.append("operation in progress; would abort")
+        if not worktree_is_clean(path):
+            notes.append(f"uncommitted changes; would {'discard' if force else 'stash'}")
     tally.record(Prune.WOULD_REMOVE, worktree.path, ", ".join(notes))
 
 
@@ -90,7 +84,7 @@ def remove(tally: Tally[Prune], worktree: Worktree, main_wt: Path, force: bool) 
     path = Path(worktree.path)
 
     def keep(reason: str) -> None:
-        tally.record(Prune.KEPT, str(path), reason, item=f"{path}: {reason}")
+        tally.flag(Prune.KEPT, str(path), reason)
 
     done: list[str] = []
     if worktree.locked:
@@ -162,10 +156,9 @@ def main(argv: list[str] | None = None) -> int:
     # and refused outright when the main worktree had uncommitted changes.
     # Removing linked worktrees never needs the main one's branch to change,
     # so git runs from the main worktree as it is.
-    main_wt = Path(worktrees()[0].path)
-
     info("🔍 Listing worktrees...")
-    linked = worktrees(main_wt)[1:]
+    main, *linked = worktrees()
+    main_wt = Path(main.path)
 
     tally = Tally(Prune)
     with tally.progress(len(linked)) as progress:

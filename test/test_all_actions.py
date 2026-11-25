@@ -377,7 +377,7 @@ def test_render_asks_once_for_prs_and_once_per_owner(capsys, monkeypatch):
     calls: list[dict] = []
     monkeypatch.setattr(all_actions, "gh_graphql", fake_gh(calls))
 
-    all_actions.render(("alice", "bob"), "alice", 100, 100, True)
+    all_actions.render(all_actions.Sweep(("alice", "bob"), "alice", 100, 100, True))
 
     (search,) = [c["q"] for c in calls if "q" in c]
     assert "author:alice" in search
@@ -393,7 +393,7 @@ def test_render_drops_the_owner_prefix_for_a_single_owner(capsys, monkeypatch):
     monkeypatch.setenv("NO_COLOR", "1")
     monkeypatch.setattr(all_actions, "gh_graphql", fake_gh([]))
 
-    all_actions.render(("alice",), "alice", 100, 100, True)
+    all_actions.render(all_actions.Sweep(("alice",), "alice", 100, 100, True))
 
     out = capsys.readouterr().out
     assert "alice/site" not in out
@@ -405,7 +405,7 @@ def test_render_skips_the_owner_sweep_with_no_main(monkeypatch, capsys):
     calls: list[dict] = []
     monkeypatch.setattr(all_actions, "gh_graphql", fake_gh(calls))
 
-    all_actions.render(("alice", "bob"), "alice", 100, 100, False)
+    all_actions.render(all_actions.Sweep(("alice", "bob"), "alice", 100, 100, False))
 
     assert [c for c in calls if "login" in c] == []
     assert "default branch" not in capsys.readouterr().out
@@ -415,7 +415,7 @@ def test_render_with_nothing_to_show_says_so_in_both_sections(capsys, monkeypatc
     monkeypatch.setenv("NO_COLOR", "1")
     monkeypatch.setattr(all_actions, "gh_graphql", lambda query, first, **variables: {})
 
-    all_actions.render(("alice", "bob"), "alice", 100, 100, True)
+    all_actions.render(all_actions.Sweep(("alice", "bob"), "alice", 100, 100, True))
 
     out = capsys.readouterr().out
     assert "0 open PR(s)" in out

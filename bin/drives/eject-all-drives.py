@@ -76,7 +76,7 @@ def eject_volume(tally: Tally[Eject], label: str, *, dry_run: bool, force: bool)
     completed = run([*unmount_cmd, str(mount)], check=False, capture=True)
     if completed.returncode != 0:
         reason = (completed.stderr or "").strip() or "diskutil unmount failed"
-        tally.record(Eject.FAILED, label, reason, item=f"{label}: {reason}")
+        tally.flag(Eject.FAILED, label, reason)
         return
 
     # A force-unmount can leave the placeholder directory behind. Try to clear

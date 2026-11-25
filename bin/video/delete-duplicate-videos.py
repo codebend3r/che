@@ -61,6 +61,7 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Protocol
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -98,9 +99,12 @@ class Dupe(Outcome):
 # Called with a file and the reason it is left out of every group.
 Skip = Callable[[Path, str], None]
 
-# Glue multiple logical fields into one key without a separator that could
-# plausibly appear in a directory name.
-KEY_RS = "\x1e"
+
+class KeyField(Protocol):
+    """One field of a file's group key, or None when the file must be skipped."""
+
+    def __call__(self, path: Path, *, verbose: bool, skip: Skip) -> str | None: ...
+
 
 EPISODE_RE = re.compile(r"[Ss][0-9]{2}[Ee][0-9]{2,3}")
 
@@ -119,17 +123,6 @@ STRATEGY_ALIASES = {
     "digest": "hash",
     "all": "all",
     "combined": "all",
-}
-
-# The fields each strategy's group key is joined from, in order. Size comes
-# before the digest for `all`, so a file whose size cannot be read is skipped
-# before anything spends a full read hashing it.
-STRATEGY_FIELDS: dict[str, tuple[str, ...]] = {
-    "episode": ("dir", "episode"),
-    "filename": ("dir", "name"),
-    "size": ("dir", "size"),
-    "hash": ("digest",),
-    "all": ("dir", "name", "size", "digest"),
 }
 
 # 1 MiB chunks: large enough that syscall overhead is irrelevant, small enough
@@ -156,47 +149,63 @@ def sha256_hex(path: Path) -> str:
     return digest.hexdigest()
 
 
-def key_field(path: Path, field: str, *, verbose: bool, skip: Skip) -> str | None:
-    """One field of a file's group key, or None when the file must be skipped.
+def folder_field(path: Path, *, verbose: bool, skip: Skip) -> str | None:
+    return str(path.parent)
 
-    A file that cannot be read is reported through ``skip`` with the reason.
+
+def name_field(path: Path, *, verbose: bool, skip: Skip) -> str | None:
+    return path.name
+
+
+def episode_field(path: Path, *, verbose: bool, skip: Skip) -> str | None:
+    """The SxxEyy token; None when the name is not TV-shaped, as in the shell version."""
+    found = EPISODE_RE.search(path.name)
+    return found.group(0) if found else None
+
+
+def size_field(path: Path, *, verbose: bool, skip: Skip) -> str | None:
+    try:
+        return str(path.stat().st_size)
+    except OSError:
+        skip(path, "unreadable size")
+        return None
+
+
+def digest_field(path: Path, *, verbose: bool, skip: Skip) -> str | None:
+    if verbose:
+        note(f"HASH: {path}")
+    try:
+        return sha256_hex(path)
+    except OSError:
+        skip(path, "could not hash")
+        return None
+
+
+# The fields each strategy's group key is built from, in order. Size comes
+# before the digest for `all`, so a file whose size cannot be read is skipped
+# before anything spends a full read hashing it.
+STRATEGY_FIELDS: dict[str, tuple[KeyField, ...]] = {
+    "episode": (folder_field, episode_field),
+    "filename": (folder_field, name_field),
+    "size": (folder_field, size_field),
+    "hash": (digest_field,),
+    "all": (folder_field, name_field, size_field, digest_field),
+}
+
+
+def group_key(path: Path, strategy: str, *, verbose: bool, skip: Skip) -> tuple[str, ...] | None:
+    """The duplicate-group key for one file, or None to skip it.
+
+    Fields are computed in order and the first None stops the rest, so a
+    skipped file is never hashed.
     """
-    match field:
-        case "dir":
-            return str(path.parent)
-        case "name":
-            return path.name
-        case "episode":
-            # None when the name is not TV-shaped: ignored, as in the shell version.
-            found = EPISODE_RE.search(path.name)
-            return found.group(0) if found else None
-        case "size":
-            try:
-                return str(path.stat().st_size)
-            except OSError:
-                skip(path, "unreadable size")
-                return None
-        case "digest":
-            if verbose:
-                note(f"HASH: {path}")
-            try:
-                return sha256_hex(path)
-            except OSError:
-                skip(path, "could not hash")
-                return None
-        case _:
-            raise ValueError(f"unknown key field: {field}")
-
-
-def group_key(path: Path, strategy: str, *, verbose: bool, skip: Skip) -> str | None:
-    """The duplicate-group key for one file, or None to skip it."""
     fields: list[str] = []
     for field in STRATEGY_FIELDS[strategy]:
-        value = key_field(path, field, verbose=verbose, skip=skip)
+        value = field(path, verbose=verbose, skip=skip)
         if value is None:
             return None
         fields.append(value)
-    return KEY_RS.join(fields)
+    return tuple(fields)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -270,10 +279,10 @@ def main(argv: list[str] | None = None) -> int:
         return str(path.relative_to(root))
 
     def skip(path: Path, reason: str) -> None:
-        tally.record(Dupe.SKIPPED, shown(path), reason, item=f"{shown(path)}: {reason}")
+        tally.flag(Dupe.SKIPPED, shown(path), reason)
 
     scanned = 0
-    groups: dict[str, list[Path]] = {}
+    groups: dict[tuple[str, ...], list[Path]] = {}
 
     for path in iter_files(root, extensions=LIBRARY_EXTENSIONS):
         scanned += 1
@@ -299,7 +308,7 @@ def main(argv: list[str] | None = None) -> int:
                     skip(path, "unreadable size")
 
             if len(sized) <= 1:
-                progress.step(key)
+                progress.step(shown(groups[key][0]))
                 continue
 
             # Largest first; same-size ties break alphabetically by path, so the
@@ -319,13 +328,10 @@ def main(argv: list[str] | None = None) -> int:
                     reclaimed += size
                     tally.record(Dupe.WOULD_DELETE, shown(path), detail)
                     continue
-                try:
-                    path.unlink()
-                except OSError as exc:
-                    tally.record(Dupe.FAILED, shown(path), str(exc), item=f"{shown(path)}: {exc}")
-                    continue
-                reclaimed += size
-                tally.record(Dupe.DELETED, shown(path), detail)
+                deleted = tally.attempt(
+                    path.unlink, shown(path), done=Dupe.DELETED, failed=Dupe.FAILED, detail=detail
+                )
+                reclaimed += size if deleted else 0
 
     freed = f"~{format_bytes(reclaimed)} {'to free' if args.dry_run else 'freed'}"
     tally.summary(

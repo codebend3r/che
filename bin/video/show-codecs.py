@@ -108,7 +108,7 @@ def check_file(tally: Tally[Check], path: Path, *, verbose: bool) -> None:
         # The shell version's `|| echo "unknown"`: a corrupt file still counts
         # as a problem (and still fails the exit code), on its own row.
         reason = "ffprobe failed"
-        tally.record(Check.UNREADABLE, name, reason, item=f"{name}: {reason}")
+        tally.flag(Check.UNREADABLE, name, reason)
         return
     video_codec = probe.codec("video").lower()
     audio_codec = probe.codec("audio").lower()
@@ -122,7 +122,7 @@ def check_file(tally: Tally[Check], path: Path, *, verbose: bool) -> None:
         and container in ALLOWED_CONTAINERS
     )
     if not ok:
-        tally.record(Check.OUTSIDE, name, detail, item=f"{name}: {detail}")
+        tally.flag(Check.OUTSIDE, name, detail)
         return
     tally.record(Check.PASSES, name)
     if verbose:

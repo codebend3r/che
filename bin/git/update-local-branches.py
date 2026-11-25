@@ -95,28 +95,25 @@ def rebase(git: list[str]) -> bool:
 
 def update_one(tally: Tally[Update], branch: str, pinned: str | None) -> None:
     """Rebase ``branch`` onto its upstream, here or in the worktree that holds it."""
+
     if pinned:
         # Uncommitted work in a worktree is the user's, left exactly as it
         # is. Skipping it is not a failure, or one worktree in progress
         # would stop every run of sync-all-branches at this step.
         if not worktree_is_clean(pinned):
-            reason = f"dirty worktree {pinned}"
-            tally.record(Update.SKIPPED, branch, reason, item=f"{branch}: {reason}")
+            tally.flag(Update.SKIPPED, branch, f"dirty worktree {pinned}")
             return
         git, where = ["git", "-C", pinned], f"in {pinned}; "
     else:
         checkout = run(["git", "checkout", "--quiet", branch], check=False, capture=True)
         if checkout.returncode != 0:
-            tally.record(
-                Update.FAILED, branch, "checkout failed", item=f"{branch}: checkout failed"
-            )
+            tally.flag(Update.FAILED, branch, "checkout failed")
             return
         git, where = ["git"], ""
 
     before = run_output([*git, "rev-parse", "HEAD"])
     if not rebase(git):
-        reason = "rebase failed, aborted"
-        tally.record(Update.FAILED, branch, reason, item=f"{branch}: {reason}")
+        tally.flag(Update.FAILED, branch, "rebase failed, aborted")
         return
     after = run_output([*git, "rev-parse", "HEAD"])
     if after == before:

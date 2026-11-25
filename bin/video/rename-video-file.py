@@ -206,7 +206,7 @@ def apply(tally: Tally[Rename], root: Path, source: Path, new_name: str, *, dry_
         return
 
     def refuse(outcome: Rename, reason: str) -> None:
-        tally.record(outcome, shown, reason, item=f"{shown}: {reason}")
+        tally.flag(outcome, shown, reason)
 
     target = source.with_name(new_name)
     # The shell version used bare ``mv``, which silently clobbers an existing

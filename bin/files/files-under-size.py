@@ -33,7 +33,6 @@ from utils import (
     info,
     iter_files,
     log,
-    note,
     note_settings,
     parse_size,
     run_cli,
@@ -110,26 +109,25 @@ def main(argv: list[str] | None = None) -> int:
             matches.append((path, size))
 
     total = len(matches)
-    info(f"Found {plural(total, 'file')} ≤ {args.size} ({limit_bytes} bytes)")
-    note(f"Threshold: {limit_bytes:,} bytes ({args.size})")
+    info(f"Found {plural(total, 'file')} ≤ {args.size} ({limit_bytes:,} bytes)")
 
     tally = Tally(Small)
+    freed = 0
     with tally.progress(total) as progress:
         for path, size in matches:
             progress.step(str(path))
             if args.dry_run:
                 tally.record(Small.WOULD_DELETE, str(path), format_bytes(size))
                 continue
-            try:
-                path.unlink()
-            except OSError as exc:
-                reason = exc.strerror or str(exc)
-                tally.record(Small.FAILED, str(path), reason, item=f"{path}: {reason}")
-                continue
-            tally.record(Small.DELETED, str(path), format_bytes(size))
+            deleted = tally.attempt(
+                path.unlink,
+                str(path),
+                done=Small.DELETED,
+                failed=Small.FAILED,
+                detail=format_bytes(size),
+            )
+            freed += size if deleted else 0
 
-    deleted = set(tally.names(Small.DELETED))
-    freed = sum(size for path, size in matches if str(path) in deleted)
     notes = []
     if not total:
         notes.append(f"No matching video files ≤ {args.size} ({limit_bytes} bytes).")
