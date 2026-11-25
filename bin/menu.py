@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import shutil
 import textwrap
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Literal
@@ -90,14 +91,12 @@ class Menu:
         self.first()
 
     def matches(self) -> list[Command]:
-        scored = []
-        for command in all_commands():
-            score = fuzzy_match(self.query, command)
-            if score is None:
-                continue
-            scored.append((score, command))
-        scored.sort(key=lambda pair: (pair[0], pair[1].category, pair[1].name))
-        return [command for _, command in scored]
+        scored = [(fuzzy_match(self.query, command), command) for command in all_commands()]
+        ranked = sorted(
+            ((score, command) for score, command in scored if score is not None),
+            key=lambda pair: (pair[0], pair[1].category, pair[1].name),
+        )
+        return [command for _, command in ranked]
 
     def rows(self) -> list[Category | Command]:
         """The list as drawn: commands, under their category headers unless searching."""
@@ -159,6 +158,68 @@ class Menu:
         # and "I pressed Enter to see what it does" should never delete files.
         return self.dry.get(command.name, command.has_dry_twin)
 
+    def toggle_dry(self) -> None:
+        """Flip the selected command's preview, or say why it has none to flip."""
+        command = self.selected()
+        if command is None:
+            return
+        if command.has_dry_twin:
+            self.dry[command.name] = not self.is_dry(command)
+            self.status = f"dry-run {'on' if self.is_dry(command) else 'OFF'} for {command.name}"
+        elif command.preview:
+            self.status = f"{command.name} previews with {command.preview}, asked on ⏎"
+        else:
+            self.status = f"{command.name} has no preview mode"
+
+    def type(self, key: str) -> None:
+        """Add a typed character to the query, dropping into search."""
+        self.searching = True
+        self.set_query(self.query + key)
+
+    def leave_search(self, *, clear: bool) -> None:
+        self.searching = False
+        if clear:
+            self.set_query("")
+
+
+# Each key the menu knows, per mode, and what it does to the state. One that
+# returns an Action asks the caller to act; None is just a redraw.
+KeyHandler = Callable[[Menu], Action | None]
+
+SEARCH_KEYS: dict[str, KeyHandler] = {
+    "enter": lambda state: state.leave_search(clear=False),
+    "esc": lambda state: state.leave_search(clear=True),
+    "backspace": lambda state: state.set_query(state.query[:-1]),
+    "ctrl-u": lambda state: state.set_query(""),
+    "up": lambda state: state.move(-1),
+    "down": lambda state: state.move(1),
+    "ctrl-c": lambda _state: "quit",
+}
+
+BROWSE_KEYS: dict[str, KeyHandler] = {
+    "q": lambda _state: "quit",
+    "ctrl-c": lambda _state: "quit",
+    "eof": lambda _state: "quit",
+    # Esc clears a query left behind by search, and quits once there is none.
+    "esc": lambda state: state.set_query("") if state.query else "quit",
+    "up": lambda state: state.move(-1),
+    "k": lambda state: state.move(-1),
+    "down": lambda state: state.move(1),
+    "j": lambda state: state.move(1),
+    "pgup": lambda state: state.jump(-PAGE),
+    "pgdn": lambda state: state.jump(PAGE),
+    "home": lambda state: state.first(),
+    "g": lambda state: state.first(),
+    "end": lambda state: state.last(),
+    "G": lambda state: state.last(),
+    "/": lambda state: setattr(state, "searching", True),
+    "?": lambda state: setattr(state, "show_help", True),
+    "d": lambda state: state.toggle_dry(),
+    "h": lambda _state: "help",
+    "x": lambda _state: "run-raw",
+    "enter": lambda _state: "run",
+}
+
 
 def handle_key(state: Menu, key: str) -> Action:
     """Fold one keypress into the menu state. Returns an action for the caller."""
@@ -168,66 +229,13 @@ def handle_key(state: Menu, key: str) -> Action:
         state.show_help = False
         return ""
 
-    if state.searching:
-        if key == "enter":
-            state.searching = False
-        elif key == "esc":
-            state.searching = False
-            state.set_query("")
-        elif key == "backspace":
-            state.set_query(state.query[:-1])
-        elif key == "ctrl-u":
-            state.set_query("")
-        elif key in ("up", "down"):
-            state.move(-1 if key == "up" else 1)
-        elif key == "ctrl-c":
-            return "quit"
-        elif len(key) == 1 and key.isprintable():
-            state.set_query(state.query + key)
-        return ""
-
-    if key in ("q", "ctrl-c", "eof"):
-        return "quit"
-    if key == "esc":
-        if state.query:
-            state.set_query("")
-            return ""
-        return "quit"
-    if key in ("up", "k"):
-        state.move(-1)
-    elif key in ("down", "j"):
-        state.move(1)
-    elif key == "pgup":
-        state.jump(-PAGE)
-    elif key == "pgdn":
-        state.jump(PAGE)
-    elif key in ("home", "g"):
-        state.first()
-    elif key in ("end", "G"):
-        state.last()
-    elif key == "/":
-        state.searching = True
-    elif key == "?":
-        state.show_help = True
-    elif key == "d":
-        command = state.selected()
-        if command and command.has_dry_twin:
-            state.dry[command.name] = not state.is_dry(command)
-            state.status = f"dry-run {'on' if state.is_dry(command) else 'OFF'} for {command.name}"
-        elif command and command.preview:
-            state.status = f"{command.name} previews with {command.preview}, asked on ⏎"
-        elif command:
-            state.status = f"{command.name} has no preview mode"
-    elif key == "h":
-        return "help"
-    elif key == "x":
-        return "run-raw"
-    elif key == "enter":
-        return "run"
-    elif len(key) == 1 and key.isprintable():
-        # Typing anything else drops into search, the way a file picker does.
-        state.searching = True
-        state.set_query(state.query + key)
+    handler = (SEARCH_KEYS if state.searching else BROWSE_KEYS).get(key)
+    if handler is not None:
+        return handler(state) or ""
+    # Any other printable key types into the query, and from browsing drops
+    # into search, the way a file picker does.
+    if len(key) == 1 and key.isprintable():
+        state.type(key)
     return ""
 
 
@@ -301,43 +309,42 @@ def draw(screen: tui.Screen, state: Menu) -> None:
 
     detail_lines = detail_pane(state, detail_width) if detail_width else []
 
-    for index in range(state.offset, min(len(rows), state.offset + body_rows)):
-        row = rows[index]
+    visible = rows[state.offset : state.offset + body_rows]
+    for index, row in enumerate(visible, start=state.offset):
         if isinstance(row, Category):
             header = f"{row.title}  {row.blurb}"
             left = tui.fit(f"  {colors.bold}{colors.blue}{header}{colors.reset}", list_width)
         else:
-            command = row
-            selected = index == state.cursor
-            pointer = f"{colors.cyan}▸{colors.reset}" if selected else " "
-            name = command.name
-            if selected:
-                name = f"{colors.bold}{colors.cyan}{name}{colors.reset}"
-            elif command.destructive:
-                name = f"{colors.yellow}{name}{colors.reset}"
-
-            badge = ""
-            if command.has_dry_twin and state.is_dry(command):
-                badge = f" {colors.grey}·dry{colors.reset}"
-            elif command.destructive:
-                badge = f" {colors.red}·live{colors.reset}"
-
-            left = f"  {pointer} {command.icon} {name}{badge}"
+            left = command_row(state, row, selected=index == state.cursor)
             if detail_width:
                 left = tui.fit(left, list_width)
             else:
                 room = max(0, list_width - tui.display_width(left) - 2)
-                summary = tui.truncate(command.summary, room)
-                left += f"  {colors.grey}{summary}{colors.reset}"
+                left += f"  {colors.grey}{tui.truncate(row.summary, room)}{colors.reset}"
 
         detail_index = index - state.offset
         right = detail_lines[detail_index] if detail_index < len(detail_lines) else ""
-        if detail_width:
-            screen.line(f"{left}{colors.grey}│{colors.reset} {right}")
-        else:
-            screen.line(left)
+        screen.line(f"{left}{colors.grey}│{colors.reset} {right}" if detail_width else left)
 
     draw_footer(screen, state)
+
+
+def command_row(state: Menu, command: Command, *, selected: bool) -> str:
+    """One command's entry in the list: pointer, icon, name and its dry/live badge."""
+    colors = tui.palette()
+    pointer = f"{colors.cyan}▸{colors.reset}" if selected else " "
+    name = command.name
+    if selected:
+        name = f"{colors.bold}{colors.cyan}{name}{colors.reset}"
+    elif command.destructive:
+        name = f"{colors.yellow}{name}{colors.reset}"
+
+    badge = ""
+    if command.has_dry_twin and state.is_dry(command):
+        badge = f" {colors.grey}·dry{colors.reset}"
+    elif command.destructive:
+        badge = f" {colors.red}·live{colors.reset}"
+    return f"  {pointer} {command.icon} {name}{badge}"
 
 
 # The detail pane's label column: "script  ", "needs   ", "warning ".
