@@ -106,6 +106,17 @@ PATH_PROMPT = Prompt("--path", "Path to scan", kind="path", required=True)
 PATH_PROMPT_CWD = Prompt("--path", "Path to scan", kind="path", default=".")
 DRY_PROMPT = Prompt("--dry-run", "Dry run (preview only)", kind="bool", default="true")
 
+# Flags shared by the commands that are another name for the same script.
+_ALL_ACTIONS_FLAGS = (
+    "--owner=",
+    "--author=",
+    "--pr-limit=",
+    "--repo-limit=",
+    "--no-main",
+    "--interval=",
+)
+_SYNC_FLAGS = ("--dry-run", "--author=", "--limit=")
+
 
 # ---------------------------------------------------------------------------
 # Commands
@@ -152,7 +163,12 @@ class Command:
     @property
     def builtin(self) -> bool:
         """Handled by che.py itself rather than by a script."""
-        return self.name in BUILTIN_NAMES
+        return not self.script
+
+    @property
+    def missing_script(self) -> bool:
+        """A script command whose file is not in this copy of the repo."""
+        return bool(self.script) and not self.path.exists()
 
     @property
     def has_dry_twin(self) -> bool:
@@ -189,15 +205,7 @@ COMMANDS: tuple[Command, ...] = (
     # -- git ----------------------------------------------------------------
     Command(
         name="all-actions",
-        flags=(
-            "--owner=",
-            "--author=",
-            "--pr-limit=",
-            "--repo-limit=",
-            "--no-main",
-            "--interval=",
-            "--watch",
-        ),
+        flags=(*_ALL_ACTIONS_FLAGS, "--watch"),
         category="git",
         icon="🎬",
         summary="GitHub Actions status for every open PR and every default branch",
@@ -212,7 +220,7 @@ COMMANDS: tuple[Command, ...] = (
     ),
     Command(
         name="all-actions-watch",
-        flags=("--owner=", "--author=", "--pr-limit=", "--repo-limit=", "--no-main", "--interval="),
+        flags=_ALL_ACTIONS_FLAGS,
         category="git",
         icon="👀",
         summary="Same as all-actions, refreshed on an interval",
@@ -279,7 +287,7 @@ COMMANDS: tuple[Command, ...] = (
     ),
     Command(
         name="sync-all-branches",
-        flags=("--dry-run", "--author=", "--limit="),
+        flags=_SYNC_FLAGS,
         category="git",
         icon="🔄",
         summary="Update every branch and worktree, pruning what has been merged",
@@ -292,7 +300,7 @@ COMMANDS: tuple[Command, ...] = (
     ),
     Command(
         name="update-from-origin",
-        flags=("--dry-run", "--author=", "--limit="),
+        flags=_SYNC_FLAGS,
         category="git",
         icon="⬇️",
         summary="Alias of sync-all-branches",
