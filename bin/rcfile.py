@@ -17,7 +17,6 @@ import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import NamedTuple
 
 import shellgen
 from commands import wrapper_names
@@ -105,15 +104,19 @@ def with_block(text: str, block: str) -> tuple[str, str]:
     span = find_block(text)
 
     if span is None:
-        separator = "" if not text or text.endswith("\n\n") else "\n"
-        if text and not text.endswith("\n"):
-            separator = "\n\n"
-        return f"{text}{separator}{block}", "created"
+        return f"{text}{_separator(text)}{block}", "created"
 
     start, end = span
     if text[start:end].rstrip() == block.rstrip():
         return text, "unchanged"
     return text[:start] + block.rstrip("\n") + text[end:], "updated"
+
+
+def _separator(text: str) -> str:
+    """What goes between ``text`` and a block appended to it: one blank line."""
+    if not text or text.endswith("\n\n"):
+        return ""
+    return "\n" if text.endswith("\n") else "\n\n"
 
 
 def without_block(text: str) -> str:
@@ -158,26 +161,17 @@ class LegacyBlock:
     body: str
 
 
-class Span(NamedTuple):
-    """Lines ``start`` up to ``end`` hold one legacy definition, its comment included."""
-
-    start: int
-    end: int
-    name: str  # the function's name, or "" for the SHELL_FUNCTIONS_BIN assignment
-
-
 @dataclass(frozen=True)
 class LegacyScan:
     """What one pass over an rc file learns about the legacy wrappers in it."""
 
     lines: list[str]
     managed: range  # line indices of the che block, which is never touched
-    spans: list[Span]
+    # Line ranges holding one legacy definition each, its comment included.
+    spans: list[range]
+    # The legacy functions found, in file order.
+    names: list[str]
     helpers: set[str]
-
-    @property
-    def names(self) -> list[str]:
-        return [span.name for span in self.spans if span.name]
 
 
 def find_legacy(text: str) -> list[str]:
@@ -254,13 +248,14 @@ def _legacy_scan(text: str) -> LegacyScan:
         marked |= grown
         helpers |= {block.name for block in grown if block.name not in generated}
 
-    spans = [Span(_extend_upwards(lines, block.start), block.end, block.name) for block in marked]
+    spans = [range(_extend_upwards(lines, block.start), block.end) for block in marked]
     spans += [
-        Span(_extend_upwards(lines, index), index + 1, "")
+        range(_extend_upwards(lines, index), index + 1)
         for index, line in enumerate(lines)
         if index not in managed and _ASSIGNMENT.match(line.strip())
     ]
-    return LegacyScan(lines, managed, sorted(spans), helpers)
+    names = [block.name for block in sorted(marked, key=lambda block: block.start)]
+    return LegacyScan(lines, managed, spans, names, helpers)
 
 
 def _extend_upwards(lines: list[str], start: int) -> int:
@@ -310,9 +305,7 @@ def without_legacy(text: str) -> tuple[str, list[str]]:
         return text, []
 
     lines = scan.lines
-    drop: set[int] = set()
-    for span in scan.spans:
-        drop.update(range(span.start, span.end))
+    drop = {index for span in scan.spans for index in span}
 
     callers = [
         index

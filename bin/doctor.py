@@ -13,7 +13,9 @@ import json
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
+import report
 import shellgen
 from art import print_logo
 from commands import REPO, VERSION, all_commands, required_binaries
@@ -21,12 +23,14 @@ from machine import (
     INSTALL_HINTS,
     PYTHON_HINT,
     SHELLS,
+    InstallRecord,
     ShellSpec,
     default_shell_selection,
     find_python,
     load_record,
     login_shell,
     python_ok,
+    reload_command,
     shim_on_path,
     shim_path,
     tildify,
@@ -37,7 +41,13 @@ from rcfile import ALIAS, find_block, find_legacy, find_shadowing, read_rc
 from tui import palette
 from utils import add_bool_flag, build_parser, note, success, warning
 
-OK, WARN, FAIL = "ok", "warn", "fail"
+Status = Literal["ok", "warn", "fail"]
+OK: Status = "ok"
+WARN: Status = "warn"
+FAIL: Status = "fail"
+
+# How each status is drawn: the same glyphs every per-item report uses.
+TONES: dict[Status, report.Tone] = {OK: report.OK, WARN: report.WARN, FAIL: report.FAIL}
 
 ALIAS_FIX = "the alias wins at the prompt; run `\\name` for the wrapper, or remove the alias"
 
@@ -47,7 +57,7 @@ class Check:
     """One line of the report: what was checked, how it stands, and the fix."""
 
     name: str
-    status: str  # OK, WARN or FAIL
+    status: Status
     detail: str
     fix: str = ""
     # A passing check that is noise unless asked for, like a tool that is present.
@@ -86,7 +96,7 @@ def diagnose() -> list[Check]:
     checks.append(
         Check(
             "install record",
-            OK if recorded == VERSION else (WARN if record else FAIL),
+            _record_status(record),
             f"config {recorded or 'missing'} vs che {VERSION}",
             "che install",
         )
@@ -105,7 +115,7 @@ def diagnose() -> list[Check]:
         checks.append(Check("che on PATH", OK, str(shim)))
     elif shim.exists():
         detail = f"{shim} (PATH picks it up on your next shell)"
-        checks.append(Check("che on PATH", WARN, detail, f"exec {login_shell() or 'zsh'}"))
+        checks.append(Check("che on PATH", WARN, detail, reload_command()))
     else:
         checks.append(Check("che on PATH", WARN, "not installed", "che install"))
 
@@ -122,9 +132,7 @@ def diagnose() -> list[Check]:
             )
         )
 
-    missing = [
-        command.name for command in all_commands() if command.script and not command.path.exists()
-    ]
+    missing = [command.name for command in all_commands() if command.missing_script]
     checks.append(
         Check(
             "scripts",
@@ -136,6 +144,13 @@ def diagnose() -> list[Check]:
     )
 
     return checks
+
+
+def _record_status(record: InstallRecord | None) -> Status:
+    """FAIL with no record at all, WARN when an older che wrote it."""
+    if record is None:
+        return FAIL
+    return OK if record.version == VERSION else WARN
 
 
 def _rc_check(spec: ShellSpec, rc_file: Path) -> Check:
@@ -175,17 +190,17 @@ def _rc_check(spec: ShellSpec, rc_file: Path) -> Check:
 def doctor(*, as_json: bool = False, verbose: bool = False) -> int:
     checks = diagnose()
     failures = sum(1 for check in checks if check.status == FAIL)
+    exit_status = 1 if failures else 0
 
     if as_json:
         payload = {"version": VERSION, "checks": [check.to_json() for check in checks]}
         print(json.dumps(payload, indent=2))
-        return 1 if failures else 0
+        return exit_status
 
     colors = palette()
     marks = {
-        OK: f"{colors.green}✓{colors.reset}",
-        WARN: f"{colors.yellow}!{colors.reset}",
-        FAIL: f"{colors.red}✗{colors.reset}",
+        status: f"{getattr(colors, tone.color)}{tone.symbol}{colors.reset}"
+        for status, tone in TONES.items()
     }
     print_logo(f"doctor - che {VERSION}")
     width = max(len(check.name) for check in checks) + 2
@@ -207,7 +222,7 @@ def doctor(*, as_json: bool = False, verbose: bool = False) -> int:
         note(f"All good, with {warnings} warning(s).")
     else:
         success("Everything checks out.")
-    return 1 if failures else 0
+    return exit_status
 
 
 def doctor_main(argv: list[str] | None = None) -> int:

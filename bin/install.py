@@ -56,10 +56,10 @@ from machine import (
     find_python,
     is_git_checkout,
     load_record,
-    login_shell,
     missing_binaries,
     python_ok,
     python_version,
+    reload_command,
     save_record,
     shim_on_path,
     shim_path,
@@ -69,6 +69,7 @@ from machine import (
     version_text,
 )
 from rcfile import commit_rc, find_legacy, read_rc, with_block, without_block, without_legacy
+from report import OK, SAME, Tone
 from tui import choose, confirm, is_interactive, palette
 from utils import (
     BoolFlagParser,
@@ -297,10 +298,9 @@ def phrase(action: str, *, dry_run: bool) -> str:
 
 def mark(action: str = "") -> str:
     """What starts a report line: a grey ``=`` for something left alone, else a ``✓``."""
+    tone: Tone = SAME if action == "unchanged" else OK
     colors = palette()
-    if action == "unchanged":
-        return f"{colors.grey}={colors.reset}"
-    return f"{colors.green}✓{colors.reset}"
+    return f"{getattr(colors, tone.color)}{tone.symbol}{colors.reset}"
 
 
 def report(plan: InstallPlan, result: InstallResult) -> None:
@@ -513,7 +513,7 @@ def update(*, check_only: bool = False, dry_run: bool = False) -> int:
 
     print()
     success("Updated. Reload your shell to pick up new commands:")
-    print(f"  {colors.bold}exec {login_shell() or 'zsh'}{colors.reset}")
+    print(f"  {colors.bold}{reload_command()}{colors.reset}")
     return status
 
 
@@ -677,7 +677,7 @@ def install_main(argv: list[str] | None = None) -> int:
     status = run_install(plan, install_deps=args.install_deps)
 
     print()
-    success("Reload your shell to pick up the wrappers:  exec " + (login_shell() or "zsh"))
+    success(f"Reload your shell to pick up the wrappers:  {reload_command()}")
     return status
 
 
