@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from types import TracebackType
@@ -216,7 +216,7 @@ def summary(
     # "  ✓ " + label + "  " + count + "   "
     indent = 4 + label_width + 2 + count_width + 3
     # Off a terminal nothing is cut: a log or a pipe has no width to fit.
-    width = tui.size()[0] - indent if sys.stdout.isatty() else None
+    width = tui.size()[0] - indent if _is_terminal(sys.stdout) else None
 
     for row in shown:
         color = getattr(p, row.tone.color)
@@ -276,6 +276,29 @@ class Tally(Generic[OutcomeT]):  # noqa: UP046
         self.results[outcome].append(Entry(name, item or name))
         if outcome.verb:
             self.report.event(outcome.tone, outcome.verb, name, detail)
+
+    def flag(self, outcome: OutcomeT, name: str, reason: str) -> None:
+        """Record ``name`` with ``reason`` shown live and kept in the summary listing."""
+        self.record(outcome, name, reason, item=f"{name}: {reason}")
+
+    def attempt(
+        self,
+        action: Callable[[], object],
+        name: str,
+        *,
+        done: OutcomeT,
+        failed: OutcomeT,
+        detail: str = "",
+    ) -> bool:
+        """Run ``action`` and record ``name`` as ``done``, or ``failed`` with the OS reason."""
+        try:
+            action()
+        except OSError as exc:
+            reason = exc.strerror or str(exc)
+            self.flag(failed, name, reason)
+            return False
+        self.record(done, name, detail)
+        return True
 
     def names(self, outcome: OutcomeT) -> list[str]:
         return [entry.name for entry in self.results[outcome]]

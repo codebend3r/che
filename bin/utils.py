@@ -502,7 +502,7 @@ def run_cli(entry: Callable[[], int]) -> None:
         # Surface the child's own diagnostic. The shell versions let stderr
         # through to the terminal; capturing it and printing only "command
         # failed" would hide git's actual explanation.
-        if getattr(exc, "stderr", None):
+        if exc.stderr:
             sys.stderr.write(exc.stderr)
         warning(f"❌ Command failed: {' '.join(str(part) for part in exc.cmd)}")
         code = exc.returncode
@@ -682,22 +682,6 @@ def atomic_write_text(path: Path, text: str, *, mode: int | None = None) -> None
         raise
 
 
-def remove_or_warn(path: Path, remove: Callable[[Path], None] = Path.unlink) -> bool:
-    """Delete ``path`` (``remove=Path.rmdir`` for a directory), or say why not.
-
-    Returns whether it went. A failure is reported and left to the caller to
-    count: the shell versions aborted the whole run here under ``set -e`` (or,
-    in ``delete-smb-files``, hid it with ``2>/dev/null``), and on a NAS one busy
-    file should not strand the rest of a sweep.
-    """
-    try:
-        remove(path)
-    except OSError as exc:
-        warning(f"  ✗ Failed to delete {path}: {exc}")
-        return False
-    return True
-
-
 def normalize_extensions(raw: str, *, flag: str = "--ext") -> list[str]:
     """Split a comma-separated extension list, preserving glob metacharacters.
 
@@ -724,6 +708,20 @@ def normalize_extensions(raw: str, *, flag: str = "--ext") -> list[str]:
 
 _SIZE_RE = re.compile(r"([0-9]+)([a-z]*)")
 
+_SIZE_UNITS = {
+    "": 1,
+    "b": 1,
+    "k": _KB,
+    "kb": _KB,
+    "kib": _KB,
+    "m": _MB,
+    "mb": _MB,
+    "mib": _MB,
+    "g": _GB,
+    "gb": _GB,
+    "gib": _GB,
+}
+
 
 def parse_size(text: str) -> int:
     """Parse a human size like ``1MB``/``500k``/``2 GiB`` into bytes.
@@ -744,21 +742,7 @@ def parse_size(text: str) -> int:
 
     digits, unit = match.groups()
 
-    multipliers = {
-        "": 1,
-        "b": 1,
-        "k": _KB,
-        "kb": _KB,
-        "kib": _KB,
-        "m": _MB,
-        "mb": _MB,
-        "mib": _MB,
-        "g": _GB,
-        "gb": _GB,
-        "gib": _GB,
-    }
-
-    if unit not in multipliers:
+    if unit not in _SIZE_UNITS:
         raise ValueError(f"Invalid size unit in {text!r}")
 
-    return int(digits) * multipliers[unit]
+    return int(digits) * _SIZE_UNITS[unit]

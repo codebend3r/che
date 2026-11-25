@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os
 import subprocess
-from pathlib import Path
 
 import pytest
 from utils import (
@@ -31,7 +30,6 @@ from utils import (
     parse_bool,
     parse_count,
     parse_size,
-    remove_or_warn,
     run_cli,
 )
 
@@ -483,28 +481,6 @@ def test_dry_run_complete(no_color, capsys):
     dry_run_complete("ejected")
 
     assert capsys.readouterr().out == "💡 Dry run complete. Nothing was actually ejected.\n"
-
-
-# ---------------------------------------------------------------------------
-# remove_or_warn
-# ---------------------------------------------------------------------------
-
-
-def test_remove_or_warn_deletes(tmp_path):
-    target = tmp_path / "file"
-    target.touch()
-
-    assert remove_or_warn(target) is True
-    assert not target.exists()
-
-
-def test_remove_or_warn_reports_a_failure_and_carries_on(no_color, capsys, tmp_path):
-    full = tmp_path / "full"
-    (full / "child").mkdir(parents=True)
-
-    assert remove_or_warn(full, Path.rmdir) is False
-    assert full.is_dir()
-    assert capsys.readouterr().out.startswith(f"  ✗ Failed to delete {full}: ")
 
 
 # ---------------------------------------------------------------------------
