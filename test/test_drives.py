@@ -84,11 +84,11 @@ def test_url_reaches_the_drive_by_name_or_by_ip():
     assert meleys.url(use_ip=True) == "smb://crivas@192.168.50.2/Meleys"
 
 
-def test_balerion_mounts_its_media_share():
-    """Balerion has no share named after itself, so the default would not exist."""
+def test_balerion_mounts_the_share_named_after_it():
+    """Its old Media share is gone; the box now shares a folder called Balerion."""
     (balerion,) = nas.select_drives("balerion")
 
-    assert balerion.url(use_ip=False) == "smb://crivas@Balerion/Media"
+    assert balerion.url(use_ip=True) == "smb://crivas@192.168.50.234/Balerion"
 
 
 def test_mount_smb_runs_applescript_mount_volume(osascript, no_color, capsys):
@@ -323,11 +323,11 @@ def test_mount_url_falls_back_to_ip_when_the_name_does_not_resolve(monkeypatch):
     monkeypatch.setattr(nas, "resolves", lambda host: False)
     (balerion,) = nas.select_drives("balerion")
 
-    assert balerion.mount_url(use_ip=False) == "smb://crivas@192.168.50.234/Media"
+    assert balerion.mount_url(use_ip=False) == "smb://crivas@192.168.50.234/Balerion"
 
 
 def test_mount_url_keeps_the_name_when_it_resolves(monkeypatch):
     monkeypatch.setattr(nas, "resolves", lambda host: True)
     (balerion,) = nas.select_drives("balerion")
 
-    assert balerion.mount_url(use_ip=False) == "smb://crivas@Balerion/Media"
+    assert balerion.mount_url(use_ip=False) == "smb://crivas@Balerion/Balerion"
