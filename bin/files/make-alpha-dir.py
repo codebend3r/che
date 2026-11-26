@@ -14,6 +14,7 @@ from __future__ import annotations
 import string
 import sys
 import time
+from functools import partial
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -67,13 +68,9 @@ def main(argv: list[str] | None = None) -> int:
         if path.is_dir():
             tally.record(Bucket.EXISTED, bucket)
             continue
-        try:
-            path.mkdir(exist_ok=True)
-        except OSError as exc:
-            reason = exc.strerror or str(exc)
-            tally.record(Bucket.FAILED, bucket, reason, item=f"{bucket}: {reason}")
-            continue
-        tally.record(Bucket.CREATED, bucket)
+        tally.attempt(
+            partial(path.mkdir, exist_ok=True), bucket, done=Bucket.CREATED, failed=Bucket.FAILED
+        )
 
     tally.summary(
         "Summary",

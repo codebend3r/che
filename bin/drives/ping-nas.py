@@ -86,7 +86,7 @@ def check_drive(
     name = drive.name
     if not smb_reachable(drive.ip, ping_timeout):
         reason = f"SMB port {SMB_PORT} unreachable at {drive.ip}"
-        tally.record(Ping.UNREACHABLE, name, reason, item=f"{name}: {reason}")
+        tally.flag(Ping.UNREACHABLE, name, reason)
         return
 
     if is_mounted(drive.volume):

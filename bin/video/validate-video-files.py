@@ -79,7 +79,7 @@ def check(tally: Tally[Playback], root: Path, path: Path, *, verbose: bool) -> N
     last = stderr.splitlines()[-1].strip() if stderr else ""
     if completed.returncode != 0:
         reason = last or f"mpv exited {completed.returncode}"
-        tally.record(Playback.UNPLAYABLE, name, reason, item=f"{name}: {reason}")
+        tally.flag(Playback.UNPLAYABLE, name, reason)
     elif stderr:
         tally.record(Playback.COMPLAINED, name, last)
     else:

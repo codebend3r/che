@@ -99,7 +99,7 @@ def scan_file(tally: Tally[Audio], path: Path) -> None:
     probe = probe_media(path)
     if probe is None:
         reason = "ffprobe failed"
-        tally.record(Audio.UNREADABLE, name, reason, item=f"{name}: {reason}")
+        tally.flag(Audio.UNREADABLE, name, reason)
         return
 
     # DELIBERATE DIVERGENCE: the shell version's csv output read `und,`

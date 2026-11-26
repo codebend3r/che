@@ -324,6 +324,18 @@ def _utf8_tail(lead: int) -> int:
     return 0
 
 
+# How long the rest of a multi-byte key may take to arrive once its first
+# byte has: long enough for a terminal, short enough that a lone Escape is
+# still a keypress of its own.
+_SEQUENCE_TIMEOUT = 0.05
+
+
+def _next_byte(fd: int) -> bytes:
+    """The next byte of a sequence already under way, or ``b""`` if none follows."""
+    ready, _, _ = select.select([fd], [], [], _SEQUENCE_TIMEOUT)
+    return os.read(fd, 1) if ready else b""
+
+
 def read_key(timeout: float | None = None) -> str | None:
     """Read one keypress in raw mode and return a name for it.
 
@@ -349,10 +361,10 @@ def read_key(timeout: float | None = None) -> str | None:
     # says exactly how many more belong to it, so the next keystroke is never
     # read along with it.
     for _ in range(_utf8_tail(raw[0])):
-        ready, _, _ = select.select([fd], [], [], 0.05)
-        if not ready:
+        byte = _next_byte(fd)
+        if not byte:
             break
-        raw += os.read(fd, 1)
+        raw += byte
     first = raw.decode("utf-8", "replace")
 
     if first in _CONTROL_KEYS:
@@ -361,27 +373,19 @@ def read_key(timeout: float | None = None) -> str | None:
         return first
 
     # Escape, possibly introducing a sequence. A lone Escape has nothing
-    # following it, which is what the short select() below distinguishes.
-    ready, _, _ = select.select([fd], [], [], 0.05)
-    if not ready:
-        return "esc"
-
-    second = os.read(fd, 1).decode("utf-8", "replace")
-    if second not in ("[", "O"):
+    # following it, which is what the short wait in _next_byte distinguishes.
+    if _next_byte(fd) not in (b"[", b"O"):
         return "esc"
 
     params = ""
-    while True:
-        ready, _, _ = select.select([fd], [], [], 0.05)
-        if not ready:
-            return "esc"
-        char = os.read(fd, 1).decode("utf-8", "replace")
+    while char := _next_byte(fd).decode("utf-8", "replace"):
         if char.isdigit() or char == ";":
             params += char
             continue
         if char == "~":
             return _CSI_TILDE_KEYS.get(params, "unknown")
         return _CSI_KEYS.get(char, "unknown")
+    return "esc"
 
 
 # ---------------------------------------------------------------------------
@@ -467,6 +471,13 @@ def _load_history(readline: ModuleType, history_file: Path | None) -> None:
     readline.set_history_length(200)
 
 
+def _question(label: str, hint: str) -> str:
+    """The ``? label [hint]`` line every prompt here opens with."""
+    colors = palette()
+    suffix = f" {colors.grey}[{hint}]{colors.reset}" if hint else ""
+    return f"{colors.cyan}?{colors.reset} {colors.bold}{label}{colors.reset}{suffix}"
+
+
 def ask(
     label: str,
     *,
@@ -494,13 +505,7 @@ def ask(
         else:
             readline.set_completer(lambda *_: None)
 
-    suffix = ""
-    if choices:
-        suffix = f" {colors.grey}[{'/'.join(choices)}]{colors.reset}"
-    elif default:
-        suffix = f" {colors.grey}[{default}]{colors.reset}"
-
-    prompt = f"{colors.cyan}?{colors.reset} {colors.bold}{label}{colors.reset}{suffix}: "
+    prompt = _question(label, "/".join(choices) or default) + ": "
 
     while True:
         try:
@@ -525,18 +530,10 @@ def ask(
 
 def confirm(question: str, *, default: bool = True) -> bool:
     """A yes/no prompt. Anything unparseable re-asks rather than guessing."""
-    colors = palette()
-    hint = "Y/n" if default else "y/N"
+    prompt = _question(question, "Y/n" if default else "y/N") + " "
     while True:
         try:
-            answer = (
-                input(
-                    f"{colors.cyan}?{colors.reset} {colors.bold}{question}{colors.reset} "
-                    f"{colors.grey}[{hint}]{colors.reset} "
-                )
-                .strip()
-                .lower()
-            )
+            answer = input(prompt).strip().lower()
         except EOFError:
             print()
             return default

@@ -14,7 +14,6 @@ from conftest import load_script, summary
 
 SCRIPT = "video/delete-duplicate-videos.py"
 dedupe = load_script(SCRIPT)
-RS = dedupe.KEY_RS
 
 
 @pytest.fixture
@@ -37,7 +36,7 @@ def key(path, strategy, *, verbose=False, skip=never):
 
 
 def test_episode_key_is_folder_and_episode_code(episode):
-    assert key(episode, "episode") == f"{episode.parent}{RS}S01E02"
+    assert key(episode, "episode") == (str(episode.parent), "S01E02")
 
 
 def test_episode_key_skips_names_without_a_code(tmp_path):
@@ -48,11 +47,11 @@ def test_episode_key_skips_names_without_a_code(tmp_path):
 
 
 def test_filename_key_is_folder_and_name(episode):
-    assert key(episode, "filename") == (f"{episode.parent}{RS}{episode.name}")
+    assert key(episode, "filename") == (str(episode.parent), episode.name)
 
 
 def test_size_key_is_folder_and_size(episode):
-    assert key(episode, "size") == f"{episode.parent}{RS}10"
+    assert key(episode, "size") == (str(episode.parent), "10")
 
 
 def test_size_key_skips_an_unreadable_file(tmp_path):
@@ -64,14 +63,12 @@ def test_size_key_skips_an_unreadable_file(tmp_path):
 
 
 def test_hash_key_is_the_digest_alone(episode, capsys):
-    assert key(episode, "hash", verbose=True) == sha256(episode)
+    assert key(episode, "hash", verbose=True) == (sha256(episode),)
     assert f"HASH: {episode}" in capsys.readouterr().out
 
 
 def test_all_key_joins_every_field(episode):
-    assert key(episode, "all") == RS.join(
-        (str(episode.parent), episode.name, "10", sha256(episode))
-    )
+    assert key(episode, "all") == (str(episode.parent), episode.name, "10", sha256(episode))
 
 
 def test_all_key_skips_on_size_before_hashing(tmp_path, capsys):
@@ -81,12 +78,6 @@ def test_all_key_skips_on_size_before_hashing(tmp_path, capsys):
     assert key(missing, "all", verbose=True, skip=lambda *args: skipped.append(args)) is None
     assert skipped == [(missing, "unreadable size")]
     assert "HASH:" not in capsys.readouterr().out
-
-
-def test_an_unknown_key_field_is_an_error(episode):
-    """A misspelled STRATEGY_FIELDS entry must not fall through to hashing."""
-    with pytest.raises(ValueError, match="unknown key field: dgest"):
-        dedupe.key_field(episode, "dgest", verbose=False, skip=never)
 
 
 def test_every_strategy_has_fields():

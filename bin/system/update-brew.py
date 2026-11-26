@@ -128,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
     for step in steps:
         name = " ".join(step.command)
         if step.skip:
-            tally.record(Run.SKIPPED, name, step.skip, item=f"{name}: {step.skip}")
+            tally.flag(Run.SKIPPED, name, step.skip)
             continue
         info(step.banner)
         brew(step.command, dry_run=dry)
@@ -143,10 +143,9 @@ def main(argv: list[str] | None = None) -> int:
         else:
             tally.record(Run.RAN, "brew doctor")
 
-    commands = sum(len(entries) for entries in tally.results.values())
     tally.summary(
         "Preview" if dry else "Summary",
-        facts=[plural(commands, "command"), duration(time.monotonic() - started)],
+        facts=[plural(tally.count(*Run), "command"), duration(time.monotonic() - started)],
     )
     print()
     if dry:

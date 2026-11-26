@@ -146,6 +146,11 @@ def login_shell() -> str:
     return Path(os.environ.get("SHELL", "")).name
 
 
+def reload_command() -> str:
+    """What to type to pick up a fresh install: a new login shell, zsh if unknown."""
+    return f"exec {login_shell() or 'zsh'}"
+
+
 @dataclass(frozen=True)
 class ShellSpec:
     """A shell che can install into, how, and how it stands on this machine.

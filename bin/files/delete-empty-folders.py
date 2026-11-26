@@ -132,13 +132,7 @@ def main(argv: list[str] | None = None) -> int:
                 tally.record(Prune.WOULD_DELETE, str(directory))
                 would_delete.add(directory)
                 continue
-            try:
-                directory.rmdir()
-            except OSError as exc:
-                reason = exc.strerror or str(exc)
-                tally.record(Prune.FAILED, str(directory), reason, item=f"{directory}: {reason}")
-                continue
-            tally.record(Prune.DELETED, str(directory))
+            tally.attempt(directory.rmdir, str(directory), done=Prune.DELETED, failed=Prune.FAILED)
 
     tally.summary(
         "Preview" if args.dry_run else "Summary",

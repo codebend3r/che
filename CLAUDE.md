@@ -64,9 +64,10 @@ The scripts were bash until August 2026. Nothing in `bin/` is shell any more.
   Every script that walks items defines each result once as a subclass of
   `report.Outcome` (tone, live verb, summary label, listing) and reports
   through a `Tally`, whose `record()` prints the line and counts the item in
-  one call; `tally.summary("Summary" | "Preview", facts=, notes=)` closes the
+  one call, and whose `attempt()` runs an OS action (unlink, rmdir, mkdir)
+  and records it as done or failed with the OS reason; `tally.summary("Summary" | "Preview", facts=, notes=)` closes the
   run. `sync-all-branches` does the same through `branchsync.Outcome` and
-  `BranchSync.record()`. New scripts follow this pattern rather than printing
+  the `report.Tally` it keeps as `BranchSync.tally`. New scripts follow this pattern rather than printing
   their own per-item lines or summary blocks.
 - `bin/art.py`: the block-letter wordmark, Che's face as 32x18 text,
   `banner()`, which lays them side by side (falling back to the wordmark alone
@@ -85,16 +86,17 @@ The scripts were bash until August 2026. Nothing in `bin/` is shell any more.
   `paint`), the fixed banners (`heading`, `note_settings`, `footer_rule`,
   `dry_run_complete`), `format_bytes`, `parse_size`, the arg-parsing helpers
   (`build_parser`, `add_bool_flag`, `env_bool`, `parse_count`), subprocess
-  wrappers (`run`, `run_output`, `run_cli`, `require_binary`), file walking and
-  removal (`iter_files`, `scan_root`, `normalize_extensions`,
-  `report_walk_error`, `remove_or_warn`) and `atomic_write_text`. The
+  wrappers (`run`, `run_output`, `run_cli`, `require_binary`), file walking
+  (`iter_files`, `scan_root`, `normalize_extensions`, `report_walk_error`) and
+  `atomic_write_text`. The
   validators (`scan_root`, `parse_count`, `env_bool`, `require_binary`) report
   and exit 1 themselves. Its module docstring is the authoritative statement
   of the CLI conventions.
 - Domain libraries beside it, imported the same way by the scripts that need
   them:
   - `bin/gitutils.py` — `skip_git_hooks`, `fetch_remotes`, `current_branch`,
-    `for_each_ref`, `local_branches`, `has_tracked_changes`,
+    `for_each_ref`, `local_branches`, `has_tracked_changes`, `has_changes`,
+    `stash_everything` (one exact-ID stash, optionally limited by pathspecs),
     `worktrees`/`Worktree`, `worktree_branch_map`, `worktree_is_clean`,
     `find_main_branch`, `park_main_worktree`.
   - `bin/branchsync.py`: `BranchSync`, sync's non-destructive per-branch update,

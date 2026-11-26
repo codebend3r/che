@@ -51,9 +51,7 @@ class NasDrive(NamedTuple):
         its name the way the Synology boxes do, so ``smb://...@Balerion`` made
         ``mount volume`` hang. A name that fails to resolve falls back to the IP.
         """
-        if use_ip or resolves(self.name):
-            return self.url(use_ip=use_ip)
-        return self.url(use_ip=True)
+        return self.url(use_ip=use_ip or not resolves(self.name))
 
 
 def resolves(host: str) -> bool:

@@ -72,11 +72,6 @@ def main(argv: list[str] | None = None) -> int:
     # printed "Error: --path is required." and a usage line.
     root = scan_root(args.path)
 
-    info(f"Scanning for .smbdelete* files under: {args.path}")
-
-    if args.dry_run:
-        info("Dry run mode: no files will be deleted.")
-
     tally = Tally(Sweep)
 
     # Case-sensitive prefix, as `find -name '.smbdelete*'` matched. That never
@@ -91,13 +86,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
 
         # A file held open by the SMB client fails with "Resource busy".
-        try:
-            path.unlink()
-        except OSError as exc:
-            reason = exc.strerror or str(exc)
-            tally.record(Sweep.FAILED, str(path), reason, item=f"{path}: {reason}")
-            continue
-        tally.record(Sweep.DELETED, str(path))
+        tally.attempt(path.unlink, str(path), done=Sweep.DELETED, failed=Sweep.FAILED)
 
     # A closing summary the shell version did not print; a sweep that silently
     # deleted nothing is indistinguishable from one that could not run.

@@ -183,7 +183,7 @@ def main(argv: list[str] | None = None) -> int:
         # before the dry-run branch so a preview reports the same skips.
         if output.exists():
             reason = f"{output.name} already exists"
-            tally.record(Encode.OUTPUT_EXISTS, shown, reason, item=f"{shown}: {reason}")
+            tally.flag(Encode.OUTPUT_EXISTS, shown, reason)
             continue
 
         if args.dry_run:
@@ -193,7 +193,7 @@ def main(argv: list[str] | None = None) -> int:
 
         info(f"🔧 Encoding {shown}")
         if not encode(path, output):
-            tally.record(Encode.FAILED, shown, "ffmpeg failed", item=f"{shown}: ffmpeg failed")
+            tally.flag(Encode.FAILED, shown, "ffmpeg failed")
             continue
 
         tally.record(Encode.CONVERTED, shown, f"to {output.name}")
@@ -201,7 +201,7 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 path.unlink()
             except OSError as exc:
-                tally.record(Encode.KEPT_ORIGINAL, shown, str(exc), item=f"{shown}: {exc}")
+                tally.flag(Encode.KEPT_ORIGINAL, shown, str(exc))
 
     notes = ["Existing conversions are never overwritten."]
     if args.delete_original and not args.dry_run:

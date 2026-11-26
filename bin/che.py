@@ -86,7 +86,7 @@ def _argv_env(resolved: Resolved, extra: list[str]) -> tuple[list[str], dict[str
 
 
 def _missing_script(command: Command) -> bool:
-    if command.script and not command.path.exists():
+    if command.missing_script:
         warning(f"❌ Missing script: {command.path}")
         return True
     return False
@@ -445,45 +445,58 @@ def first_run() -> int:
     return 0
 
 
+def usage_main(_argv: list[str]) -> int:
+    usage()
+    return 0
+
+
+def version_main(_argv: list[str]) -> int:
+    print(f"che {VERSION}")
+    return 0
+
+
+def help_main(argv: list[str]) -> int:
+    """``che help <command>``: that command's own ``--help``."""
+    if not argv:
+        return usage_main(argv)
+    found = resolve(argv[0])
+    if found is None:
+        return unknown(argv[0])
+    print(script_help(found.command))
+    return 0
+
+
+# The words ``che`` answers itself rather than handing to a command. Unlike
+# BUILTIN_MAIN these are not commands: the menu and the wrappers never list them.
+META_MAIN: dict[str, Callable[[list[str]], int]] = {
+    "-h": usage_main,
+    "--help": usage_main,
+    "-v": version_main,
+    "--version": version_main,
+    "version": version_main,
+    "help": help_main,
+    "menu": lambda _argv: run_menu(),
+}
+
+
 def main() -> int:
     argv = sys.argv[1:]
 
     if not argv:
         if not tui.is_interactive():
-            usage()
-            return 0
+            return usage_main(argv)
         if machine.load_record() is None:
             return first_run()
         return run_menu()
 
-    first = argv[0]
-    rest = argv[1:]
-
-    if first in ("-h", "--help"):
-        usage()
-        return 0
-    if first in ("-v", "--version", "version"):
-        print(f"che {VERSION}")
-        return 0
-    if first == "help":
-        if not rest:
-            usage()
-            return 0
-        found = resolve(rest[0])
-        if found is None:
-            return unknown(rest[0])
-        print(script_help(found.command))
-        return 0
-    if first == "menu":
-        return run_menu()
-
-    if first in BUILTIN_MAIN:
-        return BUILTIN_MAIN[first](rest)
+    first, *rest = argv
+    handler = META_MAIN.get(first) or BUILTIN_MAIN.get(first)
+    if handler is not None:
+        return handler(rest)
 
     found = resolve(first)
     if found is None:
         return unknown(first)
-
     return exec_command(found, rest)
 
 

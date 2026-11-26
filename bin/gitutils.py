@@ -15,6 +15,7 @@ Standard library only, like everything else at the ``bin/`` root.
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
 from pathlib import Path
 from typing import NamedTuple
 
@@ -208,16 +209,8 @@ def worktree_is_clean(path: str | Path) -> bool:
 # reserving the branch it started on.
 # ---------------------------------------------------------------------------
 
-_OPERATION_FILES = (
-    "rebase-merge",
-    "rebase-apply",
-    "MERGE_HEAD",
-    "CHERRY_PICK_HEAD",
-    "REVERT_HEAD",
-    "BISECT_START",
-)
-
-# Each operation and the command that abandons it, checked in this order.
+# Each operation's state file and the command that abandons it, checked in
+# this order.
 _ABORTS = (
     ("rebase-merge", ("rebase", "--abort")),
     ("rebase-apply", ("rebase", "--abort")),
@@ -234,7 +227,7 @@ def git_path(path: Path, name: str) -> Path:
 
 
 def in_progress(path: Path) -> bool:
-    return any(git_path(path, name).exists() for name in _OPERATION_FILES)
+    return any(git_path(path, name).exists() for name, _ in _ABORTS)
 
 
 def abort_operation(path: Path) -> bool:
@@ -249,26 +242,57 @@ def abort_operation(path: Path) -> bool:
     return not in_progress(path)
 
 
-def stash_everything(path: Path, message: str) -> str:
-    """Stash ``path``'s tracked and untracked changes; return the stash commit, or "".
+def has_changes(path: Path, pathspecs: Sequence[str] = (".",)) -> bool:
+    """True when ``pathspecs`` under ``path`` hold tracked or untracked changes.
 
-    "" means there was nothing to stash. Worktrees share one ``refs/stash``, so
-    the stash outlives the worktree and ``git stash list`` shows it from any of
-    them. Ignored files (node_modules, build output) are left alone.
+    Ignored files (node_modules, build output) do not count. Unlike
+    :func:`worktree_is_clean`, a path that is not a worktree raises.
     """
-    if worktree_is_clean(path):
-        return ""
-    before = run_output(
+    return bool(
+        run_output(
+            ["git", "status", "--porcelain", "-z", "--untracked-files=all", "--", *pathspecs],
+            cwd=path,
+        )
+    )
+
+
+def _stash_tip(path: Path) -> str:
+    return run_output(
         ["git", "rev-parse", "--verify", "--quiet", "refs/stash"], cwd=path, check=False
     )
+
+
+def stash_everything(path: Path, message: str, pathspecs: Sequence[str] = (".",)) -> str:
+    """Stash ``path``'s tracked and untracked changes; return the stash commit, or "".
+
+    "" means there was nothing to stash. ``pathspecs`` limit both the check and
+    the stash, so a caller can exclude a registered worktree nested inside this
+    one. Worktrees share one ``refs/stash``, so the stash outlives the worktree
+    and ``git stash list`` shows it from any of them. Ignored files are left
+    alone. Raises OSError when the stash cannot be verified or leaves the
+    worktree dirty, so nothing proceeds on top of unsaved work.
+    """
+    if not has_changes(path, pathspecs):
+        return ""
+    before = _stash_tip(path)
     run(
-        ["git", "stash", "push", "--quiet", "--include-untracked", "--message", message],
+        [
+            "git",
+            "stash",
+            "push",
+            "--quiet",
+            "--include-untracked",
+            "--message",
+            message,
+            "--",
+            *pathspecs,
+        ],
         cwd=path,
         capture=True,
     )
-    after = run_output(
-        ["git", "rev-parse", "--verify", "--quiet", "refs/stash"], cwd=path, check=False
-    )
-    if not after or after == before or not worktree_is_clean(path):
-        raise OSError(f"could not stash the changes in {path}")
+    after = _stash_tip(path)
+    if not after or after == before:
+        raise OSError(f"could not verify a new stash in {path}; inspect git stash list")
+    if has_changes(path, pathspecs):
+        raise OSError(f"{path} is still dirty after stashing {after}; left untouched")
     return after

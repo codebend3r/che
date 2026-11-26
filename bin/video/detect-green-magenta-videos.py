@@ -215,10 +215,8 @@ def iter_videos(paths):
     for p in map(Path, paths):
         if p.is_dir():
             yield from iter_files(p, extensions=VIDEO_EXTS)
-        elif p.is_file():
-            yield p
         else:
-            # Yielded so the caller can record it as a skip, like an unreadable video.
+            # A missing path is yielded too, so the caller records it as a skip.
             yield p
 
 
@@ -275,7 +273,7 @@ def main(argv=None):
             try:
                 verdict = analyze_video(v, sample_count=samples, threshold=args.threshold)
             except SkipVideo as exc:
-                tally.record(Tint.SKIPPED, str(v), str(exc), item=f"{v}: {exc}")
+                tally.flag(Tint.SKIPPED, str(v), str(exc))
                 continue
             detail = f"ratio={verdict.ratio:.2f} sat={verdict.saturation:.1f}"
             if verdict.flagged:

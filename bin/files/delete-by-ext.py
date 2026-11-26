@@ -103,13 +103,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.dry_run:
             tally.record(Delete.WOULD_DELETE, str(path))
             continue
-        try:
-            path.unlink()
-        except OSError as exc:
-            reason = exc.strerror or str(exc)
-            tally.record(Delete.FAILED, str(path), reason, item=f"{path}: {reason}")
-            continue
-        tally.record(Delete.DELETED, str(path))
+        tally.attempt(path.unlink, str(path), done=Delete.DELETED, failed=Delete.FAILED)
 
     matched = tally.count(*Delete)
     tally.summary(

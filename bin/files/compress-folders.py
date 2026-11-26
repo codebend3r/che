@@ -175,7 +175,7 @@ def main(argv: list[str] | None = None) -> int:
                 # UnicodeEncodeError raised for surrogate bytes in names off an
                 # SMB mount. The shell version isolated each folder in a subshell,
                 # so one bad folder never stopped the batch.
-                tally.record(Compress.FAILED, folder.name, str(exc), item=f"{folder.name}: {exc}")
+                tally.flag(Compress.FAILED, folder.name, str(exc))
                 continue
             tally.record(
                 Compress.ZIPPED,

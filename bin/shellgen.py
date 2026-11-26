@@ -62,11 +62,6 @@ def _banner() -> str:
     )
 
 
-def _flag_words(command: Command) -> list[str]:
-    """Completion words for one command: its flags plus the universal ones."""
-    return [*command.flags, "--help"]
-
-
 # ---------------------------------------------------------------------------
 # Dialects: how each family of shells spells the same thing
 # ---------------------------------------------------------------------------
@@ -87,14 +82,6 @@ class Dialect:
 
     def header(self, name: str, summary: str) -> list[str]:
         """The lines that open a function definition."""
-        raise NotImplementedError
-
-    def file_head(self, shell: Shell) -> str:
-        """Everything a wrapper file sets up before its first wrapper."""
-        raise NotImplementedError
-
-    def file_tail(self, shell: Shell) -> str:
-        """Everything a wrapper file does after its last wrapper."""
         raise NotImplementedError
 
     def export(self, name: str, word: str) -> str:
@@ -144,28 +131,6 @@ class _Posix(Dialect):
     def header(self, name: str, summary: str) -> list[str]:
         return [f"# {summary}", f"{name}() {{"]
 
-    def file_head(self, shell: Shell) -> str:
-        return f"""{_banner()}
-#
-# Source this file (or let the `che install` block in your rc file do it):
-#
-#     . ~/Developer/git/che/{shell.wrapper_file}
-#
-# Every wrapper is a shell function, so `type <name>` shows what it runs and
-# `che doctor` can tell you when something it needs is missing.
-
-# CHE_HOME is normally exported by the installed rc block. Fall back to this
-# file's own location so a bare `source` of it also works.
-if [ -z "${{CHE_HOME:-}}" ]; then
-  {shell.find_home}
-fi
-{POSIX_EXPORTS}{shell.alias_guard}
-{_stash_call()}
-{POSIX_FUNCTIONS.rstrip()}"""
-
-    def file_tail(self, shell: Shell) -> str:
-        return f"_che_restore_aliases\n\n{shell.load_completions}"
-
     def export(self, name: str, word: str) -> str:
         return f"export {name}={word}"
 
@@ -199,12 +164,6 @@ class _Fish(Dialect):
 
     def header(self, name: str, summary: str) -> list[str]:
         return [f"function {name} --description {self.quote(summary)}"]
-
-    def file_head(self, shell: Shell) -> str:
-        return f"{_banner()}\n{FISH_PRELUDE}"
-
-    def file_tail(self, shell: Shell) -> str:
-        return shell.load_completions
 
     def export(self, name: str, word: str) -> str:
         return f"set -gx {name} {word}"
@@ -409,10 +368,7 @@ def _wrapper_section(dialect: Dialect) -> list[str]:
 def wrappers(shell: str) -> str:
     """The generated wrapper file for ``shell``."""
     spec = _shell(shell)
-    dialect = spec.dialect
-    return "\n".join(
-        [dialect.file_head(spec), *_wrapper_section(dialect), "", dialect.file_tail(spec), ""]
-    )
+    return "\n".join([spec.head, *_wrapper_section(spec.dialect), "", spec.tail, ""])
 
 
 # ---------------------------------------------------------------------------
@@ -420,21 +376,27 @@ def wrappers(shell: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _flag_cases(print_words: Callable[[str], str]) -> str:
+    """The body of ``_che_flags_for``: one ``case`` arm per callable name,
+    printing its flags plus ``--help`` with ``print_words``."""
+    return "\n".join(
+        f"    {v.name}) {print_words(' '.join([*v.command.flags, '--help']))} ;;"
+        for v in variants(all_commands())
+    )
+
+
 def _zsh_completions() -> str:
     describe = [
         "    " + shlex.quote(f"{v.name}:{v.summary('preview')}") for v in variants(all_commands())
     ]
-    cases = [
-        f"    {v.name}) print -r -- {shlex.quote(' '.join(_flag_words(v.command)))} ;;"
-        for v in variants(all_commands())
-    ]
+    cases = _flag_cases(lambda words: f"print -r -- {shlex.quote(words)}")
 
     return f"""#compdef che
 {_banner()}
 
 _che_flags_for() {{
   case "$1" in
-{chr(10).join(cases)}
+{cases}
     *) print -r -- "--help" ;;
   esac
 }}
@@ -478,10 +440,7 @@ compdef _che_wrapper {" ".join(wrapper_names())}
 
 
 def _bash_completions() -> str:
-    cases = [
-        f'    {v.name}) echo "{" ".join(_flag_words(v.command))}" ;;'
-        for v in variants(all_commands())
-    ]
+    cases = _flag_cases(lambda words: f'echo "{words}"')
     names = " ".join(v.name for v in variants(all_commands()))
 
     return f"""{_banner()}
@@ -489,7 +448,7 @@ def _bash_completions() -> str:
 
 _che_flags_for() {{
   case "$1" in
-{chr(10).join(cases)}
+{cases}
     *) echo "--help" ;;
   esac
 }}
@@ -588,19 +547,55 @@ class Shell:
     wrapper_file: Path  # relative to the repo root
     completion_file: Path
     completions: Callable[[], str]
-    load_completions: str  # the end of the wrapper file
-    # POSIX only: how a sourced file finds the repo, and the alias guard
-    # around the definitions.
-    find_home: str = ""
-    alias_guard: str = ""
+    head: str  # everything the wrapper file sets up before its first wrapper
+    tail: str  # everything it does after its last one
+
+
+def _posix_shell(
+    *,
+    name: str,
+    wrapper_file: Path,
+    completion_file: Path,
+    completions: Callable[[], str],
+    find_home: str,
+    alias_guard: str,
+    load_completions: str,
+) -> Shell:
+    """A zsh or bash :class:`Shell`. The wrapper files share everything but how
+    a sourced file finds the repo, the alias guard and how completions load."""
+    head = f"""{_banner()}
+#
+# Source this file (or let the `che install` block in your rc file do it):
+#
+#     . ~/Developer/git/che/{wrapper_file}
+#
+# Every wrapper is a shell function, so `type <name>` shows what it runs and
+# `che doctor` can tell you when something it needs is missing.
+
+# CHE_HOME is normally exported by the installed rc block. Fall back to this
+# file's own location so a bare `source` of it also works.
+if [ -z "${{CHE_HOME:-}}" ]; then
+  {find_home}
+fi
+{POSIX_EXPORTS}{alias_guard}
+{_stash_call()}
+{POSIX_FUNCTIONS.rstrip()}"""
+    return Shell(
+        name=name,
+        dialect=POSIX,
+        wrapper_file=wrapper_file,
+        completion_file=completion_file,
+        completions=completions,
+        head=head,
+        tail=f"_che_restore_aliases\n\n{load_completions}",
+    )
 
 
 _SHELLS: dict[str, Shell] = {
     shell.name: shell
     for shell in (
-        Shell(
+        _posix_shell(
             name="zsh",
-            dialect=POSIX,
             wrapper_file=Path("shell/che.zsh"),
             completion_file=Path("shell/completions/_che"),
             completions=_zsh_completions,
@@ -613,9 +608,8 @@ if whence -w compdef >/dev/null 2>&1 && [ -r "${CHE_HOME}/shell/completions/_che
   . "${CHE_HOME}/shell/completions/_che"
 fi""",
         ),
-        Shell(
+        _posix_shell(
             name="bash",
-            dialect=POSIX,
             wrapper_file=Path("shell/che.bash"),
             completion_file=Path("shell/completions/che.bash"),
             completions=_bash_completions,
@@ -633,7 +627,8 @@ fi""",
             wrapper_file=Path("shell/che.fish"),
             completion_file=Path("shell/completions/che.fish"),
             completions=_fish_completions,
-            load_completions="""\
+            head=f"{_banner()}\n{FISH_PRELUDE}",
+            tail="""\
 if test -r "$CHE_HOME/shell/completions/che.fish"
     source "$CHE_HOME/shell/completions/che.fish"
 end""",
@@ -734,14 +729,22 @@ def _md_table(headers: Sequence[str], rows: Iterable[str]) -> str:
     return "\n".join([_md_row(*headers), _md_row(*["---"] * len(headers)), *rows])
 
 
+def _preview_cell(command: Command) -> str:
+    """The README's Preview column: how to preview, "none" when a destructive
+    command explains why it cannot, blank otherwise."""
+    if command.preview:
+        return f"`{command.preview}`"
+    return "none" if command.no_preview_reason else ""
+
+
 def _commands_table() -> str:
     rows = []
     for category, members in grouped(COMMANDS):
         rows.append(f"| **{category.title}** | *{category.blurb}* | |")
-        for command in members:
-            preview = command.preview
-            cell = f"`{preview}`" if preview else ("none" if command.no_preview_reason else "")
-            rows.append(_md_row(f"`{command.name}`", command.summary, cell))
+        rows += [
+            _md_row(f"`{command.name}`", command.summary, _preview_cell(command))
+            for command in members
+        ]
     return _md_table(("Command", "Does", "Preview"), rows)
 
 

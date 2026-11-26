@@ -34,7 +34,7 @@ from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -194,6 +194,16 @@ class Row(NamedTuple):
     number: int | None = None  # the PR; None on a default-branch row
 
 
+class Sweep(NamedTuple):
+    """What one refresh asks GitHub for, fixed for the whole run."""
+
+    owners: tuple[str, ...]
+    author: str
+    pr_limit: int
+    repo_limit: int
+    include_main: bool
+
+
 def pad(value: str, width: int, url: str = "") -> str:
     """Left-align ``value`` in a cell ``width`` terminal columns wide.
 
@@ -260,10 +270,31 @@ def run_duration(run: Run) -> str:
     return fmt_duration(max(0, int((end - start).total_seconds())))
 
 
+def dig(node: Any, *keys: str) -> Any:
+    """``node[k1][k2]...``, or None as soon as a level is missing or null.
+
+    GraphQL nulls out any object it could not resolve (a deleted repo, a PR
+    with no commits), so every level of the payload may be absent.
+    """
+    for key in keys:
+        if not isinstance(node, dict):
+            return None
+        node = node.get(key)
+    return node
+
+
+def commit_suites(commit: Any) -> list[dict]:
+    """The check suites on a ``...RunSuites`` commit node, [] when it has none."""
+    return dig(commit, "checkSuites", "nodes") or []
+
+
 def pick_suite(suites: list[dict]) -> dict | None:
     """The check suite worth showing: in flight, else failed, else newest."""
     usable = [s for s in suites if s.get("workflowRun")]
-    if not usable:
+    live = [s for s in usable if s.get("status") != "COMPLETED"]
+    bad = [s for s in usable if (s.get("conclusion") or "") in BAD_CONCLUSIONS]
+    candidates = live or bad or usable
+    if not candidates:
         return None
 
     def created(suite: dict) -> str:
@@ -273,15 +304,7 @@ def pick_suite(suites: list[dict]) -> dict | None:
     # for suites sharing a createdAt it returns the LAST in document order,
     # where max() returns the first. GitHub stamps every workflow run triggered
     # by one push with the same second, so this tie fires constantly.
-    live = [s for s in usable if s.get("status") != "COMPLETED"]
-    if live:
-        return sorted(live, key=created)[-1]
-
-    bad = [s for s in usable if (s.get("conclusion") or "") in BAD_CONCLUSIONS]
-    if bad:
-        return sorted(bad, key=created)[-1]
-
-    return sorted(usable, key=created)[-1]
+    return sorted(candidates, key=created)[-1]
 
 
 def suite_run(suite: dict) -> Run:
@@ -299,7 +322,7 @@ def suite_run(suite: dict) -> Run:
     return Run(
         live=live,
         status=status.lower(),
-        workflow=((workflow_run.get("workflow") or {}).get("name")) or "-",
+        workflow=dig(workflow_run, "workflow", "name") or "-",
         created=workflow_run.get("createdAt") or "",
         updated=workflow_run.get("updatedAt") or "",
         url=workflow_run.get("url") or "",
@@ -313,24 +336,17 @@ def build_rows(payload: dict) -> list[Row]:
     a dependency.
     """
     rows = []
-    nodes = (payload.get("data", {}).get("search", {}) or {}).get("nodes") or []
-
-    for pr in nodes:
-        if not pr or pr.get("number") is None:
+    for pr in dig(payload, "data", "search", "nodes") or []:
+        if dig(pr, "number") is None:
             continue
 
-        commits = (pr.get("commits") or {}).get("nodes") or []
-        suites: list[dict] = []
-        if commits:
-            commit = (commits[0] or {}).get("commit") or {}
-            suites = ((commit.get("checkSuites") or {}).get("nodes")) or []
-
+        commits = dig(pr, "commits", "nodes") or [None]
         # A PR with no run still links somewhere useful, so it keeps its row.
         # A repo with no run does not - see build_branch_rows.
-        suite = pick_suite(suites)
+        suite = pick_suite(commit_suites(dig(commits[0], "commit")))
         rows.append(
             Row(
-                repo=(pr.get("repository") or {}).get("nameWithOwner") or "",
+                repo=dig(pr, "repository", "nameWithOwner") or "",
                 branch=pr.get("headRefName") or "",
                 run=suite_run(suite) if suite else NO_RUN._replace(url=pr.get("url") or ""),
                 number=pr["number"],
@@ -352,25 +368,15 @@ def build_branch_rows(payload: dict) -> list[Row]:
     are as worth seeing as anything on `main`.
     """
     rows = []
-    owner = (payload.get("data") or {}).get("repositoryOwner") or {}
-    nodes = (owner.get("repositories") or {}).get("nodes") or []
-
-    for repo in nodes:
-        if not repo:
-            continue
-
-        ref = repo.get("defaultBranchRef") or {}
-        target = ref.get("target") or {}
-        suites = ((target.get("checkSuites") or {}).get("nodes")) or []
-
-        suite = pick_suite(suites)
+    for repo in dig(payload, "data", "repositoryOwner", "repositories", "nodes") or []:
+        suite = pick_suite(commit_suites(dig(repo, "defaultBranchRef", "target")))
         if suite is None:
             continue
 
         rows.append(
             Row(
                 repo=repo.get("nameWithOwner") or "",
-                branch=ref.get("name") or "",
+                branch=dig(repo, "defaultBranchRef", "name") or "",
                 run=suite_run(suite),
             )
         )
@@ -439,10 +445,9 @@ def draw_table(rows: list[Row], columns: Sequence[tuple[str, Callable[[Row], str
         log_color(status_style(row.run.status)[1], line)
 
 
-def render(
-    owners: tuple[str, ...], author: str, pr_limit: int, repo_limit: int, include_main: bool
-) -> None:
+def render(sweep: Sweep) -> None:
     """Draw both tables once."""
+    owners, author, include_main = sweep.owners, sweep.author, sweep.include_main
     owners_text = ",".join(owners)
     # `user:` qualifiers are OR'd by GitHub search, so several owners widen the
     # sweep rather than narrowing it.
@@ -453,9 +458,9 @@ def render(
     # The PR search and each owner's sweep in parallel: run one after another,
     # every --watch cycle waited on 1 + N round trips back to back.
     with ThreadPoolExecutor() as pool:
-        pr_payload = pool.submit(gh_graphql, GRAPHQL_QUERY, pr_limit, q=search)
+        pr_payload = pool.submit(gh_graphql, GRAPHQL_QUERY, sweep.pr_limit, q=search)
         branch_payloads = [
-            pool.submit(gh_graphql, BRANCH_GRAPHQL_QUERY, repo_limit, login=owner)
+            pool.submit(gh_graphql, BRANCH_GRAPHQL_QUERY, sweep.repo_limit, login=owner)
             for owner in (owners if include_main else ())
         ]
         rows = build_rows(pr_payload.result())
@@ -591,7 +596,6 @@ def main(argv: list[str] | None = None) -> int:
     interval_flag = "--watch" if args.watch else "--interval"
     interval = max(1, parse_count(args.watch or args.interval, interval_flag))
     watch = args.watch is not None
-    include_main = not args.no_main
 
     if run(["gh", "auth", "status"], check=False, capture=True).returncode != 0:
         warning("❌ Not logged in to GitHub. Run: gh auth login")
@@ -610,13 +614,16 @@ def main(argv: list[str] | None = None) -> int:
         owners_text = owners_text or login
         author = author or login
 
-    owners = tuple(owner for part in owners_text.split(",") if (owner := part.strip()))
-
-    def draw() -> None:
-        render(owners, author, pr_limit, repo_limit, include_main)
+    sweep = Sweep(
+        owners=tuple(owner for part in owners_text.split(",") if (owner := part.strip())),
+        author=author,
+        pr_limit=pr_limit,
+        repo_limit=repo_limit,
+        include_main=not args.no_main,
+    )
 
     if not watch:
-        draw()
+        render(sweep)
         return 0
 
     try:
@@ -624,7 +631,7 @@ def main(argv: list[str] | None = None) -> int:
             # ANSI clear + home, rather than shelling out to clear(1).
             print("\033[2J\033[H", end="", flush=True)
             try:
-                draw()
+                render(sweep)
             # Broad on purpose: the shell wrapped this as `render || true`.
             except Exception as exc:
                 # One unexpected payload shape must not end a long watch.

@@ -115,9 +115,7 @@ def main(argv: list[str] | None = None) -> int:
             if not is_stale(branch, track, protected):
                 tally.record(Clean.LEFT_ALONE, branch)
             elif pinned := pinned_by_branch.get(branch):
-                tally.record(
-                    Clean.CHECKED_OUT, branch, f"in {pinned}", item=f"{branch}: in {pinned}"
-                )
+                tally.flag(Clean.CHECKED_OUT, branch, f"in {pinned}")
             elif args.dry_run:
                 tally.record(Clean.WOULD_DELETE, branch, "upstream gone")
             else:

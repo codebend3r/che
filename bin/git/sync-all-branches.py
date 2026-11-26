@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from branchsync import BranchSync, Outcome, failure
 from gitutils import current_branch, fetch_remotes, for_each_ref, local_branches, skip_git_hooks
+from report import plural
 from utils import (
     add_bool_flag,
     build_parser,
@@ -44,20 +45,19 @@ from utils import (
     log,
     parse_count,
     require_binary,
-    run,
     run_cli,
     run_output,
     warning,
 )
 
-__version__ = "4.2.0"
+__version__ = "4.2.1"
 
 
 def track_new(sync: BranchSync, author: str, limit: int) -> None:
     # A branch just deleted as merged may have been proven only through its
     # GitHub PR, which the check below skips, so it would be tracked right back.
     local = {branch for (branch,) in local_branches(cwd=sync.root)} | set(
-        sync.names(Outcome.DELETED)
+        sync.tally.names(Outcome.DELETED)
     )
     refs = for_each_ref(
         "refs/remotes/origin/",
@@ -72,7 +72,7 @@ def track_new(sync: BranchSync, author: str, limit: int) -> None:
         for email, branch, symref in refs[:limit]
         if not (symref or branch == "HEAD" or branch in local or (author and email != author))
     ]
-    with sync.report.progress(len(candidates)) as progress:
+    with sync.tally.progress(len(candidates)) as progress:
         for branch in candidates:
             progress.step(f"origin/{branch}")
             track_one(sync, branch)
@@ -86,17 +86,11 @@ def track_one(sync: BranchSync, branch: str) -> None:
     if sync.merged_reason(branch, f"refs/remotes/origin/{branch}", github=False):
         return
     if sync.dry_run:
-        sync.record(Outcome.WOULD_TRACK, branch, "new on origin")
-        return
-    if run(
-        ["git", "branch", "--track", branch, f"refs/remotes/origin/{branch}"],
-        cwd=sync.root,
-        check=False,
-        capture=True,
-    ).returncode:
-        sync.block(branch, "could not create tracking branch")
+        sync.tally.record(Outcome.WOULD_TRACK, branch, "new on origin")
+    elif sync.succeeds("branch", "--track", branch, f"refs/remotes/origin/{branch}"):
+        sync.tally.record(Outcome.TRACKED, branch, "new on origin")
     else:
-        sync.record(Outcome.TRACKED, branch, "new on origin")
+        sync.block(branch, "could not create tracking branch")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -154,9 +148,9 @@ def main(argv: list[str] | None = None) -> int:
         sync.block("new origin branches", failure(exc))
     sync.summary(time.monotonic() - started)
     print()
-    if count := len(sync.results[Outcome.BLOCKED]):
+    if count := sync.tally.count(Outcome.BLOCKED):
         warning(
-            f"⚠️  Sync partially completed: {count} branch{'' if count == 1 else 'es'} blocked."
+            f"⚠️  Sync partially completed: {plural(count, 'branch', 'branches')} blocked."
             " Every other branch was still attempted."
         )
         return 1
