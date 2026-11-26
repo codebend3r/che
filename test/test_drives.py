@@ -72,11 +72,6 @@ def test_select_drives_unknown_name_selects_nothing(only):
     assert nas.select_drives(only) == []
 
 
-def test_volume_is_the_drive_name_unless_a_share_is_given():
-    assert nas.NasDrive("Meleys", "192.168.50.2").volume == "Meleys"
-    assert nas.NasDrive("Balerion", "192.168.50.234", share="Media").volume == "Media"
-
-
 def test_url_reaches_the_drive_by_name_or_by_ip():
     meleys = nas.NasDrive("Meleys", "192.168.50.2")
 
@@ -84,11 +79,11 @@ def test_url_reaches_the_drive_by_name_or_by_ip():
     assert meleys.url(use_ip=True) == "smb://crivas@192.168.50.2/Meleys"
 
 
-def test_balerion_mounts_its_media_share():
-    """Balerion has no share named after itself, so the default would not exist."""
+def test_balerion_mounts_the_share_named_after_it():
+    """Its old Media share is gone; the box now shares a folder called Balerion."""
     (balerion,) = nas.select_drives("balerion")
 
-    assert balerion.url(use_ip=False) == "smb://crivas@Balerion/Media"
+    assert balerion.url(use_ip=True) == "smb://crivas@192.168.50.234/Balerion"
 
 
 def test_mount_smb_runs_applescript_mount_volume(osascript, no_color, capsys):
@@ -121,26 +116,6 @@ def test_mount_drive_records_a_mount(osascript, no_color, capsys, monkeypatch):
     assert tally.names(mount_all_drives.Mount.MOUNTED) == ["Meleys"]
     assert capsys.readouterr().out == (
         "\n  ✓ mounted       Meleys  smb://crivas@192.168.50.2/Meleys\n"
-    )
-
-
-def test_mount_drive_mounts_a_differently_named_share(osascript, no_color, capsys, monkeypatch):
-    checked = []
-    monkeypatch.setattr(mount_all_drives, "is_mounted", lambda name: checked.append(name))
-    tally = Tally(mount_all_drives.Mount)
-
-    balerion = nas.NasDrive("Balerion", "192.168.50.234", share="Media")
-
-    mount_all_drives.mount_drive(tally, balerion, use_ip=False)
-
-    assert checked == ["Media"]
-    assert tally.names(mount_all_drives.Mount.MOUNTED) == ["Balerion"]
-    assert osascript.read_text().splitlines() == [
-        "-e",
-        'mount volume "smb://crivas@Balerion/Media"',
-    ]
-    assert capsys.readouterr().out == (
-        "\n  ✓ mounted       Balerion  smb://crivas@Balerion/Media\n"
     )
 
 
@@ -192,23 +167,6 @@ def test_check_drive_outcomes(
     ping_nas.check_drive(tally, DRIVE, ping_timeout=1, remount=remount, use_ip=False)
 
     assert tally.names(ping_nas.Ping[outcome]) == ["Vhagar"]
-
-
-def test_check_drive_checks_and_remounts_the_share(osascript, no_color, monkeypatch):
-    checked = []
-    monkeypatch.setattr(ping_nas, "smb_reachable", lambda ip, timeout: True)
-    monkeypatch.setattr(ping_nas, "is_mounted", lambda name: checked.append(name))
-    tally = Tally(ping_nas.Ping)
-    balerion = nas.NasDrive("Balerion", "192.168.50.234", share="Media")
-
-    ping_nas.check_drive(tally, balerion, ping_timeout=1, remount=True, use_ip=False)
-
-    assert checked == ["Media"]
-    assert tally.names(ping_nas.Ping.REMOUNTED) == ["Balerion"]
-    assert osascript.read_text().splitlines() == [
-        "-e",
-        'mount volume "smb://crivas@Balerion/Media"',
-    ]
 
 
 def test_check_drive_remount_failure(failing_osascript, no_color, capsys, monkeypatch):
@@ -323,11 +281,11 @@ def test_mount_url_falls_back_to_ip_when_the_name_does_not_resolve(monkeypatch):
     monkeypatch.setattr(nas, "resolves", lambda host: False)
     (balerion,) = nas.select_drives("balerion")
 
-    assert balerion.mount_url(use_ip=False) == "smb://crivas@192.168.50.234/Media"
+    assert balerion.mount_url(use_ip=False) == "smb://crivas@192.168.50.234/Balerion"
 
 
 def test_mount_url_keeps_the_name_when_it_resolves(monkeypatch):
     monkeypatch.setattr(nas, "resolves", lambda host: True)
     (balerion,) = nas.select_drives("balerion")
 
-    assert balerion.mount_url(use_ip=False) == "smb://crivas@Balerion/Media"
+    assert balerion.mount_url(use_ip=False) == "smb://crivas@Balerion/Balerion"

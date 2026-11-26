@@ -4,7 +4,7 @@
 Using AppleScript (rather than ``mount_smbfs``) takes the same NetAuth path
 Finder does, so ``/Volumes/<name>`` is created automatically and Keychain
 credentials are used silently, with no Finder modals. Already-mounted drives
-are skipped. The share name matches the drive name unless nas.py says otherwise, e.g.
+are skipped. Each share is named after its drive, e.g.
 ``//crivas@Meleys/Meleys`` → ``/Volumes/Meleys``.
 
 Usage:
@@ -37,7 +37,7 @@ from utils import (
     warning,
 )
 
-__version__ = "5.2.0"
+__version__ = "5.2.1"
 
 
 class Mount(Outcome):
@@ -51,7 +51,7 @@ class Mount(Outcome):
 def mount_drive(tally: Tally[Mount], drive: NasDrive, *, use_ip: bool) -> None:
     """Mount one drive and record how it went."""
     name = drive.name
-    if is_mounted(drive.volume):
+    if is_mounted(drive.name):
         tally.record(Mount.ALREADY, name)
         return
 

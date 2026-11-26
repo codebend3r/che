@@ -47,7 +47,7 @@ from utils import (
     warning,
 )
 
-__version__ = "4.1.0"
+__version__ = "4.1.1"
 
 SMB_PORT = 445
 
@@ -89,7 +89,7 @@ def check_drive(
         tally.flag(Ping.UNREACHABLE, name, reason)
         return
 
-    if is_mounted(drive.volume):
+    if is_mounted(drive.name):
         tally.record(Ping.MOUNTED, name)
         return
 

@@ -28,21 +28,15 @@ MOUNT_TIMEOUT = 30.0
 
 
 class NasDrive(NamedTuple):
-    """One NAS. The share name matches the drive name unless ``share`` says
-    otherwise, so //crivas@Meleys/Meleys mounts at /Volumes/Meleys."""
+    """One NAS. Its share is named after it, so //crivas@Meleys/Meleys mounts
+    at /Volumes/Meleys."""
 
     name: str
     ip: str
-    share: str = ""
-
-    @property
-    def volume(self) -> str:
-        """The share to mount, which is also its name under ``/Volumes``."""
-        return self.share or self.name
 
     def url(self, *, use_ip: bool) -> str:
         """Its share URL, reaching the NAS by IP under ``--use-ip``, else by name."""
-        return f"smb://{SMB_USER}@{self.ip if use_ip else self.name}/{self.volume}"
+        return f"smb://{SMB_USER}@{self.ip if use_ip else self.name}/{self.name}"
 
     def mount_url(self, *, use_ip: bool) -> str:
         """The URL to mount: by name, unless the name does not resolve.
@@ -69,8 +63,8 @@ NAS_DRIVES: tuple[NasDrive, ...] = (
     NasDrive("Caraxes", "192.168.50.4"),
     NasDrive("Syrax", "192.168.50.5"),
     NasDrive("Vhagar", "192.168.50.6"),
-    # A UGREEN box, not a Synology: its shares are fixed names, none "Balerion".
-    NasDrive("Balerion", "192.168.50.234", share="Media"),
+    # A UGREEN box, not a Synology, but it shares a folder named after itself too.
+    NasDrive("Balerion", "192.168.50.234"),
 )
 
 
