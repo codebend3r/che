@@ -58,6 +58,7 @@ _che_flags_for() {
     update) print -r -- '--check --dry-run --help' ;;
     doctor) print -r -- '--json --verbose --help' ;;
     uninstall) print -r -- '--dry-run --purge --help' ;;
+    skills) print -r -- '--target= --remove --dry-run --help' ;;
     list) print -r -- '--category= --json --no-dry --help' ;;
     completions) print -r -- '--shell= --help' ;;
     *) print -r -- "--help" ;;
@@ -134,6 +135,7 @@ _che() {
     'update:Pull the latest scripts and refresh the installed wrappers'
     'doctor:Check the install, the interpreter and every external tool'
     'uninstall:Remove the wrappers, the shim and the completions'
+    'skills:Link the Claude Code skills that ship with che into ~/.claude/skills'
     'list:List every command, one per line'
     'completions:Print the completion script for a shell'
   )

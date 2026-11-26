@@ -27,6 +27,7 @@
   "files": [
     "bin/",
     "shell/",
+    "skills/",
     "!**/__pycache__/",
     "!**/*.pyc"
   ],
