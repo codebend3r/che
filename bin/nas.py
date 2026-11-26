@@ -69,8 +69,8 @@ NAS_DRIVES: tuple[NasDrive, ...] = (
     NasDrive("Caraxes", "192.168.50.4"),
     NasDrive("Syrax", "192.168.50.5"),
     NasDrive("Vhagar", "192.168.50.6"),
-    # A UGREEN box, not a Synology: its shares are fixed names, none "Balerion".
-    NasDrive("Balerion", "192.168.50.234", share="Media"),
+    # A UGREEN box, not a Synology, but it shares a folder named after itself too.
+    NasDrive("Balerion", "192.168.50.234"),
 )
 
 
