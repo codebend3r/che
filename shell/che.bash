@@ -60,9 +60,9 @@ _che_restore_aliases() {
 _che_stash_aliases che_notify che all-actions all-actions-watch \
   checkout-my-branches clean-stale-branches clean-stale-branches-dr \
   hard-reset-all-branches hard-reset-all-branches-dr prune-worktrees \
-  prune-worktrees-dr sync-all-branches sync-all-branches-dr \
-  update-from-origin update-local-branches show-codecs fix-codecs \
-  fix-codecs-dr find-video-mkv-issues validate-video-files \
+  prune-worktrees-dr sync-all-branches sync-all-branches-dr sync-all-repos \
+  sync-all-repos-dr update-from-origin update-local-branches show-codecs \
+  fix-codecs fix-codecs-dr find-video-mkv-issues validate-video-files \
   scan-videos-audio-language remove-metadata rename-video-file \
   delete-duplicate-videos delete-duplicate-videos-dr video-list \
   detect-green-magenta-videos find-movie-by-year largest-tv-shows \
@@ -160,6 +160,18 @@ sync-all-branches() {
 # Update every branch and worktree, pruning what has been merged (preview only)
 sync-all-branches-dr() {
   DRY_RUN=true "$CHE_PYTHON" "$CHE_BIN/git/sync-all-branches.py" "$@"
+  che_notify 7 $?
+}
+
+# Run sync-all-branches in every repo, skipping ones that have not moved
+sync-all-repos() {
+  DRY_RUN=false "$CHE_PYTHON" "$CHE_BIN/git/sync-all-repos.py" "$@"
+  che_notify 7 $?
+}
+
+# Run sync-all-branches in every repo, skipping ones that have not moved (preview only)
+sync-all-repos-dr() {
+  DRY_RUN=true "$CHE_PYTHON" "$CHE_BIN/git/sync-all-repos.py" "$@"
   che_notify 7 $?
 }
 
