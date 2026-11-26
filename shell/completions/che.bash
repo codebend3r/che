@@ -58,6 +58,7 @@ _che_flags_for() {
     update) echo "--check --dry-run --help" ;;
     doctor) echo "--json --verbose --help" ;;
     uninstall) echo "--dry-run --purge --help" ;;
+    skills) echo "--target= --remove --dry-run --help" ;;
     list) echo "--category= --json --no-dry --help" ;;
     completions) echo "--shell= --help" ;;
     *) echo "--help" ;;
@@ -96,7 +97,7 @@ _che_complete() {
   local cur="${COMP_WORDS[COMP_CWORD]}"
 
   if [ "$COMP_CWORD" -eq 1 ]; then
-    _che_reply "" < <(compgen -W "all-actions all-actions-watch checkout-my-branches clean-stale-branches clean-stale-branches-dr hard-reset-all-branches hard-reset-all-branches-dr prune-worktrees prune-worktrees-dr sync-all-branches sync-all-branches-dr sync-all-repos sync-all-repos-dr update-from-origin update-local-branches show-codecs fix-codecs fix-codecs-dr find-video-mkv-issues validate-video-files scan-videos-audio-language remove-metadata rename-video-file delete-duplicate-videos delete-duplicate-videos-dr video-list detect-green-magenta-videos find-movie-by-year largest-tv-shows delete-by-ext delete-by-ext-dr delete-empty-folders delete-empty-folders-dr delete-smb-files delete-smb-files-dr files-under-size files-under-size-dr find-largest-files make-alpha-dir compress-folders list-permission mount-all-drives eject-all-drives eject-all-drives-dr ping-nas update-brew update-brew-dr btop install update doctor uninstall list completions" -- "$cur")
+    _che_reply "" < <(compgen -W "all-actions all-actions-watch checkout-my-branches clean-stale-branches clean-stale-branches-dr hard-reset-all-branches hard-reset-all-branches-dr prune-worktrees prune-worktrees-dr sync-all-branches sync-all-branches-dr sync-all-repos sync-all-repos-dr update-from-origin update-local-branches show-codecs fix-codecs fix-codecs-dr find-video-mkv-issues validate-video-files scan-videos-audio-language remove-metadata rename-video-file delete-duplicate-videos delete-duplicate-videos-dr video-list detect-green-magenta-videos find-movie-by-year largest-tv-shows delete-by-ext delete-by-ext-dr delete-empty-folders delete-empty-folders-dr delete-smb-files delete-smb-files-dr files-under-size files-under-size-dr find-largest-files make-alpha-dir compress-folders list-permission mount-all-drives eject-all-drives eject-all-drives-dr ping-nas update-brew update-brew-dr btop install update doctor uninstall skills list completions" -- "$cur")
     return
   fi
 

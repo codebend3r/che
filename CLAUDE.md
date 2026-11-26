@@ -51,6 +51,14 @@ The scripts were bash until August 2026. Nothing in `bin/` is shell any more.
   (`InstallRecord`, `load_record`/`save_record`), whether this copy is a git
   checkout, missing tools.
 - `bin/doctor.py` — `che doctor`: every check on the install.
+- `bin/skills.py` — `che skills`: symlinks each `skills/<name>/` into
+  `~/.claude/skills/` (or `$CLAUDE_CONFIG_DIR/skills`), so `che update` keeps
+  them current. A real directory already there is moved to
+  `~/.config/che/backups/skills/`; `--remove` deletes only links into this repo.
+- `skills/<name>/SKILL.md` — Claude Code skills that drive che's scripts
+  (`sync-all-branches`, `sync-all-repos`). They hold no logic of their own:
+  they run `che <name>`, so a behaviour change goes in the script and its
+  skill is updated to describe it. Shipped in the npm tarball.
 - `bin/tui.py` — terminal primitives for the menu and the wizard: alternate
   screen and raw mode with guaranteed teardown, key decoding, a flicker-free
   frame buffer, width-aware truncation (emoji are two columns), and readline

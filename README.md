@@ -49,7 +49,7 @@ as a shell function in zsh, bash and fish, and all of them can be browsed,
 filtered and run from a full-screen terminal menu.
 
 <!-- che:count -->
-35 commands across 5 categories, plus 6 built into `che` itself
+35 commands across 5 categories, plus 7 built into `che` itself
 <!-- /che:count -->
 
 ## Contents
@@ -305,6 +305,7 @@ exiftool rewrites files in place. `rename-video-file` already defaults to
 | `che update` | Pull the latest scripts and refresh the installed wrappers |
 | `che doctor` | Check the install, the interpreter and every external tool |
 | `che uninstall` | Remove the wrappers, the shim and the completions |
+| `che skills` | Link the Claude Code skills that ship with che into ~/.claude/skills |
 | `che list` | List every command, one per line |
 | `che completions` | Print the completion script for a shell |
 <!-- /che:builtins -->
@@ -434,6 +435,7 @@ bin/
   shellgen.py     renders wrappers, completions and README tables
   install.py      installer, first-run wizard, self-update, uninstall
   doctor.py       `che doctor`
+  skills.py       `che skills`: links skills/ into ~/.claude/skills
   rcfile.py       rc file edits: the che block and legacy wrappers
   machine.py      shells, rc paths, python discovery, install record
   tui.py          terminal primitives: raw input, frame buffer, prompts
@@ -445,6 +447,7 @@ bin/
   nas.py          NAS drive table and SMB mounting
   git/  video/  files/  drives/  system/    the scripts, by category
 shell/            GENERATED wrappers and completions (do not edit)
+skills/           Claude Code skills that drive the scripts, installed by `che skills`
 test/             pytest suites
 install.sh        bootstrap for a bare machine
 ```

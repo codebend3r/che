@@ -783,6 +783,18 @@ BUILTINS: tuple[Command, ...] = (
         ),
     ),
     Command(
+        name="skills",
+        flags=("--target=", "--remove", "--dry-run"),
+        category="che",
+        icon="🧠",
+        summary="Link the Claude Code skills that ship with che into ~/.claude/skills",
+        tags=("claude", "skill", "agent", "sync"),
+        prompts=(
+            Prompt("--dry-run", "Preview only", kind="bool", default="true"),
+            Prompt("--remove", "Remove che's links instead", kind="bool"),
+        ),
+    ),
+    Command(
         name="list",
         flags=("--category=", "--json", "--no-dry"),
         category="che",

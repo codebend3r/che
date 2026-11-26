@@ -9,7 +9,7 @@ Three ways in, all landing on the same command table in ``bin/commands.py``:
 * ``che <command> [args…]`` runs one directly, with the same environment the
   shell wrapper would have used, and ``exec``s so signals and exit codes pass
   straight through.
-* ``che install|update|doctor|uninstall|list|completions`` manage the install
+* ``che install|update|doctor|uninstall|skills|list|completions`` manage the install
   itself - see ``bin/install.py`` and ``bin/doctor.py``.
 
 The shell wrappers (``delete-by-ext``, ``sync-all-branches``, …) are generated
@@ -51,6 +51,8 @@ from commands import (
     variants,
 )
 from utils import add_bool_flag, build_parser, note, parse_bool, run, run_cli, success, warning
+
+import skills
 
 __version__ = VERSION
 
@@ -411,6 +413,7 @@ BUILTIN_MAIN: dict[str, Callable[[list[str]], int]] = {
     "update": install.update_main,
     "doctor": doctor.doctor_main,
     "uninstall": install.uninstall_main,
+    "skills": skills.skills_main,
     "list": list_main,
     "completions": completions_main,
 }

@@ -56,6 +56,7 @@ complete -c che -n __fish_use_subcommand -a install -d 'Install the shell wrappe
 complete -c che -n __fish_use_subcommand -a update -d 'Pull the latest scripts and refresh the installed wrappers'
 complete -c che -n __fish_use_subcommand -a doctor -d 'Check the install, the interpreter and every external tool'
 complete -c che -n __fish_use_subcommand -a uninstall -d 'Remove the wrappers, the shim and the completions'
+complete -c che -n __fish_use_subcommand -a skills -d 'Link the Claude Code skills that ship with che into ~/.claude/skills'
 complete -c che -n __fish_use_subcommand -a list -d 'List every command, one per line'
 complete -c che -n __fish_use_subcommand -a completions -d 'Print the completion script for a shell'
 
@@ -243,6 +244,9 @@ complete -c che -n "__fish_seen_subcommand_from doctor" -l json
 complete -c che -n "__fish_seen_subcommand_from doctor" -l verbose
 complete -c che -n "__fish_seen_subcommand_from uninstall" -l dry-run
 complete -c che -n "__fish_seen_subcommand_from uninstall" -l purge
+complete -c che -n "__fish_seen_subcommand_from skills" -l target -r
+complete -c che -n "__fish_seen_subcommand_from skills" -l remove
+complete -c che -n "__fish_seen_subcommand_from skills" -l dry-run
 complete -c che -n "__fish_seen_subcommand_from list" -l category -r
 complete -c che -n "__fish_seen_subcommand_from list" -l json
 complete -c che -n "__fish_seen_subcommand_from list" -l no-dry
