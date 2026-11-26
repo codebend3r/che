@@ -15,6 +15,8 @@ complete -c che -n __fish_use_subcommand -a prune-worktrees -d 'Remove every lin
 complete -c che -n __fish_use_subcommand -a prune-worktrees-dr -d 'Remove every linked worktree, then prune stale admin records (preview)'
 complete -c che -n __fish_use_subcommand -a sync-all-branches -d 'Update every branch and worktree, pruning what has been merged'
 complete -c che -n __fish_use_subcommand -a sync-all-branches-dr -d 'Update every branch and worktree, pruning what has been merged (preview)'
+complete -c che -n __fish_use_subcommand -a sync-all-repos -d 'Run sync-all-branches in every repo, skipping ones that have not moved'
+complete -c che -n __fish_use_subcommand -a sync-all-repos-dr -d 'Run sync-all-branches in every repo, skipping ones that have not moved (preview)'
 complete -c che -n __fish_use_subcommand -a update-from-origin -d 'Alias of sync-all-branches'
 complete -c che -n __fish_use_subcommand -a update-local-branches -d 'Rebase every local branch that has an upstream onto origin'
 complete -c che -n __fish_use_subcommand -a show-codecs -d 'Report media files outside the Direct Play codec/container set'
@@ -90,6 +92,32 @@ complete -c che -n "__fish_seen_subcommand_from sync-all-branches" -l limit -r
 complete -c che -n "__fish_seen_subcommand_from sync-all-branches-dr" -l dry-run
 complete -c che -n "__fish_seen_subcommand_from sync-all-branches-dr" -l author -r
 complete -c che -n "__fish_seen_subcommand_from sync-all-branches-dr" -l limit -r
+complete -c che -n "__fish_seen_subcommand_from sync-all-repos" -l root -r
+complete -c che -n "__fish_seen_subcommand_from sync-all-repos" -l depth -r
+complete -c che -n "__fish_seen_subcommand_from sync-all-repos" -l jobs -r
+complete -c che -n "__fish_seen_subcommand_from sync-all-repos" -l force
+complete -c che -n "__fish_seen_subcommand_from sync-all-repos" -l offline
+complete -c che -n "__fish_seen_subcommand_from sync-all-repos" -l dry-run
+complete -c che -n "__fish_seen_subcommand_from sync-all-repos" -l summary-only
+complete -c che -n "__fish_seen_subcommand_from sync-all-repos" -l stop-on-error
+complete -c che -n "__fish_seen_subcommand_from sync-all-repos" -l clear-cache
+complete -c che -n "__fish_seen_subcommand_from sync-all-repos" -l cache-dir -r
+complete -c che -n "__fish_seen_subcommand_from sync-all-repos" -l timeout -r
+complete -c che -n "__fish_seen_subcommand_from sync-all-repos" -l author -r
+complete -c che -n "__fish_seen_subcommand_from sync-all-repos" -l limit -r
+complete -c che -n "__fish_seen_subcommand_from sync-all-repos-dr" -l root -r
+complete -c che -n "__fish_seen_subcommand_from sync-all-repos-dr" -l depth -r
+complete -c che -n "__fish_seen_subcommand_from sync-all-repos-dr" -l jobs -r
+complete -c che -n "__fish_seen_subcommand_from sync-all-repos-dr" -l force
+complete -c che -n "__fish_seen_subcommand_from sync-all-repos-dr" -l offline
+complete -c che -n "__fish_seen_subcommand_from sync-all-repos-dr" -l dry-run
+complete -c che -n "__fish_seen_subcommand_from sync-all-repos-dr" -l summary-only
+complete -c che -n "__fish_seen_subcommand_from sync-all-repos-dr" -l stop-on-error
+complete -c che -n "__fish_seen_subcommand_from sync-all-repos-dr" -l clear-cache
+complete -c che -n "__fish_seen_subcommand_from sync-all-repos-dr" -l cache-dir -r
+complete -c che -n "__fish_seen_subcommand_from sync-all-repos-dr" -l timeout -r
+complete -c che -n "__fish_seen_subcommand_from sync-all-repos-dr" -l author -r
+complete -c che -n "__fish_seen_subcommand_from sync-all-repos-dr" -l limit -r
 complete -c che -n "__fish_seen_subcommand_from update-from-origin" -l dry-run
 complete -c che -n "__fish_seen_subcommand_from update-from-origin" -l author -r
 complete -c che -n "__fish_seen_subcommand_from update-from-origin" -l limit -r
@@ -253,6 +281,32 @@ complete -c sync-all-branches -l limit -r
 complete -c sync-all-branches-dr -l dry-run
 complete -c sync-all-branches-dr -l author -r
 complete -c sync-all-branches-dr -l limit -r
+complete -c sync-all-repos -l root -r
+complete -c sync-all-repos -l depth -r
+complete -c sync-all-repos -l jobs -r
+complete -c sync-all-repos -l force
+complete -c sync-all-repos -l offline
+complete -c sync-all-repos -l dry-run
+complete -c sync-all-repos -l summary-only
+complete -c sync-all-repos -l stop-on-error
+complete -c sync-all-repos -l clear-cache
+complete -c sync-all-repos -l cache-dir -r
+complete -c sync-all-repos -l timeout -r
+complete -c sync-all-repos -l author -r
+complete -c sync-all-repos -l limit -r
+complete -c sync-all-repos-dr -l root -r
+complete -c sync-all-repos-dr -l depth -r
+complete -c sync-all-repos-dr -l jobs -r
+complete -c sync-all-repos-dr -l force
+complete -c sync-all-repos-dr -l offline
+complete -c sync-all-repos-dr -l dry-run
+complete -c sync-all-repos-dr -l summary-only
+complete -c sync-all-repos-dr -l stop-on-error
+complete -c sync-all-repos-dr -l clear-cache
+complete -c sync-all-repos-dr -l cache-dir -r
+complete -c sync-all-repos-dr -l timeout -r
+complete -c sync-all-repos-dr -l author -r
+complete -c sync-all-repos-dr -l limit -r
 complete -c update-from-origin -l dry-run
 complete -c update-from-origin -l author -r
 complete -c update-from-origin -l limit -r

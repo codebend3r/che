@@ -17,6 +17,8 @@ _che_flags_for() {
     prune-worktrees-dr) echo "--dry-run --force --help" ;;
     sync-all-branches) echo "--dry-run --author= --limit= --help" ;;
     sync-all-branches-dr) echo "--dry-run --author= --limit= --help" ;;
+    sync-all-repos) echo "--root= --depth= --jobs= --force --offline --dry-run --summary-only --stop-on-error --clear-cache --cache-dir= --timeout= --author= --limit= --help" ;;
+    sync-all-repos-dr) echo "--root= --depth= --jobs= --force --offline --dry-run --summary-only --stop-on-error --clear-cache --cache-dir= --timeout= --author= --limit= --help" ;;
     update-from-origin) echo "--dry-run --author= --limit= --help" ;;
     update-local-branches) echo "--limit= --dry-run --help" ;;
     show-codecs) echo "--path= --verbose --help" ;;
@@ -94,7 +96,7 @@ _che_complete() {
   local cur="${COMP_WORDS[COMP_CWORD]}"
 
   if [ "$COMP_CWORD" -eq 1 ]; then
-    _che_reply "" < <(compgen -W "all-actions all-actions-watch checkout-my-branches clean-stale-branches clean-stale-branches-dr hard-reset-all-branches hard-reset-all-branches-dr prune-worktrees prune-worktrees-dr sync-all-branches sync-all-branches-dr update-from-origin update-local-branches show-codecs fix-codecs fix-codecs-dr find-video-mkv-issues validate-video-files scan-videos-audio-language remove-metadata rename-video-file delete-duplicate-videos delete-duplicate-videos-dr video-list detect-green-magenta-videos find-movie-by-year largest-tv-shows delete-by-ext delete-by-ext-dr delete-empty-folders delete-empty-folders-dr delete-smb-files delete-smb-files-dr files-under-size files-under-size-dr find-largest-files make-alpha-dir compress-folders list-permission mount-all-drives eject-all-drives eject-all-drives-dr ping-nas update-brew update-brew-dr btop install update doctor uninstall list completions" -- "$cur")
+    _che_reply "" < <(compgen -W "all-actions all-actions-watch checkout-my-branches clean-stale-branches clean-stale-branches-dr hard-reset-all-branches hard-reset-all-branches-dr prune-worktrees prune-worktrees-dr sync-all-branches sync-all-branches-dr sync-all-repos sync-all-repos-dr update-from-origin update-local-branches show-codecs fix-codecs fix-codecs-dr find-video-mkv-issues validate-video-files scan-videos-audio-language remove-metadata rename-video-file delete-duplicate-videos delete-duplicate-videos-dr video-list detect-green-magenta-videos find-movie-by-year largest-tv-shows delete-by-ext delete-by-ext-dr delete-empty-folders delete-empty-folders-dr delete-smb-files delete-smb-files-dr files-under-size files-under-size-dr find-largest-files make-alpha-dir compress-folders list-permission mount-all-drives eject-all-drives eject-all-drives-dr ping-nas update-brew update-brew-dr btop install update doctor uninstall list completions" -- "$cur")
     return
   fi
 
@@ -106,4 +108,4 @@ _che_complete_wrapper() {
 }
 
 complete -o nospace -F _che_complete che
-complete -o nospace -F _che_complete_wrapper all-actions all-actions-watch checkout-my-branches clean-stale-branches clean-stale-branches-dr hard-reset-all-branches hard-reset-all-branches-dr prune-worktrees prune-worktrees-dr sync-all-branches sync-all-branches-dr update-from-origin update-local-branches show-codecs fix-codecs fix-codecs-dr find-video-mkv-issues validate-video-files scan-videos-audio-language remove-metadata rename-video-file delete-duplicate-videos delete-duplicate-videos-dr video-list detect-green-magenta-videos find-movie-by-year largest-tv-shows delete-by-ext delete-by-ext-dr delete-empty-folders delete-empty-folders-dr delete-smb-files delete-smb-files-dr files-under-size files-under-size-dr find-largest-files make-alpha-dir compress-folders list-permission mount-all-drives eject-all-drives eject-all-drives-dr ping-nas update-brew update-brew-dr btop
+complete -o nospace -F _che_complete_wrapper all-actions all-actions-watch checkout-my-branches clean-stale-branches clean-stale-branches-dr hard-reset-all-branches hard-reset-all-branches-dr prune-worktrees prune-worktrees-dr sync-all-branches sync-all-branches-dr sync-all-repos sync-all-repos-dr update-from-origin update-local-branches show-codecs fix-codecs fix-codecs-dr find-video-mkv-issues validate-video-files scan-videos-audio-language remove-metadata rename-video-file delete-duplicate-videos delete-duplicate-videos-dr video-list detect-green-magenta-videos find-movie-by-year largest-tv-shows delete-by-ext delete-by-ext-dr delete-empty-folders delete-empty-folders-dr delete-smb-files delete-smb-files-dr files-under-size files-under-size-dr find-largest-files make-alpha-dir compress-folders list-permission mount-all-drives eject-all-drives eject-all-drives-dr ping-nas update-brew update-brew-dr btop

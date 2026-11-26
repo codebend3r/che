@@ -98,6 +98,16 @@ function sync-all-branches-dr --description 'Update every branch and worktree, p
     che_notify 7 $status
 end
 
+function sync-all-repos --description 'Run sync-all-branches in every repo, skipping ones that have not moved'
+    env DRY_RUN=false "$CHE_PYTHON" "$CHE_BIN/git/sync-all-repos.py" $argv
+    che_notify 7 $status
+end
+
+function sync-all-repos-dr --description 'Run sync-all-branches in every repo, skipping ones that have not moved (preview only)'
+    env DRY_RUN=true "$CHE_PYTHON" "$CHE_BIN/git/sync-all-repos.py" $argv
+    che_notify 7 $status
+end
+
 function update-from-origin --description 'Alias of sync-all-branches'
     "$CHE_PYTHON" "$CHE_BIN/git/sync-all-branches.py" --dry-run=false $argv
     che_notify 7 $status

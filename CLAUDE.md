@@ -161,6 +161,14 @@ works around the pin rather than counting it as a failure:
   Track new origin branches without switching HEAD. Dry-run uses cached refs
   and does not even fetch. `--no-push` and `--keep-locked` remain accepted and
   ignored for compatibility, since chip passes `--no-push`.
+- `sync-all-repos` runs `sync-all-branches` in every repo under its roots
+  (default `~/Developer/git`), a few at a time, and caches each successful
+  result in `~/.cache/che/sync-all-repos/` against a fingerprint of the repo's
+  refs, HEAD, worktrees (and whether each is dirty or mid-operation), the
+  remote's tips from one `ls-remote`, the sync code and the passthrough flags.
+  A matching fingerprint is reported from cache and nothing runs. Dirty repos
+  are synced (sync-all-branches stashes their work), not skipped. It calls no
+  git command that changes a repo itself, so it needs no `skip_git_hooks()`.
 - Every script in `bin/git/` that touches branches (these five plus
   `prune-worktrees`) calls `skip_git_hooks()` first, so no repo hook
   (lefthook, husky) runs on their checkouts and rebases. A new script in
