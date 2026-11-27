@@ -19,7 +19,16 @@ from typing import Literal
 
 import art
 import tui
-from commands import MENU_KEYS, VERSION, Category, Command, Resolved, all_commands, grouped
+from commands import (
+    CATEGORIES,
+    MENU_KEYS,
+    VERSION,
+    Category,
+    Command,
+    Resolved,
+    all_commands,
+    grouped,
+)
 
 
 @lru_cache(maxsize=64)
@@ -260,27 +269,19 @@ def draw(screen: tui.Screen, state: Menu) -> None:
 
     total = len(all_commands())
     shown = len(state.matches())
-    counter = f"{shown}/{total}" if state.query else str(total)
-    if state.searching or state.query:
-        caret = f"{colors.cyan}▏{colors.reset}" if state.searching else " "
-        prompt = f"  {colors.grey}search{colors.reset} {caret}{state.query}"
-    else:
-        prompt = f"  {colors.grey}type to search   ↑↓ move   ⏎ run   ? keys{colors.reset}"
+    counter = f"{shown}/{total}"
+    prompt = search_prompt(state)
 
     right = art.wordmark(colors)
-    right += ["", f"  {colors.grey}v{VERSION}  {counter} commands{colors.reset}", prompt]
+    right += ["", f"  {colors.grey}{counter} commands{colors.reset}", f"  {prompt}"]
     if banner_fits(screen, right) and not state.show_help:
-        # The face beside the wordmark, with the version, the count and the
-        # search line tucked under the letters.
+        # The face beside the wordmark, with the count and the search line
+        # tucked under the letters.
         screen.lines(art.banner(right, columns=width, colors=colors))
     else:
-        title = f"{colors.bright_magenta}{colors.bold}che{colors.reset}"
+        # The one-line search bar: the prompt on the left, the count on the right.
         screen.line()
-        screen.line(
-            f"  {title} {colors.grey}v{VERSION}{colors.reset}  "
-            f"{colors.grey}{counter} commands{colors.reset}"
-        )
-        screen.line(prompt)
+        screen.line(spread(f"  {prompt}", f"{colors.grey}{counter}{colors.reset}  ", width))
     screen.line(f"  {colors.grey}{'─' * max(0, width - 4)}{colors.reset}")
     header_rows = screen.used
 
@@ -312,15 +313,15 @@ def draw(screen: tui.Screen, state: Menu) -> None:
     visible = rows[state.offset : state.offset + body_rows]
     for index, row in enumerate(visible, start=state.offset):
         if isinstance(row, Category):
-            header = f"{row.title}  {row.blurb}"
-            left = tui.fit(f"  {colors.bold}{colors.blue}{header}{colors.reset}", list_width)
+            left = tui.fit(category_row(row), list_width)
         else:
-            left = command_row(state, row, selected=index == state.cursor)
-            if detail_width:
-                left = tui.fit(left, list_width)
-            else:
-                room = max(0, list_width - tui.display_width(left) - 2)
-                left += f"  {colors.grey}{tui.truncate(row.summary, room)}{colors.reset}"
+            left = command_row(
+                state,
+                row,
+                selected=index == state.cursor,
+                width=list_width,
+                summary=not detail_width,
+            )
 
         detail_index = index - state.offset
         right = detail_lines[detail_index] if detail_index < len(detail_lines) else ""
@@ -329,81 +330,211 @@ def draw(screen: tui.Screen, state: Menu) -> None:
     draw_footer(screen, state)
 
 
-def command_row(state: Menu, command: Command, *, selected: bool) -> str:
-    """One command's entry in the list: pointer, icon, name and its dry/live badge."""
+# ---------------------------------------------------------------------------
+# Drawing primitives
+# ---------------------------------------------------------------------------
+
+
+def pill(text: str, ground: str) -> str:
+    """``text`` on a tinted ground, one cell of padding either side.
+
+    With colour off the ground is empty, so brackets stand in for it: the
+    pill keeps its width either way and nothing after it shifts.
+    """
     colors = tui.palette()
-    pointer = f"{colors.cyan}▸{colors.reset}" if selected else " "
+    if not ground:
+        return f"[{text}]"
+    return f"{ground} {text} {colors.reset}"
+
+
+def key_cap(key: str) -> str:
+    """A key the way the footer and detail pane name it: `` d ``."""
+    colors = tui.palette()
+    return f"{colors.key_ground} {key} {colors.reset}" if colors.key_ground else key
+
+
+def band(text: str, width: int, ground: str) -> str:
+    """``text`` fitted to ``width`` columns, all of it on ``ground``.
+
+    Every reset inside ``text`` would end the ground early, so each one is
+    followed by the ground again; a pill inside a band keeps its own colour
+    and the band resumes after it.
+    """
+    colors = tui.palette()
+    fitted = tui.fit(text, width)
+    if not ground:
+        return fitted
+    return ground + fitted.replace(colors.reset, colors.reset + ground) + colors.reset
+
+
+def spread(left: str, right: str, width: int) -> str:
+    """``left`` and ``right`` on one line, pushed to either edge of ``width``.
+
+    When both do not fit, ``right`` is dropped before ``left`` is cut, since
+    the left side carries what the line is about.
+    """
+    room = width - tui.display_width(left) - tui.display_width(right)
+    if room < 1:
+        return tui.fit(left, width)
+    return left + " " * room + right
+
+
+def search_prompt(state: Menu) -> str:
+    """The search bar: ``che`` between angle quotes, then the query and a caret while typing."""
+    colors = tui.palette()
+    lead = (
+        f"{colors.grey}{LEFT_QUOTE}{colors.reset} "
+        f"{colors.bold}{colors.bright_green}che {RIGHT_QUOTE}{colors.reset}"
+    )
+    if state.searching:
+        return f"{lead} {state.query}{colors.bright_green}▏{colors.reset}"
+    if state.query:
+        return f"{lead} {state.query}"
+    return f"{lead} {colors.grey}type to filter{colors.reset}"
+
+
+def category_row(category: Category) -> str:
+    """A category header in the list: ``## Git  Branch hygiene, ...``."""
+    colors = tui.palette()
+    title = f"{colors.bold}{colors.bright_green}## {category.title}{colors.reset}"
+    return f"  {title}  {colors.grey}{category.blurb}{colors.reset}"
+
+
+def badge(state: Menu, command: Command) -> str:
+    """The pill at the end of a command's row: how running it would behave."""
+    colors = tui.palette()
+    if command.has_dry_twin:
+        if state.is_dry(command):
+            return pill("DRY", colors.good_pill)
+        return pill("LIVE", colors.warn_pill)
+    if command.destructive:
+        return pill("LIVE", colors.warn_pill)
+    if command.macos_only:
+        return pill("MACOS", colors.info_pill)
+    return ""
+
+
+def command_row(
+    state: Menu, command: Command, *, selected: bool, width: int, summary: bool = False
+) -> str:
+    """One command's row in the list, exactly ``width`` columns wide.
+
+    Pointer, icon and name on the left, the dry/live pill against the right
+    edge, the whole row on a lighter ground while selected. ``summary`` adds
+    the command's summary between the two, for when there is no detail pane
+    to show it.
+    """
+    colors = tui.palette()
+    pointer = f"{colors.bright_green}{RIGHT_QUOTE}{colors.reset}" if selected else " "
     name = command.name
     if selected:
-        name = f"{colors.bold}{colors.cyan}{name}{colors.reset}"
-    elif command.destructive:
-        name = f"{colors.yellow}{name}{colors.reset}"
+        name = f"{colors.bold}{colors.bright_green}{name}{colors.reset}"
+    left = f"  {pointer} {command.icon} {name}"
 
-    badge = ""
-    if command.has_dry_twin and state.is_dry(command):
-        badge = f" {colors.grey}·dry{colors.reset}"
-    elif command.destructive:
-        badge = f" {colors.red}·live{colors.reset}"
-    return f"  {pointer} {command.icon} {name}{badge}"
+    tag = badge(state, command)
+    tag_width = tui.display_width(tag) + 1 if tag else 0
+    if summary:
+        room = width - tui.display_width(left) - tag_width - 3
+        if room > 8:
+            left += f"  {colors.grey}{tui.truncate(command.summary, room)}{colors.reset}"
+
+    room = width - tag_width
+    line = spread(tui.truncate(left, room - 1), f"{tag} " if tag else "", width)
+    return band(line, width, colors.selected_ground if selected else "")
 
 
-# The detail pane's label column: "script  ", "needs   ", "warning ".
-LABEL_WIDTH = 8
+# ---------------------------------------------------------------------------
+# Detail pane
+# ---------------------------------------------------------------------------
+
+# The search bar's angle quotes, spelled as escapes so the linter does not
+# take them for a typo of < and >.
+LEFT_QUOTE = "\u2039"
+RIGHT_QUOTE = "\u203a"
+
+# The detail pane's label column: "command:  ", "dry run:  ".
+LABEL_WIDTH = 10
 
 
 def detail_pane(state: Menu, width: int) -> list[str]:
-    """The right-hand column: what the selected command is and what it needs."""
+    """The right-hand column: what the selected command is and what it needs.
+
+    A ``che / Category`` breadcrumb, the name as a ``$`` prompt, the summary,
+    then a striped table of what che knows about it.
+    """
     colors = tui.palette()
     command = state.selected()
     if command is None:
         return []
 
-    lines: list[str] = [f"{colors.bold}{command.name}{colors.reset}", ""]
+    category = next((c.title for c in CATEGORIES if c.key == command.category), "")
+    lines: list[str] = [
+        f"{colors.grey}che / {category}{colors.reset}",
+        f"{colors.grey}${colors.reset} {colors.bold}{colors.bright_green}{command.name}{colors.reset}",
+    ]
     lines += wrap(command.summary, width, colors.grey)
     lines.append("")
 
-    def field_line(label: str, value: str) -> str:
-        return f"{colors.grey}{label:<{LABEL_WIDTH}}{colors.reset}{value}"
+    for index, (label, values) in enumerate(detail_fields(state, command, width)):
+        ground = colors.stripe_ground if index % 2 == 0 else ""
+        for line_index, value in enumerate(values):
+            title = f"{label}:" if line_index == 0 else ""
+            text = f" {colors.grey}{title:<{LABEL_WIDTH}}{colors.reset}{value}"
+            lines.append(band(text, width, ground))
+    return [tui.truncate(line, width) for line in lines]
 
-    def field_wrap(label: str, text: str, color: str) -> list[str]:
-        return wrap(text, width, color, indent=f"{label:<{LABEL_WIDTH}}")
+
+def detail_fields(state: Menu, command: Command, width: int) -> list[tuple[str, list[str]]]:
+    """The detail table's rows: a label and the lines of its value."""
+    colors = tui.palette()
+    value_width = max(10, width - LABEL_WIDTH - 2)
+
+    def wrapped(text: str, color: str = "") -> list[str]:
+        return [
+            f"{color}{line}{colors.reset if color else ''}"
+            for line in (textwrap.wrap(text, value_width) or [""])
+        ]
+
+    fields: list[tuple[str, list[str]]] = [("command", [f"che {command.name}"])]
 
     if command.script:
-        lines.append(field_line("script", f"bin/{command.script}"))
+        fields.append(("script", [f"bin/{command.script}"]))
     elif command.builtin:
-        lines.append(field_line("script", "built in to che"))
+        fields.append(("script", ["built in to che"]))
 
     if command.needs:
-        parts = []
-        for binary in command.needs:
-            found = _which(binary)
-            mark = f"{colors.green}✓{colors.reset}" if found else f"{colors.red}✗{colors.reset}"
-            parts.append(f"{mark} {binary}")
-        lines.append(field_line("needs", "  ".join(parts)))
-
-    if command.flags:
-        lines += field_wrap("flags", " ".join(command.flag_names), colors.grey)
+        found = (
+            pill(f"{binary} ✓", colors.good_pill)
+            if _which(binary)
+            else pill(f"{binary} ✗", colors.bad_pill)
+            for binary in command.needs
+        )
+        fields.append(("needs", [" ".join(found)]))
 
     if command.has_dry_twin:
-        state_text = (
-            f"{colors.green}on{colors.reset} - previews only"
+        state_pill = (
+            pill("on, previews only", colors.good_pill)
             if state.is_dry(command)
-            else f"{colors.red}OFF{colors.reset} - changes files"
+            else pill("OFF, changes files", colors.warn_pill)
         )
-        lines.append(field_line("dry-run", f"{state_text}  {colors.grey}(d){colors.reset}"))
+        fields.append(("dry run", [f"{state_pill} {key_cap('d')}"]))
+    elif command.preview:
+        fields.append(("dry run", [f"asked on {key_cap('⏎')}"]))
     elif command.destructive:
-        reason = command.no_preview_reason or "changes files"
-        lines += field_wrap("warning", reason, colors.yellow)
+        fields.append(
+            ("warning", wrapped(command.no_preview_reason or "changes files", colors.yellow))
+        )
+
+    if command.flags:
+        fields.append(("flags", wrapped(" ".join(command.flag_names), colors.grey)))
 
     if command.setup:
-        lines += field_wrap("setup", command.setup, colors.yellow)
+        fields.append(("setup", wrapped(command.setup, colors.yellow)))
 
     if command.macos_only:
-        lines.append(field_line("os", "macOS only"))
+        fields.append(("os", [pill("macOS only", colors.info_pill)]))
 
-    lines.append("")
-    lines.append(f"{colors.grey}⏎ run   x run bare   h help{colors.reset}")
-    return [tui.truncate(line, width) for line in lines]
+    return fields
 
 
 def wrap(text: str, width: int, color: str = "", indent: str = "") -> list[str]:
@@ -418,27 +549,57 @@ def wrap(text: str, width: int, color: str = "", indent: str = "") -> list[str]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# Help and footer
+# ---------------------------------------------------------------------------
+
+
 def draw_help(screen: tui.Screen) -> None:
     colors = tui.palette()
     screen.line()
-    screen.line(f"  {colors.bold}Keys{colors.reset}")
+    screen.line(f"  {colors.bold}{colors.bright_green}## Keys{colors.reset}")
     screen.line()
     width = max(len(key) for key, _ in MENU_KEYS) + 3
     for key, description in MENU_KEYS:
         screen.line(
-            f"    {colors.cyan}{key:<{width}}{colors.reset}{colors.grey}{description}{colors.reset}"
+            f"    {colors.bright_green}{key:<{width}}{colors.reset}"
+            f"{colors.grey}{description}{colors.reset}"
         )
     screen.line()
     screen.line(f"  {colors.grey}Press any key to go back.{colors.reset}")
 
 
 def draw_footer(screen: tui.Screen, state: Menu) -> None:
+    """The bottom bar: che and its version, the keys or a status, and the actions.
+
+    The two action pills on the right say what ⏎ and d would do to the
+    selected command right now: ``run`` or ``preview``, dry run on or off.
+    """
     colors = tui.palette()
     screen.pad_to(screen.rows - 2)
     screen.line(f"  {colors.grey}{'─' * max(0, screen.columns - 4)}{colors.reset}")
+
+    brand = f"{colors.bold}{colors.bright_green}[che]{colors.reset} {colors.grey}v{VERSION}{colors.reset}"
     if state.status:
-        screen.line(f"  {colors.yellow}{state.status}{colors.reset}")
+        middle = f"{colors.yellow}{state.status}{colors.reset}"
     else:
-        screen.line(
-            f"  {colors.grey}⏎ run   d dry-run   h help   / search   ? keys   q quit{colors.reset}"
+        middle = (
+            f"{key_cap('j')} {key_cap('k')} {colors.grey}move{colors.reset}  "
+            f"{key_cap('/')} {colors.grey}filter{colors.reset}  "
+            f"{key_cap('h')} {colors.grey}help{colors.reset}  "
+            f"{key_cap('q')} {colors.grey}quit{colors.reset}"
         )
+    left = f"  {brand}   {middle}"
+
+    actions = ""
+    command = state.selected()
+    if command is not None and not state.show_help:
+        dry = command.has_dry_twin and state.is_dry(command)
+        if command.has_dry_twin:
+            toggle = pill(f"dry run: {'on' if dry else 'off'}  d", colors.key_ground)
+        else:
+            toggle = f"{colors.grey}no dry run{colors.reset}"
+        run = pill(f"{'preview' if dry else 'run'} ⏎", colors.run_pill)
+        actions = f"{toggle} {run}  "
+
+    screen.line(spread(left, actions, screen.columns))

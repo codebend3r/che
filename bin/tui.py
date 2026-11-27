@@ -57,7 +57,21 @@ class Palette:
     blue: str = "\033[34m"
     cyan: str = "\033[36m"
     grey: str = "\033[90m"
+    bright_green: str = "\033[92m"
     bright_magenta: str = "\033[95m"
+
+    # Grounds for the menu's bands and pills. These are 256-colour escapes
+    # (every terminal che targets has them): a foreground on a tinted ground,
+    # so a pill reads as one shape. Each ends in the ground; the text after
+    # it brings its own reset.
+    selected_ground: str = "\033[48;5;236m"
+    stripe_ground: str = "\033[48;5;234m"
+    key_ground: str = "\033[38;5;252;48;5;237m"
+    good_pill: str = "\033[38;5;120;48;5;22m"
+    warn_pill: str = "\033[38;5;221;48;5;58m"
+    bad_pill: str = "\033[38;5;217;48;5;52m"
+    info_pill: str = "\033[38;5;117;48;5;24m"
+    run_pill: str = "\033[1;38;5;16;48;5;78m"
 
 
 PLAIN = Palette(**{field: "" for field in Palette.__dataclass_fields__})
