@@ -92,6 +92,65 @@ def test_truncate_and_fit():
     assert tui.fit("🎬🎬🎬", 4) == "🎬… "
 
 
+@pytest.mark.parametrize("icon", ["🎬", "🗂️", "⬇️", "⌨️"])
+def test_icon_slot_is_two_columns_whatever_the_icon(icon):
+    """The slot is measured, and drawn, as two columns, so a terminal that
+    draws an emoji with U+FE0F one column wide no longer shifts its row."""
+    slot = tui.icon_slot(icon)
+    assert tui.display_width(slot) == 2
+    assert tui.display_width(f"  {slot} name") == 9
+    assert icon in slot
+
+
+def test_truncate_keeps_escapes_and_closes_them():
+    """A cut row used to lose every colour and its icon with it."""
+    text = f"\033[32m{tui.icon_slot('🗂️')} sync-all-repos\033[0m"
+    cut = tui.truncate(text, 8)
+    assert cut.startswith("\033[32m")
+    assert "🗂️" in cut
+    assert cut.endswith("…\033[0m")
+    assert tui.display_width(cut) == 8
+
+
+@pytest.mark.parametrize(
+    ("reply", "theme"),
+    [
+        ("\033]11;rgb:ffff/ffff/ffff\033\\", "light"),
+        ("\033]11;rgb:1e1e/1e1e/2e2e\a", "dark"),
+        ("\033]11;rgba:fa/f8/f0/ff\a", "light"),
+        ("garbage", None),
+    ],
+)
+def test_theme_from_reply(reply, theme):
+    assert tui.theme_from_reply(reply) == theme
+
+
+def test_theme_prefers_che_theme_then_colorfgbg(monkeypatch):
+    monkeypatch.setattr(tui, "_detected", None)
+    monkeypatch.delenv("CHE_THEME", raising=False)
+    monkeypatch.delenv("COLORFGBG", raising=False)
+    assert tui.theme() == "dark"
+    monkeypatch.setenv("COLORFGBG", "0;15")
+    assert tui.theme() == "light"
+    monkeypatch.setenv("COLORFGBG", "15;default;0")
+    assert tui.theme() == "dark"
+    monkeypatch.setattr(tui, "_detected", "light")
+    assert tui.theme() == "light"
+    monkeypatch.setenv("CHE_THEME", "dark")
+    assert tui.theme() == "dark"
+
+
+def test_light_theme_gets_the_light_palette(monkeypatch):
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setattr(tui, "color_enabled", lambda: True)
+    monkeypatch.setenv("CHE_THEME", "light")
+    assert tui.palette() is tui.LIGHT
+    monkeypatch.setenv("CHE_THEME", "dark")
+    assert tui.palette() == tui.Palette()
+    # Every role the dark palette tints, the light one tints too.
+    assert all(getattr(tui.LIGHT, field) for field in tui.Palette.__dataclass_fields__)
+
+
 def test_each_prompt_keeps_its_own_history(tmp_path, monkeypatch):
     """`read_history_file` appends to what is already in memory, so asking for
     a path and then a limit offered the path at the limit prompt - and saved it

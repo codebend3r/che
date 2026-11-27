@@ -74,15 +74,116 @@ class Palette:
     run_pill: str = "\033[1;38;5;16;48;5;78m"
 
 
+# The same roles for a light terminal. The dark grounds above read as heavy
+# black bars on white, and bright green or yellow text all but vanishes on
+# it, so a light background gets pale grounds and deeper inks instead.
+LIGHT = Palette(
+    yellow="\033[38;5;130m",
+    bright_green="\033[38;5;28m",
+    selected_ground="\033[48;5;254m",
+    stripe_ground="\033[48;5;255m",
+    key_ground="\033[38;5;236;48;5;252m",
+    good_pill="\033[38;5;22;48;5;194m",
+    warn_pill="\033[38;5;94;48;5;230m",
+    bad_pill="\033[38;5;88;48;5;224m",
+    info_pill="\033[38;5;24;48;5;195m",
+    run_pill="\033[1;38;5;231;48;5;28m",
+)
+
 PLAIN = Palette(**{field: "" for field in Palette.__dataclass_fields__})
 
 
 def palette() -> Palette:
     """Colors when the terminal wants them, empty strings when it does not."""
-    return Palette() if color_enabled() else PLAIN
+    if not color_enabled():
+        return PLAIN
+    return LIGHT if theme() == "light" else Palette()
 
 
-_ANSI = re.compile(r"\033\[[0-9;]*[A-Za-z]|\033\][^\a]*(?:\a|\033\\)")
+# ---------------------------------------------------------------------------
+# Theme
+# ---------------------------------------------------------------------------
+
+THEMES = ("dark", "light")
+
+# What the terminal said its background was, once :func:`detect_theme` asked.
+_detected: str | None = None
+
+
+def theme() -> str:
+    """``"light"`` or ``"dark"``: which palette suits the terminal's background.
+
+    ``CHE_THEME`` wins when it names one. Then the terminal's own answer to
+    an OSC 11 query, if :class:`Term` has asked it; then ``COLORFGBG``, which
+    some terminals export as ``"fg;bg"``; then dark, the common case.
+    """
+    chosen = os.environ.get("CHE_THEME", "").strip().lower()
+    if chosen in THEMES:
+        return chosen
+    if _detected is not None:
+        return _detected
+    return _theme_from_colorfgbg(os.environ.get("COLORFGBG", "")) or "dark"
+
+
+def _theme_from_colorfgbg(value: str) -> str | None:
+    """``COLORFGBG``'s last field is the background's ANSI index."""
+    background = value.rsplit(";", 1)[-1].strip()
+    if not background.isdigit():
+        return None
+    # 7 (white) and 9 to 15 (the bright colours) are light grounds.
+    return "light" if int(background) in (7, *range(9, 16)) else "dark"
+
+
+_BACKGROUND_REPLY = re.compile(r"\]11;rgba?:([0-9a-fA-F]+)/([0-9a-fA-F]+)/([0-9a-fA-F]+)")
+
+
+def theme_from_reply(reply: str) -> str | None:
+    """The theme an OSC 11 reply (``]11;rgb:ffff/ffff/ffff``) implies."""
+    match = _BACKGROUND_REPLY.search(reply)
+    if not match:
+        return None
+    red, green, blue = (int(part, 16) / (16 ** len(part) - 1) for part in match.groups())
+    # Perceived brightness (Rec. 601 weights), with the midpoint as the line.
+    return "light" if 0.299 * red + 0.587 * green + 0.114 * blue > 0.5 else "dark"
+
+
+_THEME_QUERY_TIMEOUT = 0.15
+
+
+def detect_theme(fd: int) -> None:
+    """Ask the terminal for its background colour, once, while input is raw.
+
+    A terminal that does not answer costs one short timeout and leaves the
+    ``COLORFGBG`` or dark fallback in place. ``CHE_THEME`` skips the question.
+    """
+    global _detected
+    if _detected is not None or os.environ.get("CHE_THEME", "").strip().lower() in THEMES:
+        return
+    if not (os.isatty(fd) and sys.stdout.isatty()):
+        return
+    with suppress(OSError, ValueError):
+        sys.stdout.write("\033]11;?\033\\")
+        sys.stdout.flush()
+        reply = b""
+        while len(reply) < 64:
+            ready, _, _ = select.select([fd], [], [], _THEME_QUERY_TIMEOUT)
+            if not ready:
+                break
+            chunk = os.read(fd, 64)
+            if not chunk:
+                break
+            reply += chunk
+            if reply.endswith((b"\a", b"\033\\")):
+                break
+        found = theme_from_reply(reply.decode("ascii", "replace"))
+        if found is not None:
+            _detected = found
+
+
+# Colour and cursor escapes, OSC strings (hyperlinks), and anything drawn
+# between a cursor save and its restore: an overlay like :func:`icon_slot`
+# returns the cursor to where it started, so it takes no columns of its own.
+_ANSI = re.compile(r"\0337.*?\0338|\033\[[0-9;]*[A-Za-z]|\033\][^\a]*(?:\a|\033\\)", re.DOTALL)
 
 
 def strip_ansi(text: str) -> str:
@@ -106,12 +207,22 @@ def _is_modifier(char: str) -> bool:
 
 
 def _clusters(text: str) -> Iterator[tuple[str, int]]:
-    """``text`` without escapes, as (character plus its modifiers, columns) pairs.
+    """``text`` as (piece, columns) pairs: each escape whole at zero columns,
+    and each character with its modifiers at the columns it takes.
 
     ``display_width`` and ``truncate`` both measure through this, so a cut can
-    never land between an emoji and the selector that makes it two columns.
+    never land inside an escape, or between an emoji and the selector that
+    makes it two columns.
     """
-    chars = strip_ansi(text)
+    position = 0
+    for escape in _ANSI.finditer(text):
+        yield from _character_clusters(text[position : escape.start()])
+        yield escape.group(), 0
+        position = escape.end()
+    yield from _character_clusters(text[position:])
+
+
+def _character_clusters(chars: str) -> Iterator[tuple[str, int]]:
     index = 0
     while index < len(chars):
         end = index + 1
@@ -159,18 +270,38 @@ def truncate(text: str, width: int, *, ellipsis: str = "…") -> str:
     budget = width - display_width(ellipsis)
     out: list[str] = []
     used = 0
+    styled = False
     for cluster, step in _clusters(text):
         if used + step > budget:
             break
         out.append(cluster)
         used += step
-    return "".join(out) + ellipsis
+        styled = styled or (step == 0 and cluster.startswith("\033"))
+    # Escapes before the cut are kept, so a cut row keeps its colours (and its
+    # icon overlay); a reset after the ellipsis stops a colour that was still
+    # open from running on into whatever follows.
+    return "".join(out) + ellipsis + ("\033[0m" if styled else "")
 
 
 def fit(text: str, width: int) -> str:
     """Truncate to ``width`` columns, then pad with spaces to exactly that."""
     cut = truncate(text, width)
     return cut + " " * max(0, width - display_width(cut))
+
+
+def icon_slot(icon: str) -> str:
+    """``icon`` in a two-column slot that ends where it should on any terminal.
+
+    Terminals disagree on how wide an emoji with U+FE0F is (🗂️, ⬇️, ⌨️):
+    some draw two columns, some one, and a one-column draw pulled the rest of
+    its row one cell left. So the slot is painted as two spaces first, the
+    cursor is saved just after them, the icon is drawn over the spaces, and
+    the cursor is put back. Whatever width the icon took, the text after it
+    starts two columns on, and :func:`display_width` counts exactly two.
+    """
+    if not icon:
+        return "  "
+    return f"  \0337\033[2D{icon}\0338"
 
 
 def hyperlink(label: str, url: str) -> str:
@@ -229,6 +360,7 @@ class Term:
         with suppress(termios.error, ValueError):
             self._saved = termios.tcgetattr(self.fd)
         self.resume()
+        detect_theme(self.fd)
 
         self._active = True
         self._install_handlers()

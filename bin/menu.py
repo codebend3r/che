@@ -429,7 +429,7 @@ def command_row(
     name = command.name
     if selected:
         name = f"{colors.bold}{colors.bright_green}{name}{colors.reset}"
-    left = f"  {pointer} {command.icon} {name}"
+    left = f"  {pointer} {tui.icon_slot(command.icon)} {name}"
 
     tag = badge(state, command)
     tag_width = tui.display_width(tag) + 1 if tag else 0
