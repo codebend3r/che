@@ -311,8 +311,15 @@ def draw(screen: tui.Screen, state: Menu) -> None:
     detail_lines = detail_pane(state, detail_width) if detail_width else []
 
     visible = rows[state.offset : state.offset + body_rows]
-    for index, row in enumerate(visible, start=state.offset):
-        if isinstance(row, Category):
+    # The detail pane can run longer than a short filtered list, so the body
+    # is as tall as whichever of the two needs more rows.
+    height = min(body_rows, max(len(visible), len(detail_lines)))
+    for line in range(height):
+        index = state.offset + line
+        row = visible[line] if line < len(visible) else None
+        if row is None:
+            left = " " * list_width
+        elif isinstance(row, Category):
             left = tui.fit(category_row(row), list_width)
         else:
             left = command_row(
@@ -323,8 +330,7 @@ def draw(screen: tui.Screen, state: Menu) -> None:
                 summary=not detail_width,
             )
 
-        detail_index = index - state.offset
-        right = detail_lines[detail_index] if detail_index < len(detail_lines) else ""
+        right = detail_lines[line] if line < len(detail_lines) else ""
         screen.line(f"{left}{colors.grey}│{colors.reset} {right}" if detail_width else left)
 
     draw_footer(screen, state)
@@ -333,6 +339,12 @@ def draw(screen: tui.Screen, state: Menu) -> None:
 # ---------------------------------------------------------------------------
 # Drawing primitives
 # ---------------------------------------------------------------------------
+
+
+# The search bar's angle quotes, spelled as escapes so the linter does not
+# take them for a typo of < and >.
+LEFT_QUOTE = "\u2039"
+RIGHT_QUOTE = "\u203a"
 
 
 def pill(text: str, ground: str) -> str:
@@ -403,11 +415,9 @@ def category_row(category: Category) -> str:
 def badge(state: Menu, command: Command) -> str:
     """The pill at the end of a command's row: how running it would behave."""
     colors = tui.palette()
-    if command.has_dry_twin:
-        if state.is_dry(command):
-            return pill("DRY", colors.good_pill)
-        return pill("LIVE", colors.warn_pill)
-    if command.destructive:
+    if command.has_dry_twin and state.is_dry(command):
+        return pill("DRY", colors.good_pill)
+    if command.has_dry_twin or command.destructive:
         return pill("LIVE", colors.warn_pill)
     if command.macos_only:
         return pill("MACOS", colors.info_pill)
@@ -447,11 +457,6 @@ def command_row(
 # Detail pane
 # ---------------------------------------------------------------------------
 
-# The search bar's angle quotes, spelled as escapes so the linter does not
-# take them for a typo of < and >.
-LEFT_QUOTE = "\u2039"
-RIGHT_QUOTE = "\u203a"
-
 # The detail pane's label column: "command:  ", "dry run:  ".
 LABEL_WIDTH = 10
 
@@ -489,12 +494,6 @@ def detail_fields(state: Menu, command: Command, width: int) -> list[tuple[str, 
     colors = tui.palette()
     value_width = max(10, width - LABEL_WIDTH - 2)
 
-    def wrapped(text: str, color: str = "") -> list[str]:
-        return [
-            f"{color}{line}{colors.reset if color else ''}"
-            for line in (textwrap.wrap(text, value_width) or [""])
-        ]
-
     fields: list[tuple[str, list[str]]] = [("command", [f"che {command.name}"])]
 
     if command.script:
@@ -522,14 +521,17 @@ def detail_fields(state: Menu, command: Command, width: int) -> list[tuple[str, 
         fields.append(("dry run", [f"asked on {key_cap('⏎')}"]))
     elif command.destructive:
         fields.append(
-            ("warning", wrapped(command.no_preview_reason or "changes files", colors.yellow))
+            (
+                "warning",
+                wrap(command.no_preview_reason or "changes files", value_width, colors.yellow),
+            )
         )
 
     if command.flags:
-        fields.append(("flags", wrapped(" ".join(command.flag_names), colors.grey)))
+        fields.append(("flags", wrap(" ".join(command.flag_names), value_width, colors.grey)))
 
     if command.setup:
-        fields.append(("setup", wrapped(command.setup, colors.yellow)))
+        fields.append(("setup", wrap(command.setup, value_width, colors.yellow)))
 
     if command.macos_only:
         fields.append(("os", [pill("macOS only", colors.info_pill)]))
@@ -537,16 +539,11 @@ def detail_fields(state: Menu, command: Command, width: int) -> list[tuple[str, 
     return fields
 
 
-def wrap(text: str, width: int, color: str = "", indent: str = "") -> list[str]:
+def wrap(text: str, width: int, color: str = "") -> list[str]:
+    """``text`` wrapped to ``width`` columns (at least 10), each line in ``color``."""
     colors = tui.palette()
-    body = textwrap.wrap(text, max(10, width - len(indent))) or [""]
-    out = []
-    for index, line in enumerate(body):
-        prefix = indent if index == 0 else " " * len(indent)
-        out.append(
-            f"{colors.grey}{prefix}{colors.reset}{color}{line}{colors.reset if color else ''}"
-        )
-    return out
+    close = colors.reset if color else ""
+    return [f"{color}{line}{close}" for line in textwrap.wrap(text, max(10, width)) or [""]]
 
 
 # ---------------------------------------------------------------------------
@@ -594,10 +591,11 @@ def draw_footer(screen: tui.Screen, state: Menu) -> None:
     actions = ""
     command = state.selected()
     if command is not None and not state.show_help:
-        dry = command.has_dry_twin and state.is_dry(command)
         if command.has_dry_twin:
+            dry = state.is_dry(command)
             toggle = pill(f"dry run: {'on' if dry else 'off'}  d", colors.key_ground)
         else:
+            dry = False
             toggle = f"{colors.grey}no dry run{colors.reset}"
         run = pill(f"{'preview' if dry else 'run'} ⏎", colors.run_pill)
         actions = f"{toggle} {run}  "

@@ -117,12 +117,18 @@ def theme() -> str:
     an OSC 11 query, if :class:`Term` has asked it; then ``COLORFGBG``, which
     some terminals export as ``"fg;bg"``; then dark, the common case.
     """
-    chosen = os.environ.get("CHE_THEME", "").strip().lower()
-    if chosen in THEMES:
+    chosen = _theme_override()
+    if chosen is not None:
         return chosen
     if _detected is not None:
         return _detected
     return _theme_from_colorfgbg(os.environ.get("COLORFGBG", "")) or "dark"
+
+
+def _theme_override() -> str | None:
+    """``CHE_THEME``, when it names a theme."""
+    chosen = os.environ.get("CHE_THEME", "").strip().lower()
+    return chosen if chosen in THEMES else None
 
 
 def _theme_from_colorfgbg(value: str) -> str | None:
@@ -157,7 +163,7 @@ def detect_theme(fd: int) -> None:
     ``COLORFGBG`` or dark fallback in place. ``CHE_THEME`` skips the question.
     """
     global _detected
-    if _detected is not None or os.environ.get("CHE_THEME", "").strip().lower() in THEMES:
+    if _detected is not None or _theme_override() is not None:
         return
     if not (os.isatty(fd) and sys.stdout.isatty()):
         return

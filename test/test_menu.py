@@ -121,3 +121,15 @@ def test_every_drawn_line_fits_the_screen(monkeypatch, size, query):
     assert 0 < screen.used <= rows
     assert all(tui.display_width(line) <= columns for line in screen._lines)
     assert state.status == "a status line", "drawing must not clear the status"
+
+
+def test_detail_pane_is_drawn_in_full_under_a_short_list(monkeypatch):
+    """With two matches the pane used to stop after two lines, cutting off
+    the command, script and dry-run rows."""
+    monkeypatch.setattr(tui, "size", lambda: (120, 26))
+    screen = tui.Screen()
+    menu.draw(screen, menu.Menu(query="codec"))
+
+    text = "\n".join(tui.strip_ansi(line) for line in screen._lines)
+    assert "script:" in text
+    assert "dry run:" in text
